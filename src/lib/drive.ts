@@ -4,6 +4,7 @@ import type { TranslationResult } from './gemini';
 export interface MangaSaveData {
   version: string;
   timestamp: string;
+  lastReadPage?: number;
   images: {
     filename: string;
     mimeType: string;
@@ -49,8 +50,29 @@ export async function uploadToGoogleDrive(
       });
 
       try {
-        const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-          method: 'POST',
+        // 1. Check if file with same name already exists
+        const query = `name='${fileName}' and trashed=false`;
+        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        
+        let existingFileId = null;
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          if (searchData.files && searchData.files.length > 0) {
+            existingFileId = searchData.files[0].id;
+          }
+        }
+
+        // 2. If exists, update (PATCH). Otherwise, create (POST).
+        const url = existingFileId 
+          ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+          
+        const method = existingFileId ? 'PATCH' : 'POST';
+
+        const response = await fetch(url, {
+          method: method,
           headers: {
             'Authorization': `Bearer ${accessToken}`,
           },
@@ -100,12 +122,14 @@ export async function createMangaZip(
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   provider: string,
-  aiModel: string
+  aiModel: string,
+  lastReadPage: number = 0
 ): Promise<Blob> {
   const zip = new JSZip();
   const manifest: MangaSaveData = {
     version: '1.0',
     timestamp: new Date().toISOString(),
+    lastReadPage,
     images: []
   };
 
@@ -137,7 +161,8 @@ export async function createMangaZip(
 
 export async function extractMangaZip(zipBlob: Blob): Promise<{
   images: { file: File; src: string; mimeType: string }[],
-  translations: Record<string, TranslationResult[]>
+  translations: Record<string, TranslationResult[]>,
+  lastReadPage: number
 }> {
   const zip = await JSZip.loadAsync(zipBlob);
   const dataFile = zip.file("manga_data.json");
@@ -178,5 +203,5 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
     loadedTranslations[key] = imgData.translations;
   }
 
-  return { images: loadedImages, translations: loadedTranslations };
+  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0 };
 }

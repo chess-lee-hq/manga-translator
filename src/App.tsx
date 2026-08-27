@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, Maximize, ChevronLeft, ChevronRight, BookOpen, FileImage, PanelRight, Layers, Save, Download, Zap, Brain, Bot, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown } from 'lucide-react';
+import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, Maximize, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import JSZip from 'jszip';
 import { translateMangaImage, retranslateTextGemini } from './lib/gemini';
@@ -151,7 +151,7 @@ function App() {
         setDriveToken(token);
       }
       
-      const zipBlob = await createMangaZip(allImages, translationCache, provider, aiModel);
+      const zipBlob = await createMangaZip(allImages, translationCache, provider, aiModel, currentPageIndex);
       await uploadToGoogleDrive(token!, zipBlob, filename);
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
@@ -183,7 +183,7 @@ function App() {
     setShowDriveModal(false);
     try {
       const zipBlob = await downloadFromGoogleDrive(driveToken!, fileId);
-      const { images, translations } = await extractMangaZip(zipBlob);
+      const { images, translations, lastReadPage } = await extractMangaZip(zipBlob);
       
       const loadedImages: UploadedImage[] = [];
       for (const img of images) {
@@ -207,7 +207,7 @@ function App() {
       
       setAllImages(loadedImages);
       setTranslationCache(prev => ({ ...prev, ...translations }));
-      setCurrentPageIndex(0);
+      setCurrentPageIndex(lastReadPage || 0);
       
       Object.keys(translations).forEach(key => {
         try { localStorage.setItem(key, JSON.stringify(translations[key])); } catch(e) {}
@@ -566,17 +566,7 @@ function App() {
     });
   };
 
-  const toggleViewMode = () => {
-    setViewMode(prev => {
-      if (prev === '2page') return '1page';
-      setCurrentPageIndex(idx => idx - (idx % 2));
-      return '2page';
-    });
-  };
 
-  const toggleScriptStyle = () => {
-    setScriptStyle(prev => prev === 'side' ? 'overlay' : 'side');
-  };
 
   const handleExportJSON = () => {
     const data = JSON.stringify(translationCache, null, 2);
@@ -777,61 +767,63 @@ function App() {
         ) : (
           <div className="flex-1 flex flex-col gap-4 h-full rounded-xl overflow-hidden">
             
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2 flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-4 px-2">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2 flex justify-between items-center shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden">
+              <div className="flex items-center gap-2 px-2 shrink-0">
                 <span className="font-semibold text-gray-700 flex items-center gap-2">
                   <ImageIcon size={18} /> 만화 뷰어 
-                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full ml-1 border">
+                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border">
                     총 {allImages.length}장
                   </span>
                 </span>
                 
-                <div className="w-px h-5 bg-gray-300 mx-1"></div>
+                <div className="w-px h-5 bg-gray-300 mx-2"></div>
                 
                 <button 
-                  onClick={toggleViewMode}
-                  className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors text-gray-700 font-medium"
+                  onClick={() => setViewMode(prev => prev === '1page' ? '2page' : '1page')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors text-sm font-medium border border-gray-200 whitespace-nowrap text-gray-700"
                 >
-                  {viewMode === '2page' ? <BookOpen size={16} /> : <FileImage size={16} />}
-                  {viewMode === '2page' ? '2장씩 보기' : '1장씩 보기'}
+                  <BookOpen size={16} />
+                  {viewMode === '1page' ? '1장' : '2장'}
                 </button>
-
-                <button 
-                  onClick={toggleScriptStyle}
-                  className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-md bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors text-indigo-700 font-medium ml-2"
-                >
-                  {scriptStyle === 'side' ? <Layers size={16} /> : <PanelRight size={16} />}
-                  {scriptStyle === 'side' ? '이미지 덮어쓰기 모드' : '우측 대본 모드'}
-                </button>
-
+                
                 <div className="w-px h-5 bg-gray-300 mx-1"></div>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 ml-2 shadow-inner">
-                  <button 
-                    onClick={() => setAiModel('flash')}
-                    className={`flex items-center gap-1.5 text-sm px-3 py-1 rounded-md transition-all font-medium ${
-                      aiModel === 'flash' 
-                        ? 'bg-white shadow text-amber-600 border border-amber-200' 
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Zap size={15} /> 쾌속
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (aiModel === 'flash') setShowProWarning(true);
-                    }}
-                    className={`flex items-center gap-1.5 text-sm px-3 py-1 rounded-md transition-all font-medium ${
-                      aiModel === 'pro' 
-                        ? 'bg-white shadow text-purple-600 border border-purple-200' 
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Brain size={15} /> 고품질
-                  </button>
+                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-indigo-50/50 rounded-md border border-indigo-100 shrink-0">
+                  <Cpu size={16} className="text-indigo-500" />
+                  <span className="text-sm font-bold text-indigo-700">
+                    {provider === 'google' ? 'Gemini 3.6 Flash' : 'OpenAI gpt-4o'}
+                  </span>
                 </div>
 
                 <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
+                  <button
+                    onClick={() => setScriptStyle('overlay')}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-all ${
+                      scriptStyle === 'overlay' 
+                        ? 'bg-white text-blue-600 shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    <Layers size={14} />
+                    덮어쓰기
+                  </button>
+                  <button
+                    onClick={() => setScriptStyle('side')}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-all ${
+                      scriptStyle === 'side' 
+                        ? 'bg-white text-blue-600 shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    <PanelRight size={14} />
+                    우측 대본
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
 
                 <button 
                   onClick={() => fileInputRef.current?.click()}
@@ -934,8 +926,8 @@ function App() {
                               const boxWidth = xmax - xmin;
                               const boxHeight = ymax - ymin;
                               
-                              const expandedWidth = boxWidth * 1.3;
-                              const expandedHeight = boxHeight * 1.1;
+                              const expandedWidth = boxWidth * 1.6;
+                              const expandedHeight = boxHeight * 1.25;
                               const cx = xmin + boxWidth / 2;
                               const cy = ymin + boxHeight / 2;
                               const newXmin = cx - expandedWidth / 2;
@@ -971,7 +963,7 @@ function App() {
                                     <span 
                                       className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
                                       style={{
-                                        fontSize: `clamp(${0.85 * scale}vh, min(${maxCqi}cqi, ${maxCqh}cqh), ${2.4 * scale}vh)`,
+                                        fontSize: `clamp(${10 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
                                         fontWeight: '800',
                                         lineHeight: '1.15', 
                                         wordBreak: 'break-all', 
@@ -1054,7 +1046,7 @@ function App() {
               </div>
 
               {scriptStyle === 'side' && (
-                <div className="w-[320px] shrink-0 flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden transition-all duration-300">
+                <div className="w-[580px] shrink-0 flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden transition-all duration-300">
                   <div className="p-3 border-b border-gray-200 bg-gray-50 flex justify-between items-center shrink-0">
                     <span className="font-semibold text-gray-700 flex items-center gap-2">
                       <MessageSquareText size={18} /> 한국어 대본
