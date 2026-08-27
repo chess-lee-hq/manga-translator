@@ -926,8 +926,8 @@ function App() {
                               const boxWidth = xmax - xmin;
                               const boxHeight = ymax - ymin;
                               
-                              const expandedWidth = boxWidth * 1.6;
-                              const expandedHeight = boxHeight * 1.25;
+                              const expandedWidth = boxWidth * 1.3;
+                              const expandedHeight = boxHeight * 1.1;
                               const cx = xmin + boxWidth / 2;
                               const cy = ymin + boxHeight / 2;
                               const newXmin = cx - expandedWidth / 2;
