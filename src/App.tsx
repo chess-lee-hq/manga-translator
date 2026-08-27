@@ -45,7 +45,7 @@ function App() {
   const [googleKey, setGoogleKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   
-  const [googleClientId, setGoogleClientId] = useState(() => localStorage.getItem('googleClientId') || '499460859404-ub21a3onu2807hmeei71110c5d3b4ugo.apps.googleusercontent.com');
+  const [googleClientId] = useState(() => localStorage.getItem('googleClientId') || '499460859404-ub21a3onu2807hmeei71110c5d3b4ugo.apps.googleusercontent.com');
   const [driveToken, setDriveToken] = useState<string | null>(null);
   const [isDriveSyncing, setIsDriveSyncing] = useState(false);
   const [showDriveModal, setShowDriveModal] = useState(false);
