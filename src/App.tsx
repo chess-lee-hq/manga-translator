@@ -781,7 +781,7 @@ function App() {
               <Cpu size={12} /> Gemini 3.6 Flash
             </button>
             <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'openai' ? 'bg-white shadow text-green-600 border border-green-200' : 'text-gray-500'}`}>
-              <Bot size={12} /> OpenAI gpt-4o
+              <Bot size={12} /> OpenAI 5.6 Terra
             </button>
           </div>
 

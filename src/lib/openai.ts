@@ -3,13 +3,13 @@ import type { TranslationResult } from './gemini';
 export async function translateMangaImageOpenAI(
   apiKey: string, 
   geminiResults: TranslationResult[], 
-  aiModel: 'flash' | 'pro' = 'flash'
+  _aiModel: 'flash' | 'pro' = 'flash'
 ): Promise<TranslationResult[]> {
   
   if (geminiResults.length === 0) return [];
 
-  // Flash는 가성비 모델인 gpt-4o-mini, Pro는 플래그십 모델인 gpt-4o 매핑
-  const modelName = aiModel === 'pro' ? 'gpt-4o' : 'gpt-4o-mini';
+  // 사용자의 요청에 따라 Pro/Flash 구분 없이 gpt-5.6-terra 엔진을 사용합니다.
+  const modelName = 'gpt-5.6-terra';
   
   // 구글이 뽑아준 원문을 인덱스와 함께 추출
   const textPayload = geminiResults.map((res, index) => ({
@@ -51,8 +51,7 @@ Each object in the array MUST match this format:
               content: JSON.stringify(textPayload)
             }
           ],
-          response_format: { type: 'json_object' },
-          temperature: 0.35
+          response_format: { type: 'json_object' }
         })
       });
 
@@ -96,8 +95,8 @@ Each object in the array MUST match this format:
   }
 }
 
-export async function retranslateTextOpenAI(apiKey: string, originalText: string, aiModel: 'flash' | 'pro' = 'flash'): Promise<string> {
-  const modelName = aiModel === 'pro' ? 'gpt-4o' : 'gpt-4o-mini';
+export async function retranslateTextOpenAI(apiKey: string, originalText: string, _aiModel: 'flash' | 'pro' = 'flash'): Promise<string> {
+  const modelName = 'gpt-5.6-terra';
   
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
   
@@ -115,8 +114,7 @@ Respond ONLY with the translated Korean text string, nothing else. Do not includ
       model: modelName,
       messages: [
         { role: 'user', content: prompt }
-      ],
-      temperature: 0.7
+      ]
     })
   });
 
