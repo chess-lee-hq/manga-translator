@@ -145,7 +145,7 @@ export async function createMangaZip(
     imagesFolder.file(filename, base64Data, { base64: true });
 
     const key = `manga-cache-${provider}-${aiModel}-${img.file.name}-${img.file.size}`;
-    const result = translations[key] || [];
+    const result = translations[key]; // Do not default to [] if undefined
 
     manifest.images.push({
       filename,
@@ -199,8 +199,10 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
       mimeType: imgData.mimeType
     });
 
-    const key = `manga-cache-${provider}-${aiModel}-${file.name}-${file.size}`;
-    loadedTranslations[key] = imgData.translations;
+    const key = `manga-cache-${provider}-${aiModel}-${imgData.filename}-${blob.size}`;
+    if (imgData.translations) {
+      loadedTranslations[key] = imgData.translations;
+    }
   }
 
   return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0 };

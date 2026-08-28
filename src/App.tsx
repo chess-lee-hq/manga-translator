@@ -1058,8 +1058,27 @@ function App() {
                       }
                       if (results.length === 0) {
                         return (
-                          <div key={`empty-${imgIndex}`} className="py-4 text-center text-gray-400 text-sm">
-                            Page {imgIndex + 1}: 번역된 텍스트가 없습니다.
+                          <div key={`empty-${imgIndex}`} className="py-8 flex flex-col items-center justify-center text-gray-400">
+                            <span className="text-sm mb-3">Page {imgIndex + 1}: 번역된 텍스트가 없습니다.</span>
+                            <button 
+                              onClick={() => {
+                                setTranslationCache(prev => {
+                                  const updated = { ...prev };
+                                  // 현재 페이지부터 마지막 페이지까지, 잘못 저장된 빈 배열([]) 캐시를 모두 날려서 자동 번역을 재개시킵니다.
+                                  for (let i = imgIndex; i < allImages.length; i++) {
+                                    const futureKey = getCacheKey(provider, aiModel, allImages[i].file);
+                                    if (updated[futureKey] && updated[futureKey].length === 0) {
+                                      delete updated[futureKey];
+                                    }
+                                  }
+                                  return updated;
+                                });
+                                setRetryTrigger(r => r + 1);
+                              }} 
+                              className="px-4 py-2 bg-blue-50 text-blue-600 rounded-md text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-2"
+                            >
+                              <RefreshCw size={14} /> 이어서 자동 번역 재개하기
+                            </button>
                           </div>
                         );
                       }
