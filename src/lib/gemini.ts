@@ -6,7 +6,7 @@ export interface TranslationResult {
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized to 1000
 }
 
-export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, aiModel: 'flash' | 'pro' = 'flash'): Promise<TranslationResult[]> {
+export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6'): Promise<TranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `# Role & Objective
@@ -40,8 +40,8 @@ export async function translateMangaImage(apiKey: string, base64Image: string, m
   - "translated_text": 자연스러운 고품질 한국어 번역문 (태그 없이 번역된 내용만).
   - "box_2d": 텍스트를 감싸는 바운딩 박스. [ymin, xmin, ymax, xmax] 형식의 0~1000 사이 정수 배열.`;
 
-  // 구글 API가 에러 메시지로 직접 지정해준 완벽하게 호환되는 버전으로 최종 세팅합니다.
-  const modelName = aiModel === 'pro' ? 'gemini-3.1-pro-preview' : 'gemini-3.6-flash';
+  // 사용자가 선택한 제미나이 엔진 버전을 사용합니다.
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
 
   let response;
   let retries = 3;
@@ -136,10 +136,9 @@ export async function translateMangaImage(apiKey: string, base64Image: string, m
   }
 }
 
-export async function retranslateTextGemini(apiKey: string, originalText: string, aiModel: 'flash' | 'pro' = 'flash'): Promise<string> {
+export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: '3.6' | '3.7' = '3.6'): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
-  // 부분 재번역 시에는 기존에 문제없이 작동했던 3.6 플래시 모델로 복구합니다.
-  const modelName = aiModel === 'pro' ? 'gemini-3.1-pro-preview' : 'gemini-3.6-flash';
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
   
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
   

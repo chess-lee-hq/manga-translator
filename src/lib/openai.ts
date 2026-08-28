@@ -3,7 +3,7 @@ import type { TranslationResult } from './gemini';
 export async function translateMangaImageOpenAI(
   apiKey: string, 
   geminiResults: TranslationResult[], 
-  _aiModel: 'flash' | 'pro' = 'flash'
+  _geminiVersion: '3.6' | '3.7' = '3.6'
 ): Promise<TranslationResult[]> {
   
   if (geminiResults.length === 0) return [];
@@ -95,7 +95,7 @@ Each object in the array MUST match this format:
   }
 }
 
-export async function retranslateTextOpenAI(apiKey: string, originalText: string, _aiModel: 'flash' | 'pro' = 'flash'): Promise<string> {
+export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6'): Promise<string> {
   const modelName = 'gpt-5.6-terra';
   
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.

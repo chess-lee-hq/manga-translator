@@ -56,8 +56,7 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
-  const [aiModel, setAiModel] = useState<'flash' | 'pro'>('flash');
-  const [showProWarning, setShowProWarning] = useState(false);
+  const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number, itemIndex: number } | null>(null);
@@ -99,8 +98,8 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
-  const getCacheKey = useCallback((p: string, m: string, file: File) => {
-    return `manga-cache-${p}-${m}-${file.name}-${file.size}`;
+  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7', file: File) => {
+    return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
   }, []);
 
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -154,7 +153,7 @@ function App() {
         setDriveToken(token);
       }
       
-      const zipBlob = await createMangaZip(allImages, translationCache, provider, aiModel, currentPageIndex);
+      const zipBlob = await createMangaZip(allImages, translationCache, provider, geminiVersion, currentPageIndex);
       await uploadToGoogleDrive(token!, zipBlob, filename);
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
@@ -349,16 +348,14 @@ function App() {
     if (visibleIndices.length === 0) return [];
     const needed = [...visibleIndices];
     
-    if (aiModel === 'flash') {
-      for (let i = 1; i <= 10; i++) {
-        const nextIdx = visibleIndices[visibleIndices.length - 1] + i;
-        if (nextIdx < allImages.length) {
-          needed.push(nextIdx);
-        }
+    for (let i = 1; i <= 10; i++) {
+      const nextIdx = visibleIndices[visibleIndices.length - 1] + i;
+      if (nextIdx < allImages.length) {
+        needed.push(nextIdx);
       }
     }
     return needed;
-  }, [visibleIndices, allImages.length, aiModel]);
+  }, [visibleIndices, allImages.length, geminiVersion]);
 
   const executeTranslation = async (idx: number) => {
     const img = allImages[idx];
@@ -368,16 +365,16 @@ function App() {
 
     if (provider === 'google') {
       if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
-      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, aiModel);
+      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
     } else {
       if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
       if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
       
       // Pass 1: Gemini를 통한 OCR 및 완벽한 위치(좌표) 추출 (가장 빠르고 싼 flash 모드로 고정)
-      const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, 'flash');
+      const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
       
       // Pass 2: OpenAI를 통한 텍스트 전용 고품질 번역
-      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, aiModel);
+      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion);
     }
 
     // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
@@ -396,15 +393,15 @@ function App() {
     setIsRetranslating({ imgIndex, bubbleIndex });
     try {
       const img = allImages[imgIndex];
-      const key = getCacheKey(provider, aiModel, img.file);
+      const key = getCacheKey(provider, geminiVersion, img.file);
       
       let newTranslation = "";
       if (provider === 'google') {
         if (!googleKey) throw new Error("Google API 키가 필요합니다.");
-        newTranslation = await retranslateTextGemini(googleKey, originalText, aiModel);
+        newTranslation = await retranslateTextGemini(googleKey, originalText, geminiVersion);
       } else {
         if (!openaiKey) throw new Error("OpenAI API 키가 필요합니다.");
-        newTranslation = await retranslateTextOpenAI(openaiKey, originalText, aiModel);
+        newTranslation = await retranslateTextOpenAI(openaiKey, originalText, geminiVersion);
       }
 
       setTranslationCache(prev => {
@@ -429,7 +426,7 @@ function App() {
   const handleSaveEdit = (imgIndex: number, bubbleIndex: number) => {
     if (!editingBubble) return;
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, aiModel, img.file);
+    const key = getCacheKey(provider, geminiVersion, img.file);
 
     setTranslationCache(prev => {
       const updated = { ...prev };
@@ -450,7 +447,7 @@ function App() {
     if (allImages.length === 0 || !currentKey || translationQueue.length === 0) return;
 
     const missingIndices = translationQueue.filter(i => {
-      const key = getCacheKey(provider, aiModel, allImages[i].file);
+      const key = getCacheKey(provider, geminiVersion, allImages[i].file);
       return !translationCache[key];
     });
     
@@ -470,7 +467,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               visibleResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, aiModel, allImages[idx].file);
+                const key = getCacheKey(provider, geminiVersion, allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -489,7 +486,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               preloadResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, aiModel, allImages[idx].file);
+                const key = getCacheKey(provider, geminiVersion, allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -505,7 +502,7 @@ function App() {
       
       translateMissing();
     }
-  }, [translationQueue.join(','), allImages, currentKey, aiModel, provider, getCacheKey, retryTrigger]); 
+  }, [translationQueue.join(','), allImages, currentKey, geminiVersion, provider, getCacheKey, retryTrigger]); 
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -655,7 +652,7 @@ function App() {
 
     setTranslationCache(prev => {
       const img = allImages[targetImgIndex];
-      const key = getCacheKey(provider, aiModel, img.file);
+      const key = getCacheKey(provider, geminiVersion, img.file);
       const results = [...(prev[key] || [])];
       
       const [movedItem] = results.splice(draggedItem.itemIndex, 1);
@@ -776,11 +773,22 @@ function App() {
             </>
           )}
 
-          <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0">
-            <button onClick={() => setProvider('google')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'google' ? 'bg-white shadow text-blue-600 border border-blue-200' : 'text-gray-500'}`}>
-              <Cpu size={12} /> Gemini 3.6 Flash
+          <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0 items-center">
+            <button onClick={() => setProvider('google')} className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium ${provider === 'google' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}>
+              <Cpu size={12} /> Gemini
             </button>
-            <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'openai' ? 'bg-white shadow text-green-600 border border-green-200' : 'text-gray-500'}`}>
+            <select 
+              value={geminiVersion}
+              onChange={(e) => { setGeminiVersion(e.target.value as '3.6' | '3.7'); setProvider('google'); }}
+              className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'google' ? 'bg-white shadow-sm text-blue-600 border-blue-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
+            >
+              <option value="3.6">3.6 Flash</option>
+              <option value="3.7">3.7 Flash</option>
+            </select>
+            
+            <div className="w-px h-3 bg-gray-300 mx-1"></div>
+            
+            <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}>
               <Bot size={12} /> OpenAI 5.6 Terra
             </button>
           </div>
@@ -875,7 +883,7 @@ function App() {
                       >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, aiModel, img.file);
+                      const key = getCacheKey(provider, geminiVersion, img.file);
                       const results = translationCache[key] || [];
 
                       return (
@@ -1034,7 +1042,7 @@ function App() {
                   >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, aiModel, img.file);
+                      const key = getCacheKey(provider, geminiVersion, img.file);
                       const results = translationCache[key];
                       if (!results) {
                         return (
@@ -1066,7 +1074,7 @@ function App() {
                                   const updated = { ...prev };
                                   // 현재 페이지부터 마지막 페이지까지, 잘못 저장된 빈 배열([]) 캐시를 모두 날려서 자동 번역을 재개시킵니다.
                                   for (let i = imgIndex; i < allImages.length; i++) {
-                                    const futureKey = getCacheKey(provider, aiModel, allImages[i].file);
+                                    const futureKey = getCacheKey(provider, geminiVersion, allImages[i].file);
                                     if (updated[futureKey] && updated[futureKey].length === 0) {
                                       delete updated[futureKey];
                                     }
@@ -1199,39 +1207,7 @@ function App() {
           </div>
         )}
         
-        {/* Pro Warning Modal */}
-        {showProWarning && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-all">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
-              <div className="flex items-center gap-3 text-red-600 mb-4">
-                <AlertTriangle size={24} />
-                <h3 className="text-lg font-bold text-gray-800">비용 경고</h3>
-              </div>
-              <p className="text-gray-600 mb-6 leading-relaxed">
-                고품질(Pro) 모드는 쾌속(Flash) 모드에 비해 토큰 비용이 <strong>최대 20배 이상</strong> 비싸게 청구될 수 있습니다. 
-                <br/><br/>
-                정말 필요한 페이지(오역, 복잡한 대사 등)에서만 일시적으로 사용하시는 것을 권장합니다. 그래도 Pro 모드로 전환하시겠습니까?
-              </p>
-              <div className="flex justify-end gap-3">
-                <button 
-                  onClick={() => setShowProWarning(false)}
-                  className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  취소 (쾌속 유지)
-                </button>
-                <button 
-                  onClick={() => {
-                    setAiModel('pro');
-                    setShowProWarning(false);
-                  }}
-                  className="px-4 py-2 bg-red-600 text-white font-medium hover:bg-red-700 rounded-lg transition-colors shadow-sm"
-                >
-                  확인 (Pro 전환)
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+
 
       </main>
 
