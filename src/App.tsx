@@ -185,7 +185,7 @@ function App() {
     setShowDriveModal(false);
     try {
       const zipBlob = await downloadFromGoogleDrive(driveToken!, fileId);
-      const { images, translations, lastReadPage } = await extractMangaZip(zipBlob);
+      const { images, translations, lastReadPage } = await extractMangaZip(zipBlob, provider, geminiVersion);
       
       const loadedImages: UploadedImage[] = [];
       for (const img of images) {

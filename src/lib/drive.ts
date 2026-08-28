@@ -159,7 +159,7 @@ export async function createMangaZip(
   return await zip.generateAsync({ type: "blob" });
 }
 
-export async function extractMangaZip(zipBlob: Blob): Promise<{
+export async function extractMangaZip(zipBlob: Blob, provider: string, geminiVersion: string): Promise<{
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number
@@ -174,9 +174,6 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
   const loadedImages: { file: File; src: string; mimeType: string }[] = [];
   const loadedTranslations: Record<string, TranslationResult[]> = {};
   
-  const provider = 'google';
-  const aiModel = 'flash';
-
   for (const imgData of manifest.images) {
     const imgFile = zip.file(`images/${imgData.filename}`);
     if (!imgFile) continue;
@@ -199,7 +196,7 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
       mimeType: imgData.mimeType
     });
 
-    const key = `manga-cache-${provider}-${aiModel}-${imgData.filename}-${blob.size}`;
+    const key = `manga-cache-${provider}-${geminiVersion}-${imgData.filename}-${blob.size}`;
     if (imgData.translations) {
       loadedTranslations[key] = imgData.translations;
     }
