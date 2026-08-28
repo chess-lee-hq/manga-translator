@@ -57,6 +57,9 @@ export async function uploadToGoogleDrive(
         });
         
         let existingFileId = null;
+        if (searchRes.status === 401) {
+          throw new Error('AUTH_EXPIRED');
+        }
         if (searchRes.ok) {
           const searchData = await searchRes.json();
           if (searchData.files && searchData.files.length > 0) {
@@ -80,6 +83,9 @@ export async function uploadToGoogleDrive(
         });
         
         if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error('AUTH_EXPIRED');
+          }
           const err = await response.json();
           throw new Error(err.error?.message || 'Drive upload failed');
         }
@@ -102,7 +108,12 @@ export async function listMangaSaves(accessToken: string): Promise<any[]> {
     }
   });
   
-  if (!response.ok) throw new Error('Failed to fetch file list');
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('AUTH_EXPIRED');
+    }
+    throw new Error('Failed to fetch file list');
+  }
   const data = await response.json();
   return data.files || [];
 }
@@ -114,7 +125,12 @@ export async function downloadFromGoogleDrive(accessToken: string, fileId: strin
     }
   });
   
-  if (!response.ok) throw new Error('Failed to download file');
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('AUTH_EXPIRED');
+    }
+    throw new Error('Failed to download file');
+  }
   return await response.blob();
 }
 

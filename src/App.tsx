@@ -158,7 +158,12 @@ function App() {
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
       console.error(e);
-      alert("구글 드라이브 저장 실패: " + e.message);
+      if (e.message === 'AUTH_EXPIRED') {
+        setDriveToken(null);
+        alert("구글 로그인 인증이 만료되었습니다. 다시 '드라이브 저장' 버튼을 눌러 로그인해주세요.");
+      } else {
+        alert("구글 드라이브 저장 실패: " + e.message);
+      }
     } finally {
       setIsDriveSyncing(false);
     }
@@ -176,7 +181,12 @@ function App() {
       setShowDriveModal(true);
     } catch (e: any) {
       console.error(e);
-      alert("구글 드라이브 파일 목록 불러오기 실패: " + e.message);
+      if (e.message === 'AUTH_EXPIRED') {
+        setDriveToken(null);
+        alert("구글 로그인 인증이 만료되었습니다. 다시 시도해주세요.");
+      } else {
+        alert("구글 드라이브 파일 목록 불러오기 실패: " + e.message);
+      }
     }
   };
 
@@ -217,7 +227,12 @@ function App() {
       alert("성공적으로 불러왔습니다!");
     } catch (e: any) {
       console.error(e);
-      alert("파일 불러오기 실패: " + e.message);
+      if (e.message === 'AUTH_EXPIRED') {
+        setDriveToken(null);
+        alert("구글 로그인 인증이 만료되었습니다. 드라이브 버튼을 눌러 다시 시도해주세요.");
+      } else {
+        alert("파일 불러오기 실패: " + e.message);
+      }
     } finally {
       setIsDriveSyncing(false);
     }
