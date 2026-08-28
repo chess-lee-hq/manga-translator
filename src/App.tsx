@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, Maximize, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot } from 'lucide-react';
+import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import JSZip from 'jszip';
 import { translateMangaImage, retranslateTextGemini } from './lib/gemini';
@@ -58,17 +58,20 @@ function App() {
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
   const [aiModel, setAiModel] = useState<'flash' | 'pro'>('flash');
   const [showProWarning, setShowProWarning] = useState(false);
+  const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
+  const [editingText, setEditingText] = useState('');
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number, itemIndex: number } | null>(null);
   
   // Cache key is now `${provider}-${model}-${imageIndex}`
   const [translationCache, setTranslationCache] = useState<Record<string, TranslationResult[]>>({});
   
   const [isTranslating, setIsTranslating] = useState(false);
+  const [retryTrigger, setRetryTrigger] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   
   const [hoveredBubble, setHoveredBubble] = useState<{ imageIndex: number, bubbleIndex: number } | null>(null);
-  const [scale, setScale] = useState(0.9);
+  const [scale, setScale] = useState(1.0);
   
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
@@ -361,9 +364,11 @@ function App() {
     const img = allImages[idx];
     const base64Data = img.src.split(',')[1];
     
+    let rawResults: TranslationResult[];
+
     if (provider === 'google') {
       if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
-      return await translateMangaImage(googleKey, base64Data, img.mimeType, aiModel);
+      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, aiModel);
     } else {
       if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
       if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
@@ -372,8 +377,17 @@ function App() {
       const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, 'flash');
       
       // Pass 2: OpenAI를 통한 텍스트 전용 고품질 번역
-      return await translateMangaImageOpenAI(openaiKey, geminiResults, aiModel);
+      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, aiModel);
     }
+
+    // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
+    if (img.isSpread && rawResults.length > 0) {
+      const rightPage = rawResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) >= 500);
+      const leftPage = rawResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) < 500);
+      return [...rightPage, ...leftPage];
+    }
+    
+    return rawResults;
   };
 
   const [isRetranslating, setIsRetranslating] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
@@ -410,6 +424,26 @@ function App() {
     } finally {
       setIsRetranslating(null);
     }
+  };
+
+  const handleSaveEdit = (imgIndex: number, bubbleIndex: number) => {
+    if (!editingBubble) return;
+    const img = allImages[imgIndex];
+    const key = getCacheKey(provider, aiModel, img.file);
+
+    setTranslationCache(prev => {
+      const updated = { ...prev };
+      if (updated[key]) {
+        updated[key] = [...updated[key]];
+        updated[key][bubbleIndex] = {
+          ...updated[key][bubbleIndex],
+          translated_text: editingText
+        };
+        try { localStorage.setItem(key, JSON.stringify(updated[key])); } catch(e) {}
+      }
+      return updated;
+    });
+    setEditingBubble(null);
   };
 
   useEffect(() => {
@@ -471,7 +505,7 @@ function App() {
       
       translateMissing();
     }
-  }, [translationQueue.join(','), allImages, currentKey, aiModel, provider, getCacheKey]); 
+  }, [translationQueue.join(','), allImages, currentKey, aiModel, provider, getCacheKey, retryTrigger]); 
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -501,7 +535,6 @@ function App() {
 
   const handleZoomIn = () => setScale(s => Math.min(s + 0.1, 3.0));
   const handleZoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
-  const handleZoomReset = () => setScale(1.0);
 
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -665,52 +698,105 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100 font-sans h-screen overflow-hidden">
-      <header className="bg-white shadow-sm border-b px-6 py-4 flex items-center justify-between z-10 shrink-0">
-        <div className="flex items-center gap-2">
-          <ImageIcon className="text-blue-600" size={28} />
-          <h1 className="text-xl font-bold text-gray-800">Manga Translator</h1>
-        </div>
-        <div className="flex items-center gap-4">
+        <header className="bg-white shadow-sm border-b px-4 py-2 flex items-center justify-between z-10 shrink-0 w-full overflow-x-auto [&::-webkit-scrollbar]:hidden">
+        <div className="flex items-center gap-2 shrink-0">
+          <ImageIcon className="text-blue-600 shrink-0" size={24} />
+          <h1 className="text-lg font-bold text-gray-800 mr-2 whitespace-nowrap shrink-0">Manga Translator</h1>
           
-          <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shadow-inner">
-            <button 
-              onClick={() => setProvider('google')}
-              className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-all font-medium ${
-                provider === 'google' 
-                  ? 'bg-white shadow text-blue-600 border border-blue-200' 
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Cpu size={15} /> Google
+          {allImages.length > 0 && (
+            <>
+              <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0">
+                총 {allImages.length}장
+              </span>
+              
+              <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
+              
+              <button 
+                onClick={() => setViewMode(prev => prev === '1page' ? '2page' : '1page')}
+                className="flex items-center gap-1.5 px-3 py-1 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors text-xs font-medium border border-gray-200 whitespace-nowrap text-gray-700 shrink-0"
+              >
+                <BookOpen size={14} />
+                {viewMode === '1page' ? '1장' : '2장'}
+              </button>
+              
+              <div className="flex bg-gray-100 p-0.5 rounded-md border border-gray-200 shrink-0">
+                <button
+                  onClick={() => setScriptStyle('overlay')}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-all ${
+                    scriptStyle === 'overlay' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Layers size={14} /> 덮어쓰기
+                </button>
+                <button
+                  onClick={() => setScriptStyle('side')}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-all ${
+                    scriptStyle === 'side' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <PanelRight size={14} /> 우측 대본
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 rounded-md border border-gray-200 shrink-0 ml-1">
+                <button onClick={handleZoomOut} className="p-0.5 hover:bg-gray-200 rounded text-gray-600">
+                  <ZoomOut size={14} />
+                </button>
+                <span className="text-xs font-medium w-9 text-center text-gray-700">
+                  {Math.round(scale * 100)}%
+                </span>
+                <button onClick={handleZoomIn} className="p-0.5 hover:bg-gray-200 rounded text-gray-600">
+                  <ZoomIn size={14} />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 pl-4">
+          {allImages.length > 0 && (
+            <>
+              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-200 hover:bg-blue-100 shrink-0">
+                <Upload size={14} /> 추가
+              </button>
+              <button onClick={handleExportJSON} className="flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-medium border border-green-200 hover:bg-green-100 shrink-0">
+                <Save size={14} /> JSON
+              </button>
+              <button onClick={handleSaveToDrive} disabled={isDriveSyncing} className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-200 hover:bg-blue-100 disabled:opacity-50 shrink-0">
+                {isDriveSyncing ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} 드라이브
+              </button>
+              <button onClick={handleClearCache} className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium border border-red-200 hover:bg-red-100 shrink-0">
+                <Trash2 size={14} /> 비우기
+              </button>
+              <button onClick={() => { if(confirm('초기화하시겠습니까?')) { setAllImages([]); setTranslationCache({}); } }} className="flex items-center gap-1 px-2 py-1 bg-white text-red-600 rounded text-xs font-medium border border-red-200 hover:bg-red-50 shrink-0">
+                모두 지우기
+              </button>
+              
+              <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
+            </>
+          )}
+
+          <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0">
+            <button onClick={() => setProvider('google')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'google' ? 'bg-white shadow text-blue-600 border border-blue-200' : 'text-gray-500'}`}>
+              <Cpu size={12} /> Gemini 3.6 Flash
             </button>
-            <button 
-              onClick={() => setProvider('openai')}
-              className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-all font-medium ${
-                provider === 'openai' 
-                  ? 'bg-white shadow text-green-600 border border-green-200' 
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Bot size={15} /> OpenAI
+            <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'openai' ? 'bg-white shadow text-green-600 border border-green-200' : 'text-gray-500'}`}>
+              <Bot size={12} /> OpenAI gpt-4o
             </button>
           </div>
 
-          <div className="w-px h-6 bg-gray-300"></div>
-
-          <div className="flex items-center gap-2">
-            <Key size={18} className="text-gray-500" />
+          <div className="flex items-center shrink-0">
+            <Key size={14} className="text-gray-400 absolute ml-2 pointer-events-none" />
             <input
               type="password"
-              placeholder={`${provider === 'google' ? 'Gemini' : 'OpenAI'} API Key`}
+              placeholder="API Key"
               value={currentKey}
               onChange={handleKeyChange}
               autoComplete="new-password"
               data-1p-ignore="true"
               data-lpignore="true"
               spellCheck="false"
-              className={`border rounded-md px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 ${
-                provider === 'google' ? 'focus:ring-blue-500' : 'focus:ring-green-500'
-              }`}
+              className={`border rounded-md pl-7 pr-2 py-1 text-xs w-28 focus:w-48 transition-all focus:outline-none focus:ring-1 ${provider === 'google' ? 'focus:ring-blue-500' : 'focus:ring-green-500'}`}
             />
           </div>
         </div>
@@ -722,7 +808,7 @@ function App() {
           ref={fileInputRef}
           className="hidden" 
           multiple 
-          accept="image/*,application/json"
+          accept="image/*,application/json,.zip,.cbz"
           onChange={(e) => {
             if (e.target.files) processFiles(e.target.files);
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -766,124 +852,6 @@ function App() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col gap-4 h-full rounded-xl overflow-hidden">
-            
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-2 flex justify-between items-center shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden">
-              <div className="flex items-center gap-2 px-2 shrink-0">
-                <span className="font-semibold text-gray-700 flex items-center gap-2">
-                  <ImageIcon size={18} /> 만화 뷰어 
-                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border">
-                    총 {allImages.length}장
-                  </span>
-                </span>
-                
-                <div className="w-px h-5 bg-gray-300 mx-2"></div>
-                
-                <button 
-                  onClick={() => setViewMode(prev => prev === '1page' ? '2page' : '1page')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 rounded-md transition-colors text-sm font-medium border border-gray-200 whitespace-nowrap text-gray-700"
-                >
-                  <BookOpen size={16} />
-                  {viewMode === '1page' ? '1장' : '2장'}
-                </button>
-                
-                <div className="w-px h-5 bg-gray-300 mx-1"></div>
-
-                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-indigo-50/50 rounded-md border border-indigo-100 shrink-0">
-                  <Cpu size={16} className="text-indigo-500" />
-                  <span className="text-sm font-bold text-indigo-700">
-                    {provider === 'google' ? 'Gemini 3.6 Flash' : 'OpenAI gpt-4o'}
-                  </span>
-                </div>
-
-                <div className="w-px h-5 bg-gray-300 mx-1"></div>
-
-                <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
-                  <button
-                    onClick={() => setScriptStyle('overlay')}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-all ${
-                      scriptStyle === 'overlay' 
-                        ? 'bg-white text-blue-600 shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Layers size={14} />
-                    덮어쓰기
-                  </button>
-                  <button
-                    onClick={() => setScriptStyle('side')}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-all ${
-                      scriptStyle === 'side' 
-                        ? 'bg-white text-blue-600 shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <PanelRight size={14} />
-                    우측 대본
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors text-sm font-medium border border-blue-200 shadow-sm"
-                >
-                  <Upload size={16} /> 이미지 추가
-                </button>
-
-                <button 
-                  onClick={handleExportJSON}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded-md hover:bg-green-100 transition-colors text-sm font-medium border border-green-200 shadow-sm"
-                  title="브라우저에 JSON 파일로 다운로드"
-                >
-                  <Save size={16} /> JSON 저장
-                </button>
-                
-                <button 
-                  onClick={handleSaveToDrive}
-                  disabled={isDriveSyncing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors text-sm font-medium border border-blue-200 shadow-sm disabled:opacity-50"
-                  title="구글 드라이브에 클라우드 세이브"
-                >
-                  {isDriveSyncing ? <Loader2 size={16} className="animate-spin" /> : <Cloud size={16} />} 
-                  드라이브 저장
-                </button>
-                
-                <button 
-                  onClick={handleClearCache}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 rounded-md hover:bg-red-100 transition-colors text-sm font-medium border border-red-200 shadow-sm"
-                  title="브라우저에 자동 저장된 모든 번역 기록 삭제"
-                >
-                  <Trash2 size={16} /> 캐시 비우기
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-md border border-gray-200">
-                <button onClick={handleZoomOut} className="p-1 hover:bg-gray-200 rounded text-gray-600" title="축소">
-                  <ZoomOut size={18} />
-                </button>
-                <span className="text-sm font-medium w-12 text-center text-gray-700">
-                  {Math.round(scale * 100)}%
-                </span>
-                <button onClick={handleZoomIn} className="p-1 hover:bg-gray-200 rounded text-gray-600" title="확대">
-                  <ZoomIn size={18} />
-                </button>
-                <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                <button onClick={handleZoomReset} className="p-1 hover:bg-gray-200 rounded text-gray-600" title="초기화">
-                  <Maximize size={18} />
-                </button>
-              </div>
-
-              <div className="px-2">
-                <button
-                  onClick={() => setAllImages([])}
-                  className="text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md transition border border-red-200"
-                >
-                  모두 지우기
-                </button>
-              </div>
-            </div>
 
             <div className="flex-1 flex gap-4 min-h-0">
               
@@ -963,16 +931,17 @@ function App() {
                                     <span 
                                       className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
                                       style={{
-                                        fontSize: `clamp(${10 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
+                                        fontSize: `clamp(${14 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
                                         fontWeight: '800',
                                         lineHeight: '1.15', 
-                                        wordBreak: 'break-all', 
-                                        overflowWrap: 'anywhere',
+                                        wordBreak: 'keep-all', 
+                                        overflowWrap: 'break-word',
                                         textAlign: 'center',
                                         letterSpacing: '-0.02em',
-                                        width: '100%',
+                                        minWidth: '100%',
+                                        maxWidth: '200%',
                                         minHeight: '100%',
-                                        padding: '4%' 
+                                        padding: '4px 8px' 
                                       }}
                                     >
                                       {result.translated_text}
@@ -1070,8 +1039,20 @@ function App() {
                       if (!results) {
                         return (
                           <div key={`loading-${imgIndex}`} className="flex flex-col items-center justify-center py-10 text-gray-400">
-                            <Loader2 className="animate-spin mb-2" size={24} />
-                            <span className="text-sm">Page {imgIndex + 1} 번역을 불러오는 중...</span>
+                            {isTranslating ? (
+                              <>
+                                <Loader2 className="animate-spin mb-2" size={24} />
+                                <span className="text-sm">Page {imgIndex + 1} 번역을 불러오는 중...</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertTriangle className="text-red-400 mb-2" size={24} />
+                                <span className="text-sm text-red-500">Page {imgIndex + 1} 번역 실패 (오류 발생)</span>
+                                <button onClick={() => setRetryTrigger(prev => prev + 1)} className="mt-2 px-3 py-1 bg-gray-100 rounded text-xs text-gray-600 hover:bg-gray-200">
+                                  다시 시도
+                                </button>
+                              </>
+                            )}
                           </div>
                         );
                       }
@@ -1125,25 +1106,65 @@ function App() {
                                   {globalScriptCounter}
                                 </div>
                                 <div className="flex flex-col flex-1">
-                                  <p className="text-gray-800 font-medium leading-relaxed break-keep text-[15px]">
-                                    {result.translated_text}
-                                  </p>
-                                  {result.original_text && (
-                                    <p className="text-gray-400 text-[11px] mt-1.5 font-serif leading-snug tracking-wide">
-                                      {renderFurigana(result.original_text)}
-                                    </p>
+                                  {editingBubble?.imgIndex === imgIndex && editingBubble?.bubbleIndex === bubbleIndex ? (
+                                    <div className="flex flex-col gap-2">
+                                      <textarea
+                                        value={editingText}
+                                        onChange={(e) => setEditingText(e.target.value)}
+                                        className="w-full p-2 text-[15px] text-gray-800 border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-blue-50/30"
+                                        rows={3}
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleSaveEdit(imgIndex, bubbleIndex);
+                                          } else if (e.key === 'Escape') {
+                                            setEditingBubble(null);
+                                          }
+                                        }}
+                                      />
+                                      <div className="flex justify-end gap-1 mt-1">
+                                        <button onClick={() => setEditingBubble(null)} className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 transition-colors" title="취소 (Esc)">
+                                          <X size={14} />
+                                        </button>
+                                        <button onClick={() => handleSaveEdit(imgIndex, bubbleIndex)} className="p-1.5 hover:bg-green-100 bg-green-50 text-green-600 rounded-md transition-colors" title="저장 (Enter)">
+                                          <Check size={14} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <p className="text-gray-800 font-medium leading-relaxed break-keep text-[15px]">
+                                        {result.translated_text}
+                                      </p>
+                                      {result.original_text && (
+                                        <p className="text-gray-400 text-[11px] mt-1.5 font-serif leading-snug tracking-wide">
+                                          {renderFurigana(result.original_text)}
+                                        </p>
+                                      )}
+                                    </>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-2 text-gray-300">
+                                <div className="flex flex-col items-center gap-2 text-gray-300 justify-center">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingBubble({ imgIndex, bubbleIndex });
+                                      setEditingText(result.translated_text);
+                                    }}
+                                    title="직접 번역 텍스트 수정하기"
+                                    className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors"
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
                                   <button 
                                     onClick={() => handleRetranslate(imgIndex, bubbleIndex, result.original_text)}
                                     disabled={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex}
-                                    title="이 문장만 다시 번역하기"
+                                    title="이 문장만 다시 AI 재번역"
                                     className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
                                   >
                                     <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
                                   </button>
-                                  <GripVertical size={16} className="cursor-grab hover:text-gray-500" />
+                                  <GripVertical size={16} className="cursor-grab hover:text-gray-500 mt-1" />
                                 </div>
                               </div>
                             );

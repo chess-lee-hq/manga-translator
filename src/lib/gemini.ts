@@ -9,23 +9,36 @@ export interface TranslationResult {
 export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, aiModel: 'flash' | 'pro' = 'flash'): Promise<TranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
   
-  const prompt = `You are a professional manga translator with deep knowledge of Japanese culture, slang, and contextual nuances.
-Analyze the provided manga page image and do the following:
-1. Find all text bubbles and text elements containing Japanese.
-2. Accurately transcribe the original Japanese text. **IMPORTANT**: For Kanji, you MUST include furigana in parentheses immediately after the Kanji, like this: 漢字(かんじ). Do not add parentheses for pure hiragana/katakana.
-3. Translate the text into highly natural, conversational Korean. Adapt the tone, emotion, idioms, and character speech styles to match a high-quality professional Korean webtoon or comic book.
-4. Provide the bounding box for each text element.
-5. **IMPORTANT**: You must strictly sort the detected text elements according to these traditional manga reading rules:
-   - Rule 1 (Panel Order): Manga panels are read from Right to Left as the primary direction, and then Top to Bottom. You must process the panels in this exact sequence.
-   - Rule 2 (Text Order within Panel): Inside each panel, text bubbles are read from Top-Right to Bottom-Left.
-   Always group text bubbles by their visually containing panel first, and then sort them internally using Rule 2.
-6. **IMPORTANT**: Completely ignore and exclude repetitive formatting dots (leader dots, ellipses like "..........") often found in table of contents. Do not extract or translate them, and do not include them in bounding boxes.
+  const prompt = `# Role & Objective
+너는 일본 만화 번역 및 시각 레이아웃 분석 전문가야. 
+제공된 일본 만화 페이지 이미지에서 텍스트를 정확히 인식(OCR)하고, 자연스러운 한국어로 번역하여 지정된 순서대로 출력해.
 
-Respond ONLY with a JSON array of objects. Each object must exactly match this format:
-- "original_text": the original Japanese text with furigana in parentheses.
-- "translated_text": the highly natural Korean translation.
-- "box_2d": the bounding box as [ymin, xmin, ymax, xmax] where values are integers from 0 to 1000. 
-Make sure the bounding box tightly surrounds the text.`;
+# Layout & Reading Order Rules (중요)
+1. **일본 만화 읽기 순서 준수 (우→좌, 상→하)**:
+   - 컷(Panel) 순서: 페이지의 **[오른쪽 위 → 왼쪽 위 → 오른쪽 아래 → 왼쪽 아래]** 흐름으로 번역해.
+   - 컷 내부 말풍선 순서: 동일 컷 안에서도 **[우측 상단 말풍선 → 좌측/하단 말풍선]** 순서로 처리해.
+2. **세로쓰기 인식**:
+   - 세로로 적힌 일본어는 **[오른쪽 열에서 왼쪽 열로, 각 열은 위에서 아래로]** 읽어 하나의 문장으로 완성해.
+   - 장음 부호(ー), 촉음(っ), 손글씨 오탈자를 문맥에 맞게 보정해.
+3. **요소 분리 (Type Classification)**:
+   - \`[대사]\`: 일반 말풍선, 생각 풍선, 내레이션 박스 속 텍스트.
+   - \`[효과음]\`: 배경에 그려진 의성어/의태어(오노마토페).
+   - \`[지문/배경]\`: 말풍선 밖 손글씨 츳코미, 간판, 배경 문자 등.
+
+# Translation Guidelines
+- 직역투를 피하고, 컷 속 인물의 표정과 상황에 어울리는 자연스러운 한국어 구어체로 번역해.
+- 캐릭터의 말투(반말, 존댓말, 격식체, 비꼬는 말투 등)를 문맥에 맞게 살려줘.
+- 효과음은 한국 만화 연출에 어울리는 의성어/의태어로 치환해 (예: ドキドキ → 두근두근).
+
+# System Output Constraints (절대 규칙)
+1. **Furigana**: 한자(Kanji) 뒤에는 반드시 괄호 안에 요미가나를 적어. 예: 漢字(かんじ). 히라가나/가타카나만 있는 경우는 적지 마.
+2. **Exclude Dots**: 목차 등에 나오는 반복되는 점("..........")은 절대 인식하지도, 번역하지도 마.
+3. **JSON Only**: 반드시 JSON 배열(Array) 형식으로만 응답해. 마크다운이나 다른 설명은 절대 추가하지 마.
+4. **No Tags in Output**: 번역된 텍스트 앞에 [대사], [효과음] 등의 분류 태그를 절대 적지 마. (분류는 번역 톤을 정할 때만 속으로 참고해)
+5. **JSON Schema**: 배열 안의 각 객체는 반드시 아래 3개의 key를 가져야 해.
+  - "original_text": 요미가나가 포함된 일본어 원문.
+  - "translated_text": 자연스러운 고품질 한국어 번역문 (태그 없이 번역된 내용만).
+  - "box_2d": 텍스트를 감싸는 바운딩 박스. [ymin, xmin, ymax, xmax] 형식의 0~1000 사이 정수 배열.`;
 
   // 구글 API가 에러 메시지로 직접 지정해준 완벽하게 호환되는 버전으로 최종 세팅합니다.
   const modelName = aiModel === 'pro' ? 'gemini-3.1-pro-preview' : 'gemini-3.6-flash';
@@ -49,11 +62,23 @@ Make sure the bounding box tightly surrounds the text.`;
       });
       break; // Success
     } catch (err: any) {
-      if (err.message?.includes('503') || err.message?.includes('UNAVAILABLE') || err.status === 503) {
+      let errMessage = err.message;
+      if (typeof errMessage === 'string' && errMessage.includes('503')) {
+        try {
+          const parsed = JSON.parse(errMessage);
+          if (parsed.error?.message) errMessage = parsed.error.message;
+        } catch(e) {}
+      }
+
+      if (errMessage?.includes('503') || errMessage?.includes('UNAVAILABLE') || errMessage?.includes('high demand') || err.status === 503) {
         retries--;
-        if (retries === 0) throw err;
-        console.warn('503 Error, retrying in 2 seconds...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (retries === 0) {
+          throw new Error(`구글 서버 과부하 (503): 사용량이 너무 많습니다. 잠시 후 다시 시도해주세요. (${errMessage})`);
+        }
+        
+        const waitTime = (4 - retries) * 3000; // 3s, 6s, 9s...
+        console.warn(`503 Error (High Demand), retrying in ${waitTime/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         throw err; // Other errors (like 404) crash immediately
       }
@@ -64,7 +89,18 @@ Make sure the bounding box tightly surrounds the text.`;
   if (!text) throw new Error("No response from Gemini API");
   
   try {
-    let translationResults: TranslationResult[] = JSON.parse(text);
+    let cleanText = text.trim();
+    if (cleanText.startsWith('```json')) {
+      cleanText = cleanText.substring(7);
+    } else if (cleanText.startsWith('```')) {
+      cleanText = cleanText.substring(3);
+    }
+    if (cleanText.endsWith('```')) {
+      cleanText = cleanText.substring(0, cleanText.length - 3);
+    }
+    cleanText = cleanText.trim();
+    
+    let translationResults: TranslationResult[] = JSON.parse(cleanText);
 
     // 프론트엔드에서 한 번 더 완벽한 일본 만화 읽는 순서로 정렬합니다.
     translationResults.sort((a, b) => {
