@@ -3,7 +3,8 @@ import type { TranslationResult } from './gemini';
 export async function translateMangaImageOpenAI(
   apiKey: string, 
   geminiResults: TranslationResult[], 
-  _geminiVersion: '3.6' | '3.7' = '3.6'
+  _geminiVersion: '3.6' | '3.7' = '3.6',
+  glossary?: Record<string, string>
 ): Promise<TranslationResult[]> {
   
   if (geminiResults.length === 0) return [];
@@ -17,11 +18,15 @@ export async function translateMangaImageOpenAI(
     original_text: res.original_text
   }));
 
+  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
+    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
+    : '';
+
   const prompt = `You are a professional manga translator with deep knowledge of Japanese culture, slang, and contextual nuances.
 I will provide you with a JSON array of extracted Japanese text elements from a manga page. 
 Your task is to translate the "original_text" of each element into highly natural, conversational Korean. 
 Adapt the tone, emotion, idioms, and character speech styles to match a high-quality professional Korean webtoon or comic book.
-
+${glossaryInstruction}
 You MUST respond ONLY with a JSON object containing a single key "translations" which maps to an array of objects. 
 Each object in the array MUST match this format:
 {
@@ -95,11 +100,15 @@ Each object in the array MUST match this format:
   }
 }
 
-export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6'): Promise<string> {
+export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const modelName = 'gpt-5.6-terra';
   
+  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
+    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
+    : '';
+
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
-  
+${glossaryInstruction}
 Original text: ${originalText}
 
 Respond ONLY with the translated Korean text string, nothing else. Do not include quotes or JSON formatting.`;

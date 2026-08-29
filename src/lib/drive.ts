@@ -5,6 +5,7 @@ export interface MangaSaveData {
   version: string;
   timestamp: string;
   lastReadPage?: number;
+  glossary?: Record<string, string>;
   images: {
     filename: string;
     mimeType: string;
@@ -139,13 +140,15 @@ export async function createMangaZip(
   translations: Record<string, TranslationResult[]>,
   provider: string,
   aiModel: string,
-  lastReadPage: number = 0
+  lastReadPage: number = 0,
+  glossary?: Record<string, string>
 ): Promise<Blob> {
   const zip = new JSZip();
   const manifest: MangaSaveData = {
     version: '1.0',
     timestamp: new Date().toISOString(),
     lastReadPage,
+    glossary,
     images: []
   };
 
@@ -178,7 +181,8 @@ export async function createMangaZip(
 export async function extractMangaZip(zipBlob: Blob, provider: string, geminiVersion: string): Promise<{
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
-  lastReadPage: number
+  lastReadPage: number,
+  glossary?: Record<string, string>
 }> {
   const zip = await JSZip.loadAsync(zipBlob);
   const dataFile = zip.file("manga_data.json");
@@ -218,5 +222,5 @@ export async function extractMangaZip(zipBlob: Blob, provider: string, geminiVer
     }
   }
 
-  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0 };
+  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0, glossary: manifest.glossary };
 }

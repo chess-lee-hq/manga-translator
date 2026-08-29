@@ -64,9 +64,23 @@ function App() {
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number, itemIndex: number } | null>(null);
   
+  const [glossary, setGlossary] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('manga-glossary-current');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
+  const [glossaryForm, setGlossaryForm] = useState({ original: '', translated: '' });
   // Cache key is now `${provider}-${model}-${imageIndex}`
   const [translationCache, setTranslationCache] = useState<Record<string, TranslationResult[]>>({});
   
+  const updateGlossary = (newGlossary: Record<string, string>) => {
+    setGlossary(newGlossary);
+    try {
+      localStorage.setItem('manga-glossary-current', JSON.stringify(newGlossary));
+    } catch {}
+  };
   const [isTranslating, setIsTranslating] = useState(false);
   const [retryTrigger, setRetryTrigger] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +170,7 @@ function App() {
         setDriveToken(token);
       }
       
-      const zipBlob = await createMangaZip(allImages, translationCache, provider, geminiVersion, currentPageIndex);
+      const zipBlob = await createMangaZip(allImages, translationCache, provider, geminiVersion, currentPageIndex, glossary);
       await uploadToGoogleDrive(token!, zipBlob, filename);
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
@@ -199,8 +213,9 @@ function App() {
     try {
       setLoadedFilename(filename.replace('.zip', ''));
       const zipBlob = await downloadFromGoogleDrive(driveToken!, fileId);
-      const { images, translations, lastReadPage } = await extractMangaZip(zipBlob, provider, geminiVersion);
+      const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob, provider, geminiVersion);
       
+      updateGlossary(loadedGlossary || {});
       const loadedImages: UploadedImage[] = [];
       for (const img of images) {
         const imgProps = await new Promise<{width: number, height: number, isSpread: boolean}>((resolve) => {
@@ -385,7 +400,7 @@ function App() {
 
     if (provider === 'google') {
       if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
-      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
+      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion, glossary);
     } else {
       if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
       if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
@@ -394,7 +409,7 @@ function App() {
       const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
       
       // Pass 2: OpenAI를 통한 텍스트 전용 고품질 번역
-      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion);
+      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
     }
 
     // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
@@ -445,10 +460,10 @@ function App() {
       let newTranslation = "";
       if (provider === 'google') {
         if (!googleKey) throw new Error("Google API 키가 필요합니다.");
-        newTranslation = await retranslateTextGemini(googleKey, originalText, geminiVersion);
+        newTranslation = await retranslateTextGemini(googleKey, originalText, geminiVersion, glossary);
       } else {
         if (!openaiKey) throw new Error("OpenAI API 키가 필요합니다.");
-        newTranslation = await retranslateTextOpenAI(openaiKey, originalText, geminiVersion);
+        newTranslation = await retranslateTextOpenAI(openaiKey, originalText, geminiVersion, glossary);
       }
 
       setTranslationCache(prev => {
@@ -824,6 +839,9 @@ function App() {
               </button>
               <button onClick={handleSaveToDrive} disabled={isDriveSyncing} className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-200 hover:bg-blue-100 disabled:opacity-50 shrink-0">
                 {isDriveSyncing ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} 드라이브
+              </button>
+              <button onClick={() => setIsGlossaryOpen(true)} className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-medium border border-purple-200 hover:bg-purple-100 shrink-0">
+                <BookOpen size={14} /> 단어장
               </button>
               <button onClick={handleClearCache} className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium border border-red-200 hover:bg-red-100 shrink-0">
                 <Trash2 size={14} /> 비우기
@@ -1298,6 +1316,16 @@ function App() {
                                     >
                                       <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
                                     </button>
+                                    <button 
+                                      onClick={() => {
+                                        setGlossaryForm({ original: result.original_text, translated: result.translated_text });
+                                        setIsGlossaryOpen(true);
+                                      }}
+                                      title="단어장에 추가 (부분 추출)"
+                                      className="p-1 hover:text-purple-500 hover:bg-purple-50 rounded transition-colors"
+                                    >
+                                      <BookOpen size={14} />
+                                    </button>
                                     <div className="w-px h-3 bg-gray-200 mx-1"></div>
                                     <GripVertical size={16} className="cursor-grab hover:text-gray-500" />
                                   </div>
@@ -1320,6 +1348,100 @@ function App() {
 
 
       </main>
+
+      {/* Glossary Modal */}
+      {isGlossaryOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-all">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3 text-purple-600">
+                <BookOpen size={24} />
+                <h3 className="text-lg font-bold text-gray-800">단어장 (Translation Memory)</h3>
+              </div>
+              <button onClick={() => setIsGlossaryOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="flex gap-2 mb-6">
+              <input 
+                type="text" 
+                placeholder="원문 (예: センゴク)" 
+                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm"
+                value={glossaryForm.original}
+                onChange={e => setGlossaryForm({...glossaryForm, original: e.target.value})}
+              />
+              <input 
+                type="text" 
+                placeholder="번역 (예: 전국)" 
+                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm"
+                value={glossaryForm.translated}
+                onChange={e => setGlossaryForm({...glossaryForm, translated: e.target.value})}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && glossaryForm.original && glossaryForm.translated) {
+                    updateGlossary({ ...glossary, [glossaryForm.original]: glossaryForm.translated });
+                    setGlossaryForm({ original: '', translated: '' });
+                  }
+                }}
+              />
+              <button 
+                onClick={() => {
+                  if (glossaryForm.original && glossaryForm.translated) {
+                    updateGlossary({ ...glossary, [glossaryForm.original]: glossaryForm.translated });
+                    setGlossaryForm({ original: '', translated: '' });
+                  }
+                }}
+                disabled={!glossaryForm.original || !glossaryForm.translated}
+                className="px-4 py-2 bg-purple-600 text-white rounded font-medium hover:bg-purple-700 disabled:opacity-50"
+              >
+                추가
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-[200px]">
+              {Object.keys(glossary).length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                  <BookOpen size={32} className="mb-2 opacity-50" />
+                  <p>등록된 단어가 없습니다.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {Object.entries(glossary).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between p-3 bg-gray-50 rounded border border-gray-100 hover:border-gray-200">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-gray-500 font-mono">원문</span>
+                        <span className="font-medium text-gray-800">{k}</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex flex-col items-end">
+                          <span className="text-xs text-gray-500 font-mono">번역</span>
+                          <span className="font-bold text-purple-600">{v}</span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const newGlossary = { ...glossary };
+                            delete newGlossary[k];
+                            updateGlossary(newGlossary);
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                          title="삭제"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center">
+              <span>현재: {loadedFilename || "새 문서"}</span>
+              <button onClick={() => setIsGlossaryOpen(false)} className="px-4 py-2 bg-gray-100 text-gray-700 rounded font-medium hover:bg-gray-200">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Drive Load Modal */}
       {showDriveModal && (

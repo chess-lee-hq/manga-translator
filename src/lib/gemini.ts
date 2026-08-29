@@ -7,13 +7,17 @@ export interface TranslationResult {
   is_edited_box?: boolean;
 }
 
-export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6'): Promise<TranslationResult[]> {
+export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<TranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
   
+  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
+    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
+    : '';
+
   const prompt = `# Role & Objective
 너는 일본 만화 번역 및 시각 레이아웃 분석 전문가야. 
 제공된 일본 만화 페이지 이미지에서 텍스트를 정확히 인식(OCR)하고, 자연스러운 한국어로 번역하여 지정된 순서대로 출력해.
-
+${glossaryInstruction}
 # Layout & Reading Order Rules (중요)
 1. **일본 만화 읽기 순서 준수 (우→좌, 상→하)**:
    - 컷(Panel) 순서: 페이지의 **[오른쪽 위 → 왼쪽 위 → 오른쪽 아래 → 왼쪽 아래]** 흐름으로 번역해.
@@ -137,11 +141,16 @@ export async function translateMangaImage(apiKey: string, base64Image: string, m
   }
 }
 
-export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: '3.6' | '3.7' = '3.6'): Promise<string> {
+export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
   const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
   
+  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
+    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
+    : '';
+
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
+${glossaryInstruction}
   
 Original text: ${originalText}
 
