@@ -5,6 +5,7 @@ export interface TranslationResult {
   translated_text: string;
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized to 1000
   is_edited_box?: boolean;
+  disable_keep_all?: boolean;
 }
 
 export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<TranslationResult[]> {

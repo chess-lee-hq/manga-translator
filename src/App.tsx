@@ -451,6 +451,19 @@ function App() {
     });
   };
 
+  const handleToggleKeepAll = (imgIndex: number, bubbleIndex: number) => {
+    const img = allImages[imgIndex];
+    const key = getCacheKey(provider, geminiVersion, img.file);
+    setTranslationCache(prev => {
+      const currentArr = prev[key] || [];
+      if (!currentArr[bubbleIndex]) return prev;
+      const newArr = [...currentArr];
+      newArr[bubbleIndex] = { ...newArr[bubbleIndex], disable_keep_all: !newArr[bubbleIndex].disable_keep_all };
+      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      return { ...prev, [key]: newArr };
+    });
+  };
+
   const handleRetranslate = async (imgIndex: number, bubbleIndex: number, originalText: string) => {
     setIsRetranslating({ imgIndex, bubbleIndex });
     try {
@@ -1018,10 +1031,12 @@ function App() {
                                   <span 
                                     className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
                                     style={{
-                                      fontSize: `clamp(${11 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
+                                      fontSize: `clamp(${13 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
                                       fontWeight: '800',
                                       lineHeight: '1.15', 
-                                      wordBreak: 'keep-all', 
+                                      wordBreak: result.disable_keep_all ? 'break-all' : 'keep-all', 
+                                      lineBreak: result.disable_keep_all ? 'anywhere' : 'auto',
+                                      whiteSpace: 'pre-wrap',
                                       overflowWrap: 'break-word',
                                       textAlign: 'center',
                                       letterSpacing: '-0.02em',
@@ -1041,6 +1056,8 @@ function App() {
                                       key={bubbleIndex}
                                       initialBox={[newYmin, newXmin, newYmin + expandedHeight, newXmin + expandedWidth]}
                                       onChange={(newBox: [number, number, number, number]) => handleBoxChange(imgIndex, bubbleIndex, newBox)}
+                                      isKeepAll={!result.disable_keep_all}
+                                      onToggleKeepAll={() => handleToggleKeepAll(imgIndex, bubbleIndex)}
                                     >
                                       {textContent}
                                     </BoxEditor>

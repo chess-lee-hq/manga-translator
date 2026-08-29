@@ -3,10 +3,12 @@ import { useState, useRef, useEffect } from 'react';
 interface BoxEditorProps {
   initialBox: [number, number, number, number];
   onChange: (newBox: [number, number, number, number]) => void;
+  isKeepAll?: boolean;
+  onToggleKeepAll?: () => void;
   children: React.ReactNode;
 }
 
-export function BoxEditor({ initialBox, onChange, children }: BoxEditorProps) {
+export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, children }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const isDragging = useRef(false);
   const isResizing = useRef(false);
@@ -72,6 +74,18 @@ export function BoxEditor({ initialBox, onChange, children }: BoxEditorProps) {
       onPointerDown={(e) => handlePointerDown(e, 'move')}
     >
       {children}
+      {onToggleKeepAll && (
+        <button
+          className="absolute -top-3 -right-3 px-1.5 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onToggleKeepAll();
+          }}
+          title="단어 묶음(Keep-all) 해제 토글"
+        >
+          {isKeepAll ? '묶음' : '풀림'}
+        </button>
+      )}
       <div 
         className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full cursor-se-resize shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center justify-center"
         onPointerDown={(e) => handlePointerDown(e, 'resize')}
