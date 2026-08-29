@@ -6,6 +6,7 @@ import { translateMangaImage, retranslateTextGemini } from './lib/gemini';
 import { translateMangaImageOpenAI, retranslateTextOpenAI } from './lib/openai';
 import { uploadToGoogleDrive, listMangaSaves, downloadFromGoogleDrive, createMangaZip, extractMangaZip } from './lib/drive';
 import type { TranslationResult } from './lib/gemini';
+import { BoxEditor } from './BoxEditor';
 
 interface UploadedImage {
   src: string;
@@ -49,6 +50,7 @@ function App() {
   const [driveToken, setDriveToken] = useState<string | null>(null);
   const [isDriveSyncing, setIsDriveSyncing] = useState(false);
   const [showDriveModal, setShowDriveModal] = useState(false);
+  const [loadedFilename, setLoadedFilename] = useState<string | null>(null);
   const [driveSaves, setDriveSaves] = useState<any[]>([]);
   const [driveSearchQuery, setDriveSearchQuery] = useState('');
 
@@ -59,6 +61,7 @@ function App() {
   const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [isEditingBoxes, setIsEditingBoxes] = useState(false);
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number, itemIndex: number } | null>(null);
   
   // Cache key is now `${provider}-${model}-${imageIndex}`
@@ -141,7 +144,7 @@ function App() {
       return;
     }
     
-    const defaultName = `Manga_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+    const defaultName = loadedFilename ? `${loadedFilename}.zip` : `Manga_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
     const filename = window.prompt("구글 드라이브에 저장할 파일 이름을 입력해주세요 (확장자 .zip 포함):", defaultName);
     if (!filename) return;
 
@@ -190,10 +193,11 @@ function App() {
     }
   };
 
-  const handleSelectDriveFile = async (fileId: string) => {
+  const handleSelectDriveFile = async (fileId: string, filename: string) => {
     setIsDriveSyncing(true);
     setShowDriveModal(false);
     try {
+      setLoadedFilename(filename.replace('.zip', ''));
       const zipBlob = await downloadFromGoogleDrive(driveToken!, fileId);
       const { images, translations, lastReadPage } = await extractMangaZip(zipBlob, provider, geminiVersion);
       
@@ -253,6 +257,7 @@ function App() {
     
     if (zipFile && !jsonFile) { // jsonFile이 있으면 아마 구글 드라이브나 자체 백업 ZIP일 수 있음
       try {
+        setLoadedFilename(zipFile.name.replace('.zip', '').replace('.cbz', ''));
         const zip = await JSZip.loadAsync(zipFile);
         const extractedFiles: File[] = [];
         
@@ -403,6 +408,33 @@ function App() {
   };
 
   const [isRetranslating, setIsRetranslating] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
+
+  const handleDeleteTranslation = (imgIndex: number, bubbleIndex: number) => {
+    if (!confirm('이 번역을 삭제하시겠습니까? (오버레이 화면에서도 삭제됩니다)')) return;
+    const img = allImages[imgIndex];
+    const key = getCacheKey(provider, geminiVersion, img.file);
+    
+    setTranslationCache(prev => {
+      const currentArr = prev[key] || [];
+      const newArr = currentArr.filter((_, idx) => idx !== bubbleIndex);
+      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      return { ...prev, [key]: newArr };
+    });
+  };
+
+  const handleBoxChange = (imgIndex: number, bubbleIndex: number, newBox: [number, number, number, number]) => {
+    const img = allImages[imgIndex];
+    const key = getCacheKey(provider, geminiVersion, img.file);
+    setTranslationCache(prev => {
+      const currentArr = prev[key] || [];
+      const newArr = [...currentArr];
+      if (newArr[bubbleIndex]) {
+        newArr[bubbleIndex] = { ...newArr[bubbleIndex], box_2d: newBox, is_edited_box: true };
+      }
+      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      return { ...prev, [key]: newArr };
+    });
+  };
 
   const handleRetranslate = async (imgIndex: number, bubbleIndex: number, originalText: string) => {
     setIsRetranslating({ imgIndex, bubbleIndex });
@@ -714,6 +746,11 @@ function App() {
         <div className="flex items-center gap-2 shrink-0">
           <ImageIcon className="text-blue-600 shrink-0" size={24} />
           <h1 className="text-lg font-bold text-gray-800 mr-2 whitespace-nowrap shrink-0">Manga Translator</h1>
+          {loadedFilename && (
+            <span className="text-xs bg-indigo-100 text-indigo-700 font-medium px-2 py-0.5 rounded-full border border-indigo-200 mr-2 whitespace-nowrap shrink-0">
+              📂 {loadedFilename}
+            </span>
+          )}
           
           {allImages.length > 0 && (
             <>
@@ -749,6 +786,17 @@ function App() {
                   <PanelRight size={14} /> 우측 대본
                 </button>
               </div>
+
+              {scriptStyle === 'overlay' && (
+                <button
+                  onClick={() => setIsEditingBoxes(prev => !prev)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors text-xs font-medium border whitespace-nowrap shrink-0 ${
+                    isEditingBoxes ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <GripVertical size={14} /> 영역 수정
+                </button>
+              )}
 
               <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 rounded-md border border-gray-200 shrink-0 ml-1">
                 <button onClick={handleZoomOut} className="p-0.5 hover:bg-gray-200 rounded text-gray-600">
@@ -917,12 +965,19 @@ function App() {
                               const boxWidth = xmax - xmin;
                               const boxHeight = ymax - ymin;
                               
-                              const expandedWidth = boxWidth * 1.3;
-                              const expandedHeight = boxHeight * 1.1;
-                              const cx = xmin + boxWidth / 2;
-                              const cy = ymin + boxHeight / 2;
-                              const newXmin = cx - expandedWidth / 2;
-                              const newYmin = cy - expandedHeight / 2;
+                              let expandedWidth = boxWidth;
+                              let expandedHeight = boxHeight;
+                              let newXmin = xmin;
+                              let newYmin = ymin;
+
+                              if (!result.is_edited_box) {
+                                expandedWidth = boxWidth * 1.3;
+                                expandedHeight = boxHeight * 1.1;
+                                const cx = xmin + boxWidth / 2;
+                                const cy = ymin + boxHeight / 2;
+                                newXmin = cx - expandedWidth / 2;
+                                newYmin = cy - expandedHeight / 2;
+                              }
                               
                               const top = `${(newYmin / 1000) * 100}%`;
                               const left = `${(newXmin / 1000) * 100}%`;
@@ -938,8 +993,41 @@ function App() {
                                 const charsPerLine = Math.max(1, Math.sqrt(textLen * aspect));
                                 const lines = Math.max(1, textLen / charsPerLine);
 
-                                const maxCqi = (100 / charsPerLine) * 0.9;
-                                const maxCqh = (100 / (lines * 1.15)) * 0.95;
+                                const maxCqi = (100 / charsPerLine) * 0.85;
+                                const maxCqh = (100 / (lines * 1.15)) * 0.9;
+
+                                const textContent = (
+                                  <span 
+                                    className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
+                                    style={{
+                                      fontSize: `clamp(${11 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
+                                      fontWeight: '800',
+                                      lineHeight: '1.15', 
+                                      wordBreak: 'keep-all', 
+                                      overflowWrap: 'break-word',
+                                      textAlign: 'center',
+                                      letterSpacing: '-0.02em',
+                                      minWidth: '100%',
+                                      maxWidth: '200%',
+                                      minHeight: '100%',
+                                      padding: '4px 8px' 
+                                    }}
+                                  >
+                                    {result.translated_text}
+                                  </span>
+                                );
+
+                                if (isEditingBoxes) {
+                                  return (
+                                    <BoxEditor
+                                      key={bubbleIndex}
+                                      initialBox={[newYmin, newXmin, newYmin + expandedHeight, newXmin + expandedWidth]}
+                                      onChange={(newBox: [number, number, number, number]) => handleBoxChange(imgIndex, bubbleIndex, newBox)}
+                                    >
+                                      {textContent}
+                                    </BoxEditor>
+                                  );
+                                }
 
                                 return (
                                   <div
@@ -951,24 +1039,7 @@ function App() {
                                       zIndex: 20
                                     }}
                                   >
-                                    <span 
-                                      className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
-                                      style={{
-                                        fontSize: `clamp(${14 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
-                                        fontWeight: '800',
-                                        lineHeight: '1.15', 
-                                        wordBreak: 'keep-all', 
-                                        overflowWrap: 'break-word',
-                                        textAlign: 'center',
-                                        letterSpacing: '-0.02em',
-                                        minWidth: '100%',
-                                        maxWidth: '200%',
-                                        minHeight: '100%',
-                                        padding: '4px 8px' 
-                                      }}
-                                    >
-                                      {result.translated_text}
-                                    </span>
+                                    {textContent}
                                   </div>
                                 );
                               }
@@ -1020,11 +1091,25 @@ function App() {
                     <ChevronLeft size={20} /> 다음 페이지
                   </button>
                   
-                  <div className="font-semibold text-gray-600 bg-white px-4 py-1.5 rounded-full border shadow-inner">
-                    {viewMode === '2page' 
-                      ? `${currentPageIndex + 1} - ${Math.min(currentPageIndex + 2, allImages.length)} / ${allImages.length}`
-                      : `${currentPageIndex + 1} / ${allImages.length}`
-                    }
+                  <div className="font-semibold text-gray-600 bg-white px-3 py-1.5 rounded-full border shadow-inner flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={allImages.length}
+                      value={currentPageIndex + 1}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        if (!isNaN(val) && val >= 1 && val <= allImages.length) {
+                          setCurrentPageIndex(viewMode === '2page' && val % 2 === 0 ? val - 2 : val - 1);
+                        }
+                      }}
+                      className="w-16 text-center border border-gray-300 rounded py-0.5 px-1 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm font-medium"
+                    />
+                    {viewMode === '2page' ? (
+                      <span>- {Math.min(currentPageIndex + 2, allImages.length)} / {allImages.length}</span>
+                    ) : (
+                      <span>/ {allImages.length}</span>
+                    )}
                   </div>
 
                   <button 
@@ -1038,7 +1123,7 @@ function App() {
               </div>
 
               {scriptStyle === 'side' && (
-                <div className="w-[580px] shrink-0 flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden transition-all duration-300">
+                <div className="w-[450px] shrink-0 flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden transition-all duration-300">
                   <div className="p-3 border-b border-gray-200 bg-gray-50 flex justify-between items-center shrink-0">
                     <span className="font-semibold text-gray-700 flex items-center gap-2">
                       <MessageSquareText size={18} /> 한국어 대본
@@ -1186,27 +1271,37 @@ function App() {
                                       )}
                                     </>
                                   )}
-                                </div>
-                                <div className="flex flex-col items-center gap-2 text-gray-300 justify-center">
-                                  <button 
-                                    onClick={() => {
-                                      setEditingBubble({ imgIndex, bubbleIndex });
-                                      setEditingText(result.translated_text);
-                                    }}
-                                    title="직접 번역 텍스트 수정하기"
-                                    className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors"
-                                  >
-                                    <Edit2 size={14} />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleRetranslate(imgIndex, bubbleIndex, result.original_text)}
-                                    disabled={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex}
-                                    title="이 문장만 다시 AI 재번역"
-                                    className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
-                                  >
-                                    <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
-                                  </button>
-                                  <GripVertical size={16} className="cursor-grab hover:text-gray-500 mt-1" />
+
+                                  <div className="flex items-center gap-1 text-gray-300 justify-end mt-2 opacity-50 hover:opacity-100 transition-opacity">
+                                    <button 
+                                      onClick={() => {
+                                        setEditingBubble({ imgIndex, bubbleIndex });
+                                        setEditingText(result.translated_text);
+                                      }}
+                                      title="직접 번역 텍스트 수정하기"
+                                      className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors"
+                                    >
+                                      <Edit2 size={14} />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteTranslation(imgIndex, bubbleIndex)}
+                                      title="번역 삭제하기"
+                                      className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleRetranslate(imgIndex, bubbleIndex, result.original_text)}
+                                      disabled={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex}
+                                      title="이 문장만 다시 AI 재번역"
+                                      className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
+                                    >
+                                      <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
+                                    </button>
+                                    <div className="w-px h-3 bg-gray-200 mx-1"></div>
+                                    <GripVertical size={16} className="cursor-grab hover:text-gray-500" />
+                                  </div>
+
                                 </div>
                               </div>
                             );
@@ -1256,7 +1351,7 @@ function App() {
                   .map((file) => (
                     <button
                       key={file.id}
-                      onClick={() => handleSelectDriveFile(file.id)}
+                      onClick={() => handleSelectDriveFile(file.id, file.name)}
                       className="w-full text-left p-3 hover:bg-blue-50 transition-colors flex flex-col gap-1"
                     >
                       <span className="font-medium text-gray-800">{file.name.replace('.zip', '')}</span>
