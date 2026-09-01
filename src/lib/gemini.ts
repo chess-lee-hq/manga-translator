@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 export interface TranslationResult {
   original_text: string;
@@ -63,6 +63,21 @@ ${glossaryInstruction}
         ],
         config: {
           responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                original_text: { type: Type.STRING },
+                translated_text: { type: Type.STRING },
+                box_2d: { 
+                  type: Type.ARRAY, 
+                  items: { type: Type.INTEGER } 
+                }
+              },
+              required: ['original_text', 'translated_text', 'box_2d']
+            }
+          },
           temperature: 0.35,
         }
       });
@@ -164,4 +179,111 @@ Respond ONLY with the translated Korean text string, nothing else. Do not includ
   });
   
   return response?.text?.trim() || "번역 실패";
+}
+
+export interface GridTranslationResult {
+  id: number;
+  original_text: string;
+  translated_text: string;
+}
+
+export async function translateGridImage(
+  apiKey: string, 
+  fullBase64Image: string, 
+  gridBase64Image: string, 
+  mimeType: string, 
+  expectedCells: number, 
+  geminiVersion: '3.6' | '3.7' = '3.6', 
+  glossary?: Record<string, string>
+): Promise<GridTranslationResult[]> {
+  const ai = new GoogleGenAI({ apiKey });
+  
+  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
+    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
+    : '';
+
+  const prompt = `# Role & Objective
+너는 최고 수준의 일본 만화 번역가야.
+두 장의 이미지를 첨부했어:
+1. 원본 만화 페이지 전체 이미지 (문맥, 상황, 인물 표정 파악용)
+2. 해당 페이지에서 대사가 있는 말풍선들만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지.
+
+크롭 이미지의 각 칸(Cell) 왼쪽 위에는 빨간색 글씨로 고유 번호(예: #1, #2)가 적혀 있어.
+너의 임무는 원본 이미지를 통해 상황을 파악한 뒤, 크롭 이미지의 각 칸에 적힌 텍스트를 정확히 인식(OCR)하고 한국어로 번역하는 거야.
+${glossaryInstruction}
+# Translation Guidelines
+- 직역을 피하고, 원본 이미지의 인물 표정과 상황에 어울리는 한국어 구어체로 번역해.
+- 캐릭터의 말투를 문맥에 맞게 살려줘.
+- 세로쓰기 텍스트는 오른쪽 열에서 왼쪽 열로, 각 열은 위에서 아래로 읽어 하나의 문장으로 완성해.
+- 한자(Kanji) 뒤에는 괄호 안에 요미가나를 적어.
+
+# System Output Constraints (절대 규칙)
+1. **JSON Only**: 반드시 JSON 배열(Array) 형식으로만 응답해.
+2. **JSON Schema**: 배열 안의 각 객체는 반드시 아래 3개의 key를 가져야 해.
+  - "id": 크롭 이미지에 적힌 빨간색 번호 (숫자형). 1부터 ${expectedCells}까지 빠짐없이 출력해.
+  - "original_text": 일본어 원문 (단어장이나 원문 확인용).
+  - "translated_text": 자연스러운 한국어 번역문.
+  
+결과 JSON 배열의 길이는 정확히 ${expectedCells}개여야 해. 빈 칸이더라도 빈 문자열("")을 넣어서라도 맞춰.`;
+
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
+
+  let response;
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      response = await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          { role: 'user', parts: [
+            { text: prompt },
+            { inlineData: { data: fullBase64Image, mimeType } },
+            { inlineData: { data: gridBase64Image, mimeType: 'image/jpeg' } }
+          ]}
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.INTEGER },
+                original_text: { type: Type.STRING },
+                translated_text: { type: Type.STRING }
+              },
+              required: ['id', 'original_text', 'translated_text']
+            }
+          },
+          temperature: 0.35,
+        }
+      });
+      break; 
+    } catch (err: any) {
+      let errMessage = err.message || err.toString();
+      if (errMessage?.includes('503') || errMessage?.includes('UNAVAILABLE') || errMessage?.includes('high demand') || err.status === 503) {
+        retries--;
+        if (retries === 0) throw new Error(`구글 서버 과부하 (503). 잠시 후 다시 시도해주세요.`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  const text = response?.text;
+  if (!text) throw new Error("No response from Gemini API");
+  
+  try {
+    let cleanText = text.trim();
+    if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.substring(7);
+    else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.substring(3);
+    if (cleanText.endsWith('\`\`\`')) cleanText = cleanText.substring(0, cleanText.length - 3);
+    cleanText = cleanText.trim();
+    
+    let results: GridTranslationResult[] = JSON.parse(cleanText);
+    return results;
+  } catch (error: any) {
+    throw new Error("Failed to parse JSON response: " + error.message);
+  }
 }

@@ -2,10 +2,13 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import JSZip from 'jszip';
-import { translateMangaImage, retranslateTextGemini } from './lib/gemini';
+import { translateMangaImage, retranslateTextGemini, translateGridImage } from './lib/gemini';
 import { translateMangaImageOpenAI, retranslateTextOpenAI } from './lib/openai';
+import { detectSpeechBubbles } from './lib/yolo';
+import { createGridImageFromBoxes } from './lib/imageUtils';
+import { sortTextByReadingOrder } from './lib/readingOrder';
 import { uploadToGoogleDrive, listMangaSaves, downloadFromGoogleDrive, createMangaZip, extractMangaZip } from './lib/drive';
-import type { TranslationResult } from './lib/gemini';
+import type { TranslationResult, GridTranslationResult } from './lib/gemini';
 import { BoxEditor } from './BoxEditor';
 
 interface UploadedImage {
@@ -396,20 +399,86 @@ function App() {
     const img = allImages[idx];
     const base64Data = img.src.split(',')[1];
     
-    let rawResults: TranslationResult[];
+    let rawResults: TranslationResult[] = [];
 
-    if (provider === 'google') {
-      if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
-      rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion, glossary);
+    // Step 1: Create an HTMLImageElement to process with YOLO and Canvas
+    const imgElement = new Image();
+    imgElement.src = img.src;
+    await new Promise((resolve) => { imgElement.onload = resolve; });
+
+    // Step 2: YOLO Detection for Panels and Speech Bubbles
+    const allBoxes = await detectSpeechBubbles(imgElement);
+    
+    // Step 2.5: Sort text boxes using reading order algorithm
+    const textBoxes = sortTextByReadingOrder(allBoxes);
+    
+    // If no text bubbles found, fallback to the old full-page OCR method
+    if (textBoxes.length === 0) {
+      console.warn("No text bubbles detected by YOLO, falling back to full page OCR.");
+      if (provider === 'google') {
+        if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
+        rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion, glossary);
+      } else {
+        if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
+        if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
+        const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
+        rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
+      }
     } else {
-      if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
-      if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
-      
-      // Pass 1: Gemini를 통한 OCR 및 완벽한 위치(좌표) 추출 (가장 빠르고 싼 flash 모드로 고정)
-      const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
-      
-      // Pass 2: OpenAI를 통한 텍스트 전용 고품질 번역
-      rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
+      // Step 3: Create Grid Image
+      const gridResult = await createGridImageFromBoxes(imgElement, textBoxes);
+      if (!gridResult) return []; // Should not happen
+
+      const gridBase64 = gridResult.dataUrl.split(',')[1];
+      let gridTranslations: GridTranslationResult[] = [];
+
+      // Step 4: Translate Grid Image with LLM
+      if (provider === 'google') {
+        if (!googleKey) throw new Error("Google API 키를 먼저 입력해주세요.");
+        gridTranslations = await translateGridImage(googleKey, base64Data, gridBase64, img.mimeType, gridResult.cells.length, geminiVersion, glossary);
+      } else {
+        if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
+        if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
+        const geminiTranslations = await translateGridImage(googleKey, base64Data, gridBase64, img.mimeType, gridResult.cells.length, geminiVersion);
+        
+        // Convert to intermediate format for OpenAI pass
+        let geminiResults: TranslationResult[] = [];
+        for (const t of geminiTranslations) {
+          const cell = gridResult.cells.find(c => c.id === t.id);
+          if (cell) {
+            geminiResults.push({
+              original_text: t.original_text,
+              translated_text: t.translated_text,
+              box_2d: [
+                (cell.box.ymin / imgElement.height) * 1000,
+                (cell.box.xmin / imgElement.width) * 1000,
+                (cell.box.ymax / imgElement.height) * 1000,
+                (cell.box.xmax / imgElement.width) * 1000,
+              ]
+            });
+          }
+        }
+        
+        rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
+        gridTranslations = []; // Skip the next block since rawResults is already populated
+      }
+
+      // Step 5: Map Grid translations back to original coordinates
+      for (const t of gridTranslations) {
+        const cell = gridResult.cells.find(c => c.id === t.id);
+        if (cell) {
+          rawResults.push({
+            original_text: t.original_text,
+            translated_text: t.translated_text,
+            box_2d: [
+              (cell.box.ymin / imgElement.height) * 1000,
+              (cell.box.xmin / imgElement.width) * 1000,
+              (cell.box.ymax / imgElement.height) * 1000,
+              (cell.box.xmax / imgElement.width) * 1000,
+            ]
+          });
+        }
+      }
     }
 
     // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
