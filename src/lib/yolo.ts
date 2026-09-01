@@ -18,7 +18,8 @@ export interface BoundingBox {
 export async function loadYoloModel() {
   if (session) return;
   try {
-    session = await ort.InferenceSession.create('/manga109_yolo_s.onnx', {
+    const modelPath = import.meta.env.BASE_URL + 'manga109_yolo_s.onnx';
+    session = await ort.InferenceSession.create(modelPath, {
       executionProviders: ['wasm']
     });
     console.log("YOLO model loaded successfully.");
