@@ -65,6 +65,7 @@ function App() {
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
+  const [drawingBox, setDrawingBox] = useState<{imgIndex: number, startX: number, startY: number, currentX: number, currentY: number} | null>(null);
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number, itemIndex: number } | null>(null);
   
   const [glossary, setGlossary] = useState<Record<string, string>>(() => {
@@ -531,6 +532,88 @@ function App() {
       try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
       return { ...prev, [key]: newArr };
     });
+  };
+
+  const handleCreateAndTranslateBox = async (imgIndex: number, newBox2d: [number, number, number, number]) => {
+    const img = allImages[imgIndex];
+    const key = getCacheKey(provider, geminiVersion, img.file);
+    
+    let bubbleIndex = 0;
+    setTranslationCache(prev => {
+      const currentArr = prev[key] || [];
+      bubbleIndex = currentArr.length;
+      const newDummy: TranslationResult = {
+        box_2d: newBox2d,
+        original_text: "...",
+        translated_text: "번역 중...",
+        is_edited_box: true
+      };
+      const newArr = [...currentArr, newDummy];
+      return { ...prev, [key]: newArr };
+    });
+
+    setIsRetranslating({ imgIndex, bubbleIndex });
+    
+    try {
+      // 1. Create a single-box grid image
+      const imgElement = new Image();
+      imgElement.src = img.src;
+      await new Promise((resolve) => { imgElement.onload = resolve; });
+      
+      const w = img.width;
+      const h = img.height;
+      const ymin = (newBox2d[0] / 1000) * h;
+      const xmin = (newBox2d[1] / 1000) * w;
+      const ymax = (newBox2d[2] / 1000) * h;
+      const xmax = (newBox2d[3] / 1000) * w;
+      
+      const singleBox = [{ xmin, ymin, xmax, ymax, classId: 3, confidence: 1 }];
+      const gridResult = await createGridImageFromBoxes(imgElement, singleBox);
+      if (!gridResult) throw new Error("크롭 실패");
+      
+      const gridBase64 = gridResult.dataUrl.split(',')[1];
+      const fullBase64 = img.src.split(',')[1];
+      
+      let newTranslation = "";
+      let newOriginalText = "...";
+      
+      if (provider === 'google') {
+        if (!googleKey) throw new Error("Google API 키가 필요합니다.");
+        const results = await translateGridImage(googleKey, fullBase64, gridBase64, img.mimeType, 1, geminiVersion, glossary);
+        if (results && results[0]) {
+          newTranslation = results[0].translated_text;
+          newOriginalText = results[0].original_text || "...";
+        }
+      } else {
+        // OpenAI fallback (if implemented)
+        throw new Error("새 박스 생성 번역은 구글 제미나이만 지원합니다.");
+      }
+
+      setTranslationCache(prev => {
+        const updated = { ...prev };
+        if (updated[key]) {
+          updated[key] = [...updated[key]];
+          updated[key][bubbleIndex] = {
+            ...updated[key][bubbleIndex],
+            original_text: newOriginalText,
+            translated_text: newTranslation
+          };
+          try { localStorage.setItem(key, JSON.stringify(updated[key])); } catch(e) {}
+        }
+        return updated;
+      });
+    } catch (error: any) {
+      alert("새 영역 번역 실패: " + error.message);
+      setTranslationCache(prev => {
+        const updated = { ...prev };
+        if (updated[key]) {
+          updated[key] = updated[key].filter((_, i) => i !== bubbleIndex);
+        }
+        return updated;
+      });
+    } finally {
+      setIsRetranslating(null);
+    }
   };
 
   const handleRetranslate = async (imgIndex: number, bubbleIndex: number, originalText: string) => {
@@ -1052,6 +1135,66 @@ function App() {
                       return (
                         <div key={imgIndex} className="relative shadow-2xl bg-white select-none flex-shrink-0 group">
                           <div id={`manga-page-${imgIndex}`} className="relative bg-white">
+                            {isEditingBoxes && (
+                              <div
+                                className="absolute inset-0 z-40 cursor-crosshair"
+                                onPointerDown={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const x = ((e.clientX - rect.left) / rect.width) * 1000;
+                                  const y = ((e.clientY - rect.top) / rect.height) * 1000;
+                                  setDrawingBox({ imgIndex, startX: x, startY: y, currentX: x, currentY: y });
+                                }}
+                                onPointerMove={(e) => {
+                                  if (!drawingBox || drawingBox.imgIndex !== imgIndex) return;
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const x = ((e.clientX - rect.left) / rect.width) * 1000;
+                                  const y = ((e.clientY - rect.top) / rect.height) * 1000;
+                                  setDrawingBox(prev => prev ? { ...prev, currentX: x, currentY: y } : null);
+                                }}
+                                onPointerUp={(e) => {
+                                  if (!drawingBox || drawingBox.imgIndex !== imgIndex) return;
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const endX = ((e.clientX - rect.left) / rect.width) * 1000;
+                                  const endY = ((e.clientY - rect.top) / rect.height) * 1000;
+                                  
+                                  const xmin = Math.min(drawingBox.startX, endX);
+                                  const xmax = Math.max(drawingBox.startX, endX);
+                                  const ymin = Math.min(drawingBox.startY, endY);
+                                  const ymax = Math.max(drawingBox.startY, endY);
+                                  
+                                  setDrawingBox(null);
+                                  
+                                  // 너무 작은 박스는 무시
+                                  if (xmax - xmin < 20 || ymax - ymin < 20) return;
+                                  
+                                  handleCreateAndTranslateBox(imgIndex, [ymin, xmin, ymax, xmax]);
+                                }}
+                                onPointerLeave={() => {
+                                  if (drawingBox && drawingBox.imgIndex === imgIndex) {
+                                    setDrawingBox(null);
+                                  }
+                                }}
+                              />
+                            )}
+                            
+                            {drawingBox && drawingBox.imgIndex === imgIndex && (
+                              <div
+                                className="absolute border-2 border-blue-500 bg-blue-500/20 z-50 pointer-events-none"
+                                style={{
+                                  left: `${Math.min(drawingBox.startX, drawingBox.currentX) / 10}%`,
+                                  top: `${Math.min(drawingBox.startY, drawingBox.currentY) / 10}%`,
+                                  width: `${Math.abs(drawingBox.currentX - drawingBox.startX) / 10}%`,
+                                  height: `${Math.abs(drawingBox.currentY - drawingBox.startY) / 10}%`,
+                                }}
+                              />
+                            )}
+
                             <img
                               src={img.src}
                               alt={`Manga Page ${imgIndex + 1}`}
@@ -1376,29 +1519,42 @@ function App() {
                                     </>
                                   )}
 
-                                  <div className="flex items-center gap-1 text-gray-300 justify-end mt-2 opacity-50 hover:opacity-100 transition-opacity">
+                                  <div 
+                                    className="flex items-center gap-1 text-gray-300 justify-end mt-2 opacity-50 hover:opacity-100 transition-opacity"
+                                    onPointerDown={(e) => { e.stopPropagation(); }}
+                                  >
                                     <button 
-                                      onClick={() => {
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
                                         setEditingBubble({ imgIndex, bubbleIndex });
                                         setEditingText(result.translated_text);
                                       }}
                                       title="직접 번역 텍스트 수정하기"
-                                      className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors"
+                                      className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors relative z-10"
                                     >
                                       <Edit2 size={14} />
                                     </button>
                                     <button 
-                                      onClick={() => handleDeleteTranslation(imgIndex, bubbleIndex)}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleDeleteTranslation(imgIndex, bubbleIndex);
+                                      }}
                                       title="번역 삭제하기"
-                                      className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                      className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors relative z-10"
                                     >
                                       <Trash2 size={14} />
                                     </button>
                                     <button 
-                                      onClick={() => handleRetranslate(imgIndex, bubbleIndex, result.original_text)}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleRetranslate(imgIndex, bubbleIndex, result.original_text);
+                                      }}
                                       disabled={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex}
                                       title="이 문장만 다시 AI 재번역"
-                                      className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
+                                      className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 relative z-10"
                                     >
                                       <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
                                     </button>
