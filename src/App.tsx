@@ -121,7 +121,11 @@ function App() {
   }, []);
 
   const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7'|'3.8', ov: 'sol'|'terra'|'luna', file: File) => {
-    return `manga-cache-${p}-${gv}-${p === "openai" ? ov : "none"}-${file.name}-${file.size}`;
+    // 이전 버전(어제 이전) 캐시와의 완벽한 호환성 유지
+    if (p === 'google' || (p === 'openai' && ov === 'terra')) {
+      return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
+    }
+    return `manga-cache-${p}-${gv}-${ov}-${file.name}-${file.size}`;
   }, []);
 
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
