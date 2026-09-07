@@ -8,7 +8,7 @@ export interface TranslationResult {
   disable_keep_all?: boolean;
 }
 
-export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<TranslationResult[]> {
+export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<TranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0
@@ -47,7 +47,7 @@ ${glossaryInstruction}
   - "box_2d": 텍스트를 감싸는 바운딩 박스. [ymin, xmin, ymax, xmax] 형식의 0~1000 사이 정수 배열.`;
 
   // 사용자가 선택한 제미나이 엔진 버전을 사용합니다.
-  const modelName = geminiVersion === '3.8' ? 'gemini-3.8-flash' : geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
 
   let response;
   let retries = 3;
@@ -157,9 +157,9 @@ ${glossaryInstruction}
   }
 }
 
-export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<string> {
+export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
-  const modelName = geminiVersion === '3.8' ? 'gemini-3.8-flash' : geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0
     ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
@@ -193,7 +193,7 @@ export async function translateGridImage(
   gridBase64Image: string, 
   mimeType: string, 
   expectedCells: number, 
-  geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', 
+  geminiVersion: '3.6' | '3.7' = '3.6', 
   glossary?: Record<string, string>
 ): Promise<GridTranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
@@ -226,7 +226,7 @@ ${glossaryInstruction}
   
 결과 JSON 배열의 길이는 정확히 ${expectedCells}개여야 해. 빈 칸이더라도 빈 문자열("")을 넣어서라도 맞춰.`;
 
-  const modelName = geminiVersion === '3.8' ? 'gemini-3.8-flash' : geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
+  const modelName = geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash';
 
   let response;
   let retries = 3;

@@ -61,8 +61,8 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
-  const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7' | '3.8'>('3.6');
-  const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra' | 'luna'>('terra');
+  const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
+  const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra'>('terra');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
@@ -120,7 +120,7 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
-  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7'|'3.8', ov: 'sol'|'terra'|'luna', file: File) => {
+  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7', ov: 'sol'|'terra', file: File) => {
     // 이전 버전(어제 이전) 캐시와의 완벽한 호환성 유지
     if (p === 'google' || (p === 'openai' && ov === 'terra')) {
       return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
@@ -590,8 +590,19 @@ function App() {
           newOriginalText = results[0].original_text || "...";
         }
       } else {
-        // OpenAI fallback (if implemented)
-        throw new Error("새 박스 생성 번역은 구글 제미나이만 지원합니다.");
+        // OpenAI fallback: Use Gemini to extract text, then OpenAI to translate
+        if (!googleKey) throw new Error("새 박스 인식을 위해 Google API 키가 반드시 필요합니다.");
+        if (!openaiKey) throw new Error("번역을 위해 OpenAI API 키가 필요합니다.");
+        
+        const results = await translateGridImage(googleKey, fullBase64, gridBase64, img.mimeType, 1, geminiVersion, glossary);
+        if (results && results[0]) {
+          newOriginalText = results[0].original_text || "...";
+          if (newOriginalText !== "..." && newOriginalText.trim() !== "") {
+            newTranslation = await retranslateTextOpenAI(openAiVersion, openaiKey, newOriginalText, geminiVersion, glossary);
+          } else {
+            newTranslation = "인식된 텍스트가 없습니다.";
+          }
+        }
       }
 
       setTranslationCache(prev => {
@@ -963,7 +974,7 @@ function App() {
                   <Layers size={14} /> 덮어쓰기
                 </button>
                 <button
-                  onClick={() => setScriptStyle('side')}
+                  onClick={() => { setScriptStyle('side'); setIsEditingBoxes(false); }}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-all ${
                     scriptStyle === 'side' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
@@ -1030,12 +1041,11 @@ function App() {
             </button>
             <select 
               value={geminiVersion}
-              onChange={(e) => { setGeminiVersion(e.target.value as '3.6' | '3.7' | '3.8'); setProvider('google'); }}
+              onChange={(e) => { setGeminiVersion(e.target.value as '3.6' | '3.7'); setProvider('google'); }}
               className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'google' ? 'bg-white shadow-sm text-blue-600 border-blue-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
             >
               <option value="3.6">3.6 Flash</option>
               <option value="3.7">3.7 Flash</option>
-              <option value="3.8">3.8 Flash</option>
             </select>
             
             <div className="w-px h-3 bg-gray-300 mx-1"></div>
@@ -1045,12 +1055,11 @@ function App() {
             </button>
             <select 
               value={openAiVersion}
-              onChange={(e) => { setOpenAiVersion(e.target.value as 'sol' | 'terra' | 'luna'); setProvider('openai'); }}
+              onChange={(e) => { setOpenAiVersion(e.target.value as 'sol' | 'terra'); setProvider('openai'); }}
               className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
             >
               <option value="sol">Sol</option>
               <option value="terra">Terra</option>
-              <option value="luna">Luna</option>
             </select>
           </div>
 

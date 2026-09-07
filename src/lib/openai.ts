@@ -1,10 +1,10 @@
 import type { TranslationResult } from './gemini';
 
 export async function translateMangaImageOpenAI(
-  openAiVersion: 'sol' | 'terra' | 'luna',
+  openAiVersion: 'sol' | 'terra',
   apiKey: string, 
   geminiResults: TranslationResult[], 
-  _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6',
+  _geminiVersion: '3.6' | '3.7' = '3.6',
   glossary?: Record<string, string>
 ): Promise<TranslationResult[]> {
   
@@ -102,7 +102,7 @@ Each object in the array MUST match this format:
 }
 
 export async function retranslateTextOpenAI(
-  openAiVersion: 'sol' | 'terra' | 'luna',apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<string> {
+  openAiVersion: 'sol' | 'terra',apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const modelName = `gpt-5.6-${openAiVersion}`;
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0
