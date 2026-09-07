@@ -62,6 +62,7 @@ function App() {
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
   const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7' | '3.8'>('3.6');
+  const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra' | 'luna'>('terra');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
@@ -119,8 +120,8 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
-  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7'|'3.8', file: File) => {
-    return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
+  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7'|'3.8', ov: 'sol'|'terra'|'luna', file: File) => {
+    return `manga-cache-${p}-${gv}-${p === "openai" ? ov : "none"}-${file.name}-${file.size}`;
   }, []);
 
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -423,7 +424,7 @@ function App() {
         if (!googleKey) throw new Error("OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.");
         if (!openaiKey) throw new Error("OpenAI API 키를 먼저 입력해주세요.");
         const geminiResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion);
-        rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
+        rawResults = await translateMangaImageOpenAI(openAiVersion, openaiKey, geminiResults, geminiVersion, glossary);
       }
     } else {
       // Step 3: Create Grid Image
@@ -460,7 +461,7 @@ function App() {
           }
         }
         
-        rawResults = await translateMangaImageOpenAI(openaiKey, geminiResults, geminiVersion, glossary);
+        rawResults = await translateMangaImageOpenAI(openAiVersion, openaiKey, geminiResults, geminiVersion, glossary);
         gridTranslations = []; // Skip the next block since rawResults is already populated
       }
 
@@ -497,7 +498,7 @@ function App() {
   const handleDeleteTranslation = (imgIndex: number, bubbleIndex: number) => {
     if (!confirm('이 번역을 삭제하시겠습니까? (오버레이 화면에서도 삭제됩니다)')) return;
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, img.file);
+    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
     
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
@@ -509,7 +510,7 @@ function App() {
 
   const handleBoxChange = (imgIndex: number, bubbleIndex: number, newBox: [number, number, number, number]) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, img.file);
+    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
       const newArr = [...currentArr];
@@ -523,7 +524,7 @@ function App() {
 
   const handleToggleKeepAll = (imgIndex: number, bubbleIndex: number) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, img.file);
+    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
       if (!currentArr[bubbleIndex]) return prev;
@@ -536,7 +537,7 @@ function App() {
 
   const handleCreateAndTranslateBox = async (imgIndex: number, newBox2d: [number, number, number, number]) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, img.file);
+    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
     
     let bubbleIndex = 0;
     setTranslationCache(prev => {
@@ -620,7 +621,7 @@ function App() {
     setIsRetranslating({ imgIndex, bubbleIndex });
     try {
       const img = allImages[imgIndex];
-      const key = getCacheKey(provider, geminiVersion, img.file);
+      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
       
       let newTranslation = "";
       if (provider === 'google') {
@@ -628,7 +629,7 @@ function App() {
         newTranslation = await retranslateTextGemini(googleKey, originalText, geminiVersion, glossary);
       } else {
         if (!openaiKey) throw new Error("OpenAI API 키가 필요합니다.");
-        newTranslation = await retranslateTextOpenAI(openaiKey, originalText, geminiVersion, glossary);
+        newTranslation = await retranslateTextOpenAI(openAiVersion, openaiKey, originalText, geminiVersion, glossary);
       }
 
       setTranslationCache(prev => {
@@ -653,7 +654,7 @@ function App() {
   const handleSaveEdit = (imgIndex: number, bubbleIndex: number) => {
     if (!editingBubble) return;
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, img.file);
+    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
 
     setTranslationCache(prev => {
       const updated = { ...prev };
@@ -674,7 +675,7 @@ function App() {
     if (allImages.length === 0 || !currentKey || translationQueue.length === 0) return;
 
     const missingIndices = translationQueue.filter(i => {
-      const key = getCacheKey(provider, geminiVersion, allImages[i].file);
+      const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[i].file);
       return !translationCache[key];
     });
     
@@ -694,7 +695,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               visibleResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, geminiVersion, allImages[idx].file);
+                const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -713,7 +714,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               preloadResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, geminiVersion, allImages[idx].file);
+                const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -879,7 +880,7 @@ function App() {
 
     setTranslationCache(prev => {
       const img = allImages[targetImgIndex];
-      const key = getCacheKey(provider, geminiVersion, img.file);
+      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
       const results = [...(prev[key] || [])];
       
       const [movedItem] = results.splice(draggedItem.itemIndex, 1);
@@ -1035,9 +1036,18 @@ function App() {
             
             <div className="w-px h-3 bg-gray-300 mx-1"></div>
             
-            <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all font-medium ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}>
-              <Bot size={12} /> OpenAI 5.6 Terra
+            <button onClick={() => setProvider('openai')} className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}>
+              <Bot size={12} /> OpenAI 5.6
             </button>
+            <select 
+              value={openAiVersion}
+              onChange={(e) => { setOpenAiVersion(e.target.value as 'sol' | 'terra' | 'luna'); setProvider('openai'); }}
+              className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
+            >
+              <option value="sol">Sol (솔)</option>
+              <option value="terra">Terra (테라)</option>
+              <option value="luna">Luna (루나)</option>
+            </select>
           </div>
 
           <div className="flex items-center shrink-0">
@@ -1130,7 +1140,7 @@ function App() {
                       >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, geminiVersion, img.file);
+                      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
                       const results = translationCache[key] || [];
 
                       return (
@@ -1390,7 +1400,7 @@ function App() {
                   >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, geminiVersion, img.file);
+                      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
                       const results = translationCache[key];
                       if (!results) {
                         return (
@@ -1422,7 +1432,7 @@ function App() {
                                   const updated = { ...prev };
                                   // 현재 페이지부터 마지막 페이지까지, 잘못 저장된 빈 배열([]) 캐시를 모두 날려서 자동 번역을 재개시킵니다.
                                   for (let i = imgIndex; i < allImages.length; i++) {
-                                    const futureKey = getCacheKey(provider, geminiVersion, allImages[i].file);
+                                    const futureKey = getCacheKey(provider, geminiVersion, openAiVersion, allImages[i].file);
                                     if (updated[futureKey] && updated[futureKey].length === 0) {
                                       delete updated[futureKey];
                                     }

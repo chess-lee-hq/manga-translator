@@ -1,6 +1,7 @@
 import type { TranslationResult } from './gemini';
 
 export async function translateMangaImageOpenAI(
+  openAiVersion: 'sol' | 'terra' | 'luna',
   apiKey: string, 
   geminiResults: TranslationResult[], 
   _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6',
@@ -10,7 +11,7 @@ export async function translateMangaImageOpenAI(
   if (geminiResults.length === 0) return [];
 
   // 사용자의 요청에 따라 Pro/Flash 구분 없이 gpt-5.6-terra 엔진을 사용합니다.
-  const modelName = 'gpt-5.6-terra';
+  const modelName = `gpt-5.6-${openAiVersion}`;
   
   // 구글이 뽑아준 원문을 인덱스와 함께 추출
   const textPayload = geminiResults.map((res, index) => ({
@@ -100,8 +101,9 @@ Each object in the array MUST match this format:
   }
 }
 
-export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<string> {
-  const modelName = 'gpt-5.6-terra';
+export async function retranslateTextOpenAI(
+  openAiVersion: 'sol' | 'terra' | 'luna',apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<string> {
+  const modelName = `gpt-5.6-${openAiVersion}`;
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0
     ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
