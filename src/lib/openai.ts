@@ -3,7 +3,7 @@ import type { TranslationResult } from './gemini';
 export async function translateMangaImageOpenAI(
   apiKey: string, 
   geminiResults: TranslationResult[], 
-  _geminiVersion: '3.6' | '3.7' = '3.6',
+  _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6',
   glossary?: Record<string, string>
 ): Promise<TranslationResult[]> {
   
@@ -100,7 +100,7 @@ Each object in the array MUST match this format:
   }
 }
 
-export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
+export async function retranslateTextOpenAI(apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' | '3.8' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const modelName = 'gpt-5.6-terra';
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0

@@ -61,7 +61,7 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
-  const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
+  const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7' | '3.8'>('3.6');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
@@ -119,7 +119,7 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
-  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7', file: File) => {
+  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7'|'3.8', file: File) => {
     return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
   }, []);
 
@@ -1025,11 +1025,12 @@ function App() {
             </button>
             <select 
               value={geminiVersion}
-              onChange={(e) => { setGeminiVersion(e.target.value as '3.6' | '3.7'); setProvider('google'); }}
+              onChange={(e) => { setGeminiVersion(e.target.value as '3.6' | '3.7' | '3.8'); setProvider('google'); }}
               className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'google' ? 'bg-white shadow-sm text-blue-600 border-blue-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
             >
               <option value="3.6">3.6 Flash</option>
               <option value="3.7">3.7 Flash</option>
+              <option value="3.8">3.8 Flash</option>
             </select>
             
             <div className="w-px h-3 bg-gray-300 mx-1"></div>
