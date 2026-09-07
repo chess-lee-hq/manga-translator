@@ -1044,9 +1044,9 @@ function App() {
               onChange={(e) => { setOpenAiVersion(e.target.value as 'sol' | 'terra' | 'luna'); setProvider('openai'); }}
               className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
             >
-              <option value="sol">Sol (솔)</option>
-              <option value="terra">Terra (테라)</option>
-              <option value="luna">Luna (루나)</option>
+              <option value="sol">Sol</option>
+              <option value="terra">Terra</option>
+              <option value="luna">Luna</option>
             </select>
           </div>
 
