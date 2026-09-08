@@ -61,6 +61,7 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
+  const [exportState, setExportState] = useState<{ isExporting: boolean, currentIndex: number, zip: any }>({ isExporting: false, currentIndex: 0, zip: null });
   const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
   const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra'>('terra');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
@@ -967,6 +968,65 @@ function App() {
   };
 
   let globalScriptCounter = 0;
+  const startExportAll = () => {
+    if (allImages.length === 0) return;
+    const confirmMsg = `총 ${allImages.length}장의 덮어쓰기 이미지를 ZIP으로 압축하여 다운로드하시겠습니까?\n\n진행 중에는 화면이 번쩍거리며 수십 초 이상 걸릴 수 있습니다. 진행하시겠습니까?`;
+    if (!window.confirm(confirmMsg)) return;
+    
+    setExportState({ isExporting: true, currentIndex: 0, zip: new JSZip() });
+  };
+
+  useEffect(() => {
+    if (!exportState.isExporting || !exportState.zip) return;
+    
+    const { currentIndex, zip } = exportState;
+    
+    if (currentIndex >= allImages.length) {
+      zip.generateAsync({ type: "blob" }).then((content: Blob) => {
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = loadedFilename ? `${loadedFilename}_translated.zip` : `manga_translated.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setExportState({ isExporting: false, currentIndex: 0, zip: null });
+        alert('다운로드가 완료되었습니다!');
+      });
+      return;
+    }
+    
+    setCurrentPageIndex(currentIndex);
+    
+    const timer = setTimeout(async () => {
+      try {
+        const element = document.getElementById(`manga-page-${currentIndex}`);
+        if (element) {
+          const oldScale = scale;
+          setScale(1.0); // Reset scale for cleaner capture
+          await new Promise(res => setTimeout(res, 50)); // Wait for React to apply scale
+          
+          const canvas = await html2canvas(element, { useCORS: true, allowTaint: true, scale: 2 });
+          const imgData = canvas.toDataURL('image/png').split(',')[1];
+          
+          const padLength = Math.max(3, String(allImages.length).length);
+          const fileName = `page_${String(currentIndex + 1).padStart(padLength, '0')}.png`;
+          zip.file(fileName, imgData, { base64: true });
+          
+          setScale(oldScale); // Restore scale
+        }
+      } catch (err) {
+        console.error("Export page failed:", err);
+      } finally {
+        setExportState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1 }));
+      }
+    }, 200);
+    
+    return () => clearTimeout(timer);
+  }, [exportState, allImages.length, loadedFilename, scale]);
+
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100 font-sans h-screen overflow-hidden">
@@ -1046,6 +1106,9 @@ function App() {
             <>
               <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-200 hover:bg-blue-100 shrink-0">
                 <Upload size={14} /> 추가
+              </button>
+              <button onClick={startExportAll} disabled={exportState.isExporting} className="flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium border border-orange-200 hover:bg-orange-100 disabled:opacity-50 shrink-0">
+                {exportState.isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} ZIP
               </button>
               <button onClick={handleExportJSON} className="flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-medium border border-green-200 hover:bg-green-100 shrink-0">
                 <Save size={14} /> JSON
