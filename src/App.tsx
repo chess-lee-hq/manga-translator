@@ -120,12 +120,8 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
-  const getCacheKey = useCallback((p: 'google'|'openai', gv: '3.6'|'3.7', ov: 'sol'|'terra', file: File) => {
-    // 이전 버전(어제 이전) 캐시와의 완벽한 호환성 유지
-    if (p === 'google' || (p === 'openai' && ov === 'terra')) {
-      return `manga-cache-${p}-${gv}-${file.name}-${file.size}`;
-    }
-    return `manga-cache-${p}-${gv}-${ov}-${file.name}-${file.size}`;
+  const getCacheKey = useCallback((file: File) => {
+    return `manga-cache-unified-${file.name}-${file.size}`;
   }, []);
 
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -138,6 +134,42 @@ function App() {
       localStorage.setItem('manga-translator-openai-key', val);
     }
   };
+
+  // 기존 분할 캐시들을 새로운 통합 캐시(Unified Cache)로 자동 마이그레이션
+  useEffect(() => {
+    if (allImages.length === 0) return;
+    
+    setTranslationCache(prev => {
+      const next = { ...prev };
+      let changed = false;
+      
+      allImages.forEach(img => {
+        const unifiedKey = getCacheKey(img.file);
+        // 이미 통합 캐시가 있으면 스킵
+        if (next[unifiedKey] && next[unifiedKey].length > 0) return;
+
+        // 이 파일에 해당하는 예전 분할 캐시 키들을 모두 찾음 (이름과 용량으로 매칭)
+        const suffix = `-${img.file.name}-${img.file.size}`;
+        const oldKeys = Object.keys(next).filter(k => k.endsWith(suffix) && k !== unifiedKey);
+        
+        if (oldKeys.length > 0) {
+          // 가장 번역이 많이 된(길이가 긴) 캐시 데이터를 우선적으로 마이그레이션
+          let bestOldKey = oldKeys[0];
+          for (const k of oldKeys) {
+            if ((next[k] || []).length > (next[bestOldKey] || []).length) bestOldKey = k;
+          }
+          
+          if (next[bestOldKey] && next[bestOldKey].length > 0) {
+            next[unifiedKey] = [...next[bestOldKey]];
+            changed = true;
+            try { localStorage.setItem(unifiedKey, JSON.stringify(next[unifiedKey])); } catch(e) {}
+          }
+        }
+      });
+      
+      return changed ? next : prev;
+    });
+  }, [allImages, getCacheKey]);
 
   const currentKey = provider === 'google' ? googleKey : openaiKey;
 
@@ -502,7 +534,7 @@ function App() {
   const handleDeleteTranslation = (imgIndex: number, bubbleIndex: number) => {
     if (!confirm('이 번역을 삭제하시겠습니까? (오버레이 화면에서도 삭제됩니다)')) return;
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+    const key = getCacheKey(img.file);
     
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
@@ -514,7 +546,7 @@ function App() {
 
   const handleBoxChange = (imgIndex: number, bubbleIndex: number, newBox: [number, number, number, number]) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+    const key = getCacheKey(img.file);
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
       const newArr = [...currentArr];
@@ -528,7 +560,7 @@ function App() {
 
   const handleToggleKeepAll = (imgIndex: number, bubbleIndex: number) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+    const key = getCacheKey(img.file);
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
       if (!currentArr[bubbleIndex]) return prev;
@@ -541,7 +573,7 @@ function App() {
 
   const handleCreateAndTranslateBox = async (imgIndex: number, newBox2d: [number, number, number, number]) => {
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+    const key = getCacheKey(img.file);
     
     let bubbleIndex = 0;
     setTranslationCache(prev => {
@@ -636,7 +668,7 @@ function App() {
     setIsRetranslating({ imgIndex, bubbleIndex });
     try {
       const img = allImages[imgIndex];
-      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+      const key = getCacheKey(img.file);
       
       let newTranslation = "";
       if (provider === 'google') {
@@ -669,7 +701,7 @@ function App() {
   const handleSaveEdit = (imgIndex: number, bubbleIndex: number) => {
     if (!editingBubble) return;
     const img = allImages[imgIndex];
-    const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+    const key = getCacheKey(img.file);
 
     setTranslationCache(prev => {
       const updated = { ...prev };
@@ -690,7 +722,7 @@ function App() {
     if (allImages.length === 0 || !currentKey || translationQueue.length === 0) return;
 
     const missingIndices = translationQueue.filter(i => {
-      const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[i].file);
+      const key = getCacheKey(allImages[i].file);
       return !translationCache[key];
     });
     
@@ -710,7 +742,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               visibleResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[idx].file);
+                const key = getCacheKey(allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -729,7 +761,7 @@ function App() {
             setTranslationCache(prev => {
               const updated = { ...prev };
               preloadResults.forEach(({idx, results}) => {
-                const key = getCacheKey(provider, geminiVersion, openAiVersion, allImages[idx].file);
+                const key = getCacheKey(allImages[idx].file);
                 updated[key] = results;
                 try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
               });
@@ -895,7 +927,7 @@ function App() {
 
     setTranslationCache(prev => {
       const img = allImages[targetImgIndex];
-      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+      const key = getCacheKey(img.file);
       const results = [...(prev[key] || [])];
       
       const [movedItem] = results.splice(draggedItem.itemIndex, 1);
@@ -1153,7 +1185,7 @@ function App() {
                       >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+                      const key = getCacheKey(img.file);
                       const results = translationCache[key] || [];
 
                       return (
@@ -1413,7 +1445,7 @@ function App() {
                   >
                     {visibleIndices.map((imgIndex) => {
                       const img = allImages[imgIndex];
-                      const key = getCacheKey(provider, geminiVersion, openAiVersion, img.file);
+                      const key = getCacheKey(img.file);
                       const results = translationCache[key];
                       if (!results) {
                         return (
@@ -1445,7 +1477,7 @@ function App() {
                                   const updated = { ...prev };
                                   // 현재 페이지부터 마지막 페이지까지, 잘못 저장된 빈 배열([]) 캐시를 모두 날려서 자동 번역을 재개시킵니다.
                                   for (let i = imgIndex; i < allImages.length; i++) {
-                                    const futureKey = getCacheKey(provider, geminiVersion, openAiVersion, allImages[i].file);
+                                    const futureKey = getCacheKey(allImages[i].file);
                                     if (updated[futureKey] && updated[futureKey].length === 0) {
                                       delete updated[futureKey];
                                     }
