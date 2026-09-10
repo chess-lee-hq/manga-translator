@@ -67,6 +67,8 @@ export function sortTextByReadingOrder(boxes: BoundingBox[]): BoundingBox[] {
 /**
  * Sorts a list of boxes using a Top-to-Bottom, Right-to-Left heuristic, grouping by Y-tiers using relative height.
  */
+const TIER_THRESHOLD_RATIO = 3;
+
 export function sortMangaBoxesByTier<T>(
   boxes: T[], 
   getCoords: (b: T) => [number, number, number, number] // [ymin, xmin, ymax, xmax]
@@ -96,8 +98,7 @@ export function sortMangaBoxesByTier<T>(
     
     const yDiff = Math.abs(curr.centerY - prev.centerY);
     
-    // 상대적 임계값: 두 상자 평균 높이의 1/3 (상수화)
-    const TIER_THRESHOLD_RATIO = 3; 
+    // 상대적 임계값: 두 상자 평균 높이의 1/TIER_THRESHOLD_RATIO
     const threshold = (curr.height + prev.height) / TIER_THRESHOLD_RATIO;
 
     if (yDiff <= threshold) {
