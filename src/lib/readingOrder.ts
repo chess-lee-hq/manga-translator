@@ -13,7 +13,7 @@ export function sortTextByReadingOrder(boxes: BoundingBox[]): BoundingBox[] {
 
   // If no frames detected, just sort texts globally
   if (frames.length === 0) {
-    return sortMangaBoxes(texts);
+    return sortMangaBoxesByTier(texts, b => [b.ymin, b.xmin, b.ymax, b.xmax]);
   }
 
   // 1. Assign each text to the frame it overlaps most with
@@ -41,14 +41,14 @@ export function sortTextByReadingOrder(boxes: BoundingBox[]): BoundingBox[] {
   }
 
   // 2. Sort the frames
-  const sortedFrames = sortMangaBoxes(frames);
+  const sortedFrames = sortMangaBoxesByTier(frames, b => [b.ymin, b.xmin, b.ymax, b.xmax]);
 
   // 3. Sort texts inside each frame and collect
   const result: BoundingBox[] = [];
   for (const frame of sortedFrames) {
     const frameTexts = frameMap.get(frame) || [];
     if (frameTexts.length > 0) {
-      const sortedFrameTexts = sortMangaBoxes(frameTexts);
+      const sortedFrameTexts = sortMangaBoxesByTier(frameTexts, b => [b.ymin, b.xmin, b.ymax, b.xmax]);
       result.push(...sortedFrameTexts);
     }
   }
@@ -58,33 +58,39 @@ export function sortTextByReadingOrder(boxes: BoundingBox[]): BoundingBox[] {
   // Usually orphans are outside panels. We will just sort them and put them at the end.
   // A better way would be merging them into the global sort, but this is okay for now.
   if (orphans.length > 0) {
-    result.push(...sortMangaBoxes(orphans));
+    result.push(...sortMangaBoxesByTier(orphans, b => [b.ymin, b.xmin, b.ymax, b.xmax]));
   }
 
   return result;
 }
 
 /**
- * Sorts a list of boxes using a Top-to-Bottom, Right-to-Left heuristic.
+ * Sorts a list of boxes using a Top-to-Bottom, Right-to-Left heuristic, grouping by Y-tiers using relative height.
  */
-function sortMangaBoxes(boxes: BoundingBox[]): BoundingBox[] {
+export function sortMangaBoxesByTier<T>(
+  boxes: T[], 
+  getCoords: (b: T) => [number, number, number, number] // [ymin, xmin, ymax, xmax]
+): T[] {
   return [...boxes].sort((a, b) => {
-    const aCenterY = (a.ymin + a.ymax) / 2;
-    const bCenterY = (b.ymin + b.ymax) / 2;
+    const [a_ymin, a_xmin, a_ymax, a_xmax] = getCoords(a);
+    const [b_ymin, b_xmin, b_ymax, b_xmax] = getCoords(b);
+
+    const aCenterY = (a_ymin + a_ymax) / 2;
+    const bCenterY = (b_ymin + b_ymax) / 2;
     const yDiff = Math.abs(aCenterY - bCenterY);
     
-    const aHeight = a.ymax - a.ymin;
-    const bHeight = b.ymax - b.ymin;
+    const aHeight = a_ymax - a_ymin;
+    const bHeight = b_ymax - b_ymin;
     
-    // If y difference is larger than roughly 1/3 of their average height, they are on different vertical tiers.
-    const threshold = (aHeight + bHeight) / 3;
+    // 상대적 임계값: 두 상자 평균 높이의 50%
+    const threshold = (aHeight + bHeight) / 4;
     
     if (yDiff > threshold) {
       return aCenterY - bCenterY; // Top to bottom
     } else {
       // Same tier, sort right to left
-      const aCenterX = (a.xmin + a.xmax) / 2;
-      const bCenterX = (b.xmin + b.xmax) / 2;
+      const aCenterX = (a_xmin + a_xmax) / 2;
+      const bCenterX = (b_xmin + b_xmax) / 2;
       return bCenterX - aCenterX; // Right to left
     }
   });

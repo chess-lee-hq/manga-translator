@@ -1,3 +1,4 @@
+import { sortMangaBoxesByTier } from "./readingOrder";
 import { GoogleGenAI, Type } from '@google/genai';
 
 export interface TranslationResult {
@@ -125,32 +126,7 @@ ${glossaryInstruction}
     let translationResults: TranslationResult[] = JSON.parse(cleanText);
 
     // 프론트엔드에서 한 번 더 완벽한 일본 만화 읽는 순서로 정렬합니다.
-    translationResults.sort((a, b) => {
-      const [a_ymin, a_xmin, a_ymax, a_xmax] = a.box_2d;
-      const [b_ymin, b_xmin, b_ymax, b_xmax] = b.box_2d;
-      
-      const a_cy = (a_ymin + a_ymax) / 2;
-      const b_cy = (b_ymin + b_ymax) / 2;
-      const a_cx = (a_xmin + a_xmax) / 2;
-      const b_cx = (b_xmin + b_xmax) / 2;
-
-      // 1. 세로 단(Tier) 구분: Y축 중심점 차이가 크면 다른 단락으로 간주 (위에서 아래로)
-      const y_diff = Math.abs(a_cy - b_cy);
-      const TIER_THRESHOLD = 250; // 1000 기준 250 이상이면 다른 단락
-
-      if (y_diff > TIER_THRESHOLD) {
-        return a_cy - b_cy; // 상단 먼저
-      } else {
-        // 2. 같은 단락 내에서는 우측에서 좌측으로
-        const x_diff = Math.abs(a_cx - b_cx);
-        // 만약 X 좌표가 비슷하다면(같은 칸 내부), 위에서 아래로
-        if (x_diff > 100) {
-          return b_cx - a_cx; // 우측 먼저
-        } else {
-          return a_cy - b_cy; // 상단 먼저
-        }
-      }
-    });
+    translationResults = sortMangaBoxesByTier(translationResults, t => t.box_2d);
 
     return translationResults;
   } catch (error: any) {
@@ -294,8 +270,8 @@ ${glossaryInstruction}
   try {
     let cleanText = text.trim();
     if (cleanText.startsWith('```json')) cleanText = cleanText.substring(7);
-    else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.substring(3);
-    if (cleanText.endsWith('\`\`\`')) cleanText = cleanText.substring(0, cleanText.length - 3);
+    else if (cleanText.startsWith('```')) cleanText = cleanText.substring(3);
+    if (cleanText.endsWith('```')) cleanText = cleanText.substring(0, cleanText.length - 3);
     cleanText = cleanText.trim();
     
     let results: GridTranslationResult[] = JSON.parse(cleanText);

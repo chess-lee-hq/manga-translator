@@ -1,3 +1,4 @@
+import { buildCacheKey } from "./cacheKey";
 import JSZip from 'jszip';
 import type { TranslationResult } from './gemini';
 
@@ -52,7 +53,7 @@ export async function uploadToGoogleDrive(
 
       try {
         // 1. Check if file with same name already exists
-        const query = `name='${fileName}' and trashed=false`;
+        const query = `name='${fileName.replace(/'/g, "\\'")}' and trashed=false`;
         const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
           headers: { 'Authorization': `Bearer ${accessToken}` }
         });
@@ -102,7 +103,7 @@ export async function uploadToGoogleDrive(
 }
 
 export async function listMangaSaves(accessToken: string): Promise<any[]> {
-  const query = "mimeType='application/zip' and name contains 'Manga_' and trashed=false";
+  const query = "mimeType='application/zip' and trashed=false";
   const response = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,createdTime,size)&orderBy=createdTime desc`, {
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -138,8 +139,6 @@ export async function downloadFromGoogleDrive(accessToken: string, fileId: strin
 export async function createMangaZip(
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
-  provider: string,
-  aiModel: string,
   lastReadPage: number = 0,
   glossary?: Record<string, string>
 ): Promise<Blob> {
@@ -163,7 +162,7 @@ export async function createMangaZip(
     const base64Data = img.src.split(',')[1];
     imagesFolder.file(filename, base64Data, { base64: true });
 
-    const key = `manga-cache-${provider}-${aiModel}-${img.file.name}-${img.file.size}`;
+    const key = buildCacheKey(img.file.name, img.file.size);
     const result = translations[key]; // Do not default to [] if undefined
 
     manifest.images.push({
@@ -178,7 +177,7 @@ export async function createMangaZip(
   return await zip.generateAsync({ type: "blob" });
 }
 
-export async function extractMangaZip(zipBlob: Blob, provider: string, geminiVersion: string): Promise<{
+export async function extractMangaZip(zipBlob: Blob): Promise<{
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number,
@@ -216,7 +215,7 @@ export async function extractMangaZip(zipBlob: Blob, provider: string, geminiVer
       mimeType: imgData.mimeType
     });
 
-    const key = `manga-cache-${provider}-${geminiVersion}-${imgData.filename}-${blob.size}`;
+    const key = buildCacheKey(imgData.filename, blob.size);
     if (imgData.translations) {
       loadedTranslations[key] = imgData.translations;
     }

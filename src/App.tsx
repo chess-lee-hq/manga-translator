@@ -208,7 +208,7 @@ function App() {
           scope: 'https://www.googleapis.com/auth/drive.file',
           callback: (response: any) => {
             if (response.error !== undefined) {
-              reject(response);
+              return reject(response);
             }
             resolve(response.access_token);
           },
@@ -238,7 +238,7 @@ function App() {
         setDriveToken(token);
       }
       
-      const zipBlob = await createMangaZip(allImages, translationCache, provider, geminiVersion, currentPageIndex, glossary);
+      const zipBlob = await createMangaZip(allImages, translationCache, currentPageIndex, glossary);
       await uploadToGoogleDrive(token!, zipBlob, filename);
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
@@ -279,9 +279,14 @@ function App() {
     setIsDriveSyncing(true);
     setShowDriveModal(false);
     try {
+      let token = driveToken;
+      if (!token) {
+        token = await loginToGoogleDrive();
+        setDriveToken(token);
+      }
       setLoadedFilename(filename.replace('.zip', ''));
-      const zipBlob = await downloadFromGoogleDrive(driveToken!, fileId);
-      const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob, provider, geminiVersion);
+      const zipBlob = await downloadFromGoogleDrive(token, fileId);
+      const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob);
       
       updateGlossary(loadedGlossary || {});
       const loadedImages: UploadedImage[] = [];
@@ -329,10 +334,33 @@ function App() {
 
     setError(null);
     
-    if (zipFile && !jsonFile) { // jsonFile이 있으면 아마 구글 드라이브나 자체 백업 ZIP일 수 있음
+    if (zipFile) {
       try {
-        setLoadedFilename(zipFile.name.replace('.zip', '').replace('.cbz', ''));
         const zip = await JSZip.loadAsync(zipFile);
+        if (zip.file("manga_data.json")) {
+          // 백업 복구용
+          setLoadedFilename(zipFile.name.replace('.zip', ''));
+          const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipFile);
+          
+          updateGlossary(loadedGlossary || {});
+          const loadedImages: UploadedImage[] = [];
+          for (const img of images) {
+            const imageObj = await loadImage(img.src);
+            const imgProps = { width: imageObj.width, height: imageObj.height, isSpread: imageObj.width > imageObj.height };
+            
+            loadedImages.push({
+              ...img,
+              ...imgProps
+            });
+          }
+          
+          setAllImages(loadedImages);
+          setTranslationCache(prev => ({ ...prev, ...translations }));
+          setCurrentPageIndex(lastReadPage || 0);
+          return;
+        }
+
+        setLoadedFilename(zipFile.name.replace('.zip', '').replace('.cbz', ''));
         const extractedFiles: File[] = [];
         
         // 정렬을 위해 파일 이름을 저장
@@ -442,7 +470,7 @@ function App() {
       }
     }
     return needed;
-  }, [visibleIndices, allImages.length, geminiVersion]);
+  }, [visibleIndices, allImages.length]);
 
   const executeTranslation = async (idx: number) => {
     const img = allImages[idx];
@@ -1180,9 +1208,6 @@ function App() {
             >
               기록 삭제
               </button>
-              <button onClick={() => { if(confirm('초기화하시겠습니까?')) { setAllImages([]); setTranslationCache({}); } }} className="flex items-center gap-1 px-2 py-1 bg-white text-red-600 rounded text-xs font-medium border border-red-200 hover:bg-red-50 shrink-0">
-                모두 지우기
-              </button>
               
               <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
             </>
@@ -1442,7 +1467,7 @@ function App() {
                                 if (isEditingBoxes) {
                                   return (
                                     <BoxEditor
-                                      key={bubbleIndex}
+                                      key={result.id ?? bubbleIndex}
                                       initialBox={[newYmin, newXmin, newYmin + expandedHeight, newXmin + expandedWidth]}
                                       onChange={(newBox: [number, number, number, number]) => handleBoxChange(imgIndex, bubbleIndex, newBox)}
                                       isKeepAll={!result.disable_keep_all}
@@ -1455,7 +1480,7 @@ function App() {
 
                                 return (
                                   <div
-                                    key={bubbleIndex}
+                                    key={result.id ?? bubbleIndex}
                                     className="absolute flex flex-col items-center justify-center pointer-events-auto"
                                     style={{
                                       top, left, height, width,
@@ -1470,7 +1495,7 @@ function App() {
 
                               return (
                                 <div
-                                  key={bubbleIndex}
+                                  key={result.id ?? bubbleIndex}
                                   onMouseEnter={() => {
                                     setHoveredBubble({ imageIndex: imgIndex, bubbleIndex });
                                     scrollToScript(imgIndex, bubbleIndex);
@@ -1637,7 +1662,7 @@ function App() {
                             return (
                               <div
                                 id={`script-${imgIndex}-${bubbleIndex}`}
-                                key={bubbleIndex}
+                                key={result.id ?? bubbleIndex}
                                 draggable
                                 onDragStart={(e) => handleScriptDragStart(e, imgIndex, bubbleIndex)}
                                 onDragEnd={handleScriptDragEnd}
