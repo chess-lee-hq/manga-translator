@@ -356,6 +356,7 @@ function App() {
           
           setAllImages(loadedImages);
           setTranslationCache(prev => ({ ...prev, ...translations }));
+          Object.keys(translations).forEach(key => safeSetCache(key, translations[key]));
           setCurrentPageIndex(lastReadPage || 0);
           return;
         }

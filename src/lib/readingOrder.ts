@@ -71,29 +71,55 @@ export function sortMangaBoxesByTier<T>(
   boxes: T[], 
   getCoords: (b: T) => [number, number, number, number] // [ymin, xmin, ymax, xmax]
 ): T[] {
-  return [...boxes].sort((a, b) => {
-    const [a_ymin, a_xmin, a_ymax, a_xmax] = getCoords(a);
-    const [b_ymin, b_xmin, b_ymax, b_xmax] = getCoords(b);
+  if (boxes.length <= 1) return [...boxes];
 
-    const aCenterY = (a_ymin + a_ymax) / 2;
-    const bCenterY = (b_ymin + b_ymax) / 2;
-    const yDiff = Math.abs(aCenterY - bCenterY);
-    
-    const aHeight = a_ymax - a_ymin;
-    const bHeight = b_ymax - b_ymin;
-    
-    // 상대적 임계값: 두 상자 평균 높이의 50%
-    const threshold = (aHeight + bHeight) / 4;
-    
-    if (yDiff > threshold) {
-      return aCenterY - bCenterY; // Top to bottom
-    } else {
-      // Same tier, sort right to left
-      const aCenterX = (a_xmin + a_xmax) / 2;
-      const bCenterX = (b_xmin + b_xmax) / 2;
-      return bCenterX - aCenterX; // Right to left
-    }
+  // 1. 초기 계산 및 Y 중심값 기준 오름차순 정렬 (위에서 아래로)
+  const items = boxes.map(b => {
+    const [ymin, xmin, ymax, xmax] = getCoords(b);
+    return {
+      original: b,
+      centerY: (ymin + ymax) / 2,
+      centerX: (xmin + xmax) / 2,
+      height: ymax - ymin
+    };
   });
+  
+  items.sort((a, b) => a.centerY - b.centerY);
+
+  // 2. Y축 중심값 차이 기반으로 행(tier) 순차 그룹핑
+  const tiers: (typeof items)[] = [];
+  let currentTier = [items[0]];
+  
+  for (let i = 1; i < items.length; i++) {
+    const curr = items[i];
+    const prev = currentTier[currentTier.length - 1]; // 이전 박스 기준 (이미 Y정렬되어 있으므로)
+    
+    const yDiff = Math.abs(curr.centerY - prev.centerY);
+    
+    // 상대적 임계값: 두 상자 평균 높이의 1/3 (상수화)
+    const TIER_THRESHOLD_RATIO = 3; 
+    const threshold = (curr.height + prev.height) / (2 * (TIER_THRESHOLD_RATIO / 2)); 
+    // 즉, (curr.height + prev.height) / 3 과 동일
+
+    if (yDiff <= (curr.height + prev.height) / 3) {
+      currentTier.push(curr);
+    } else {
+      tiers.push(currentTier);
+      currentTier = [curr];
+    }
+  }
+  tiers.push(currentTier);
+
+  // 3. 각 행(tier) 내부를 X 중심값 기준 내림차순(우측에서 좌측으로) 단일 정렬하여 flat 배열로 병합
+  const result: T[] = [];
+  for (const tier of tiers) {
+    tier.sort((a, b) => b.centerX - a.centerX);
+    for (const t of tier) {
+      result.push(t.original);
+    }
+  }
+  
+  return result;
 }
 
 function calculateIntersectionArea(b1: BoundingBox, b2: BoundingBox): number {
