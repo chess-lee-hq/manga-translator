@@ -88,3 +88,73 @@ git reset --hard backup/before-mass-patch-2026-09-10
   - 기록 삭제 → 자동 번역 OFF, 이후 페이지 이동해도 호출 0회
   - Ctrl+휠: 브라우저 기본 확대 차단, 앱 배율 100%→110% / 표시 "- 2 / 3" → 마지막 장 "/ 3"
   - 조합 중 Enter는 단어장 추가 안 됨, 일반 Enter는 추가 / 백업 드롭 시 단어장 3개로 병합
+
+---
+
+## 3단계 — 구조 개편 · 검출 백그라운드 실행 · 새로고침 복원
+
+| 항목 | 내용 | 주요 파일 |
+|---|---|---|
+| App.tsx 분리 | 1,950줄 한 파일 → 조립만 하는 약 490줄. 화면은 `components/`, 상태 로직은 `hooks/`, 순수 로직은 `lib/`로 분리 | 아래 구조 참고 |
+| 말풍선 검출 Web Worker | ONNX 추론과 전처리(640×640 레터박스)를 Worker에서 실행해 번역 중 화면이 멈추지 않음. Worker 안에서 요청을 순서대로 처리(세션 동시 실행 오류 방지), 모델 로드 실패 시 다음 요청에서 재시도. 후처리·NMS는 순수 함수로 분리해 테스트 | `lib/yolo.worker.ts`, `lib/yolo.ts`, `lib/yoloPostprocess.ts`, `vite.config.ts` |
+| 새로고침 복원 | 이미지·순서·작품명·읽던 페이지를 IndexedDB에 저장 → 다시 열면 자동 복원. 이미 저장된 이미지는 다시 쓰지 않고 추가·삭제분만 반영. 복원이 끝나기 전엔 저장하지 않아 기존 작업을 덮어쓰지 않음. 헤더에 **작업 닫기** 추가(번역 기록·단어장은 유지) | `lib/sessionStore.ts`, `hooks/useSessionPersistence.ts` |
+| 캔버스 기반 내보내기 | 1단계에서 이미 적용 → 이번엔 App에서 분리만 | `lib/exportCanvas.ts` |
+| 번역 파이프라인 정리 | 페이지 번역·새 영역 번역·문장 재번역을 App 밖으로 이동, 격자 좌표 변환 중복 제거, `openai.ts`의 미사용 인자 제거, 키 확인을 검출 전에 수행(키가 없으면 모델을 불필요하게 돌리지 않음) | `lib/translatePage.ts` |
+| 파일 가져오기 정리 | 이미지·ZIP/CBZ·백업·JSON 가져오기를 순수 결과 객체로 반환, 병합·정렬 함수 분리 | `lib/importFiles.ts` |
+| 페이지 배치 | 보이는 페이지·2장 묶음 시작·미리 번역 순서를 순수 함수로 분리 | `lib/pageLayout.ts` |
+| + | 새 영역 번역이 실패했을 때 원래 번역이 없던 페이지면 빈 캐시를 남기지 않음(빈 캐시가 자동 번역을 막던 문제) | `hooks/useTranslationCache.ts` |
+
+### 파일 구조
+
+```
+src/
+├─ App.tsx                     화면 조립 + 사용자 동작 연결
+├─ types.ts                    공용 타입
+├─ components/
+│  ├─ AppHeader.tsx  EmptyState.tsx  PageNavigator.tsx
+│  ├─ MangaViewer.tsx          페이지·오버레이·영역 그리기·이동·확대
+│  ├─ ScriptPanel.tsx          우측 대본(수정·삭제·재번역·순서 변경)
+│  ├─ GlossaryModal.tsx  DriveModal.tsx
+│  ├─ BoxEditor.tsx            (src/BoxEditor.tsx에서 이동)
+│  └─ ErrorBoundary.tsx
+├─ hooks/
+│  ├─ useTranslationCache.ts   번역 캐시(localStorage)
+│  ├─ useTranslationQueue.ts   자동 번역 대기열·페이지별 오류
+│  ├─ useSessionPersistence.ts 새로고침 복원(IndexedDB)
+│  ├─ useDriveSync.ts  useGlossary.ts  useDebouncedValue.ts
+└─ lib/
+   ├─ translatePage.ts  importFiles.ts  pageLayout.ts  sessionStore.ts
+   ├─ yolo.ts  yolo.worker.ts  yoloPostprocess.ts
+   ├─ exportCanvas.ts  fileImport.ts  results.ts  retry.ts  prompt.ts  download.ts
+   └─ gemini.ts  openai.ts  drive.ts  imageUtils.ts  readingOrder.ts  cacheKey.ts
+```
+
+### 사용자가 느끼는 변화
+- 새로고침하거나 탭을 닫았다 열어도 마지막 작품·페이지로 돌아옴. 새 작품은 **작업 닫기** 후 시작
+- 페이지 이탈 경고는 저장이 끝나지 않았거나 ZIP 내보내기 중일 때만 표시 (IndexedDB를 못 쓰는 환경에선 예전처럼 항상 경고)
+- 번역 중에도 화면이 끊기지 않음
+- 첫 로딩 JS 1.12MB → 722KB (검출 코드 407KB는 번역이 시작될 때 Worker로 따로 로드)
+
+### 새 브라우저 저장소
+- IndexedDB `manga-translator` (`pages`, `meta`). 이전 단계로 되돌리면 사용되지 않고 남을 뿐 문제없음
+- 지우려면 브라우저 콘솔에서 `indexedDB.deleteDatabase('manga-translator')`
+
+### 검증
+- `tsc -b` 통과, `vitest` 44개 통과(페이지 배치·검출 후처리·이미지 병합 14개 추가), `vite build` 성공
+- 브라우저(개발 서버, Gemini 가짜 응답):
+  - Worker에서 검출 실행 로그 확인 — 첫 장 13초(모델 로드 포함), 이후 장당 약 6초 순차 처리, 3장 모두 자동 번역
+  - 덮어쓰기 모드에서 영역을 그려 새 말풍선 번역 → id로 추가·저장
+  - 3페이지로 이동 후 새로고침 → 같은 작품·3페이지·번역 그대로 복원, 새로고침 후 API 호출 0회
+  - 작업 닫기 후 새로고침 → 첫 화면, IndexedDB 페이지 0개, 번역 기록은 유지
+- 배포 빌드(`vite build` + `vite preview`): Worker 파일(`assets/yolo.worker-*.js`)이 정상 로드되어 검출 2.4초, 번역 반영, 콘솔 오류 없음
+
+---
+
+## 이번 패치 범위 밖 (다음 후보)
+- 템플릿 잔재 정리: `src/App.css`, `src/assets/*`, 템플릿 README, `test-lint.json`, `index.html`의 `lang="en"`
+- 배포물에 WASM 27.8MB가 들어가지만 실제로는 CDN에서 받음 → 한쪽으로 통일, WebGPU·모델 양자화 검토
+- 이미지를 dataURL 대신 Blob/ObjectURL로 보관, 문맥용 전체 페이지 이미지는 축소해 전송
+- 캐시 키를 파일 이름+크기 → 파일 해시로
+- 키보드 단축키, 토스트 알림, 작품별 단어장, 앞 페이지 대사를 번역 문맥으로 전달
+- GitHub Actions 배포 전에 lint·test 실행
+- lint 경고 10개는 대부분 의도적으로 effect 의존성을 생략한 부분

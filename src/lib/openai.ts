@@ -42,7 +42,6 @@ export async function translateMangaImageOpenAI(
   openAiVersion: OpenAiVersion,
   apiKey: string,
   geminiResults: RawTranslationResult[],
-  _geminiVersion: '3.6' | '3.7' = '3.6',
   glossary?: Record<string, string>
 ): Promise<RawTranslationResult[]> {
 
@@ -98,7 +97,7 @@ Each object in the array MUST match this format:
 }
 
 export async function retranslateTextOpenAI(
-  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
+  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, glossary?: Record<string, string>): Promise<string> {
   const modelName = `gpt-5.6-${openAiVersion}`;
   const glossaryInstruction = buildGlossaryInstruction(glossary, originalText);
 
