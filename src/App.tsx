@@ -89,6 +89,7 @@ function App() {
     } catch {}
   };
   const [isTranslating, setIsTranslating] = useState(false);
+  const inFlightRef = useRef<Set<number>>(new Set());
   const [retryTrigger, setRetryTrigger] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -355,23 +356,25 @@ function App() {
     }
     
     if (jsonFile) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const imported = JSON.parse(e.target?.result as string);
-          setTranslationCache(prev => ({ ...prev, ...imported }));
-          
-          // 새로 추가된 기능: JSON으로 불러온 과거 데이터도 브라우저 자동저장소(LocalStorage)에 영구 등록합니다.
-          Object.keys(imported).forEach(key => {
-            if (key.startsWith('manga-cache-')) {
-              safeSetCache(key, imported[key]);
-            }
-          });
-        } catch (err) {
-          console.error("JSON 파싱 에러:", err);
-        }
-      };
-      reader.readAsText(jsonFile);
+      await new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const imported = JSON.parse(e.target?.result as string);
+            setTranslationCache(prev => ({ ...prev, ...imported }));
+            
+            Object.keys(imported).forEach(key => {
+              if (key.startsWith('manga-cache-')) {
+                safeSetCache(key, imported[key]);
+              }
+            });
+          } catch (err) {
+            console.error("JSON 파싱 에러:", err);
+          }
+          resolve();
+        };
+        reader.readAsText(jsonFile);
+      });
     }
 
     const loadedImages: UploadedImage[] = [];
@@ -730,61 +733,70 @@ function App() {
 
     const missingIndices = translationQueue.filter(i => {
       const key = getCacheKey(allImages[i].file);
-      return !translationCache[key];
+      return !translationCache[key] && !inFlightRef.current.has(i);
     });
     
     if (missingIndices.length > 0) {
       const translateMissing = async () => {
         setIsTranslating(true);
         setError(null);
-        try {
-          const visibleMissing = missingIndices.filter(i => visibleIndices.includes(i));
-          if (visibleMissing.length > 0) {
-            const visiblePromises = visibleMissing.map(async (idx) => {
+        
+        missingIndices.forEach(i => inFlightRef.current.add(i));
+
+        const processInChunks = async (indices: number[], chunkSize: number = 3) => {
+          for (let i = 0; i < indices.length; i += chunkSize) {
+            const chunk = indices.slice(i, i + chunkSize);
+            const promises = chunk.map(async (idx) => {
               const results = await executeTranslation(idx);
               return { idx, results };
             });
             
-            const visibleResults = await Promise.all(visiblePromises);
-            setTranslationCache(prev => {
-              const updated = { ...prev };
-              visibleResults.forEach(({idx, results}) => {
-                const key = getCacheKey(allImages[idx].file);
-                updated[key] = results;
-                safeSetCache(key, results);
+            const settled = await Promise.allSettled(promises);
+            const successful = settled
+              .filter((r): r is PromiseFulfilledResult<{idx: number, results: any}> => r.status === 'fulfilled')
+              .map(r => r.value);
+            
+            if (successful.length > 0) {
+              setTranslationCache(prev => {
+                const updated = { ...prev };
+                successful.forEach(({idx, results}) => {
+                  const key = getCacheKey(allImages[idx].file);
+                  updated[key] = results;
+                  safeSetCache(key, results);
+                });
+                return updated;
               });
-              return updated;
-            });
+            }
+            
+            // If any failed, log them or set error
+            const failed = settled.filter(r => r.status === 'rejected');
+            if (failed.length > 0) {
+              console.error("Some translations failed:", failed);
+            }
+          }
+        };
+
+        try {
+          const visibleMissing = missingIndices.filter(i => visibleIndices.includes(i));
+          if (visibleMissing.length > 0) {
+            await processInChunks(visibleMissing, 3);
           }
 
           const preloadMissing = missingIndices.filter(i => !visibleIndices.includes(i));
           if (preloadMissing.length > 0) {
-            const preloadPromises = preloadMissing.map(async (idx) => {
-              const results = await executeTranslation(idx);
-              return { idx, results };
-            });
-            
-            const preloadResults = await Promise.all(preloadPromises);
-            setTranslationCache(prev => {
-              const updated = { ...prev };
-              preloadResults.forEach(({idx, results}) => {
-                const key = getCacheKey(allImages[idx].file);
-                updated[key] = results;
-                safeSetCache(key, results);
-              });
-              return updated;
-            });
+            await processInChunks(preloadMissing, 3);
           }
         } catch (err: any) {
           setError(err.message || '번역 중 오류가 발생했습니다.');
         } finally {
+          missingIndices.forEach(i => inFlightRef.current.delete(i));
           setIsTranslating(false);
         }
       };
       
       translateMissing();
     }
-  }, [translationQueue.join(','), allImages, currentKey, geminiVersion, provider, getCacheKey, retryTrigger]); 
+  }, [translationQueue.join(','), allImages, currentKey, provider, getCacheKey, retryTrigger]); 
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -848,25 +860,31 @@ function App() {
     setIsPanning(false);
   };
 
+    const getSpreadStartIndex = (targetIndex: number) => {
+    if (viewMode === '1page') return targetIndex;
+    let i = 0;
+    let lastStart = 0;
+    while (i <= targetIndex) {
+      lastStart = i;
+      if (allImages[i].isSpread) {
+        if (i === targetIndex) break;
+        i += 1;
+      } else if (i + 1 < allImages.length && !allImages[i + 1].isSpread) {
+        if (i === targetIndex || i + 1 === targetIndex) break;
+        i += 2;
+      } else {
+        if (i === targetIndex) break;
+        i += 1;
+      }
+    }
+    return lastStart;
+  };
+
   const handlePrev = () => {
     setCurrentPageIndex(prev => {
       if (prev === 0) return 0;
-      if (viewMode === '1page') return prev - 1;
-      
-      let i = 0;
-      let lastIndex = 0;
-      while (i < prev) {
-        lastIndex = i;
-        if (allImages[i].isSpread) {
-          i += 1;
-        } else if (i + 1 < allImages.length && !allImages[i + 1].isSpread) {
-          i += 2;
-        } else {
-          i += 1;
-        }
-      }
       setHoveredBubble(null);
-      return lastIndex;
+      return getSpreadStartIndex(prev - 1);
     });
   };
 
@@ -881,7 +899,14 @@ function App() {
 
 
   const handleExportJSON = () => {
-    const data = JSON.stringify(translationCache, null, 2);
+    const currentKeys = new Set(allImages.map(img => getCacheKey(img.file)));
+    const exportData: Record<string, any> = {};
+    for (const key of Object.keys(translationCache)) {
+      if (currentKeys.has(key)) {
+        exportData[key] = translationCache[key];
+      }
+    }
+    const data = JSON.stringify(exportData, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -973,8 +998,7 @@ function App() {
     }, 100);
   };
 
-  let globalScriptCounter = 0;
-  const startExportAll = () => {
+    const startExportAll = () => {
     if (allImages.length === 0) return;
     const confirmMsg = `총 ${allImages.length}장의 덮어쓰기 이미지를 ZIP으로 압축하여 다운로드하시겠습니까?\n\n진행 중에는 화면이 번쩍거리며 수십 초 이상 걸릴 수 있습니다. 진행하시겠습니까?`;
     if (!window.confirm(confirmMsg)) return;
@@ -1125,8 +1149,10 @@ function App() {
               <button onClick={() => setIsGlossaryOpen(true)} className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-medium border border-purple-200 hover:bg-purple-100 shrink-0">
                 <BookOpen size={14} /> 단어장
               </button>
-              <button onClick={handleClearCache} className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium border border-red-200 hover:bg-red-100 shrink-0">
-                <Trash2 size={14} /> 비우기
+              <button onClick={handleClearCache}
+              className="px-3 py-1.5 text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 rounded-md transition-colors"
+            >
+              기록 삭제
               </button>
               <button onClick={() => { if(confirm('초기화하시겠습니까?')) { setAllImages([]); setTranslationCache({}); } }} className="flex items-center gap-1 px-2 py-1 bg-white text-red-600 rounded text-xs font-medium border border-red-200 hover:bg-red-50 shrink-0">
                 모두 지우기
@@ -1457,7 +1483,7 @@ function App() {
             <div className="bg-gray-100 border-t p-3 flex justify-between items-center shrink-0">
                   <button 
                     onClick={handleNext} 
-                    disabled={currentPageIndex + (viewMode === '2page' ? 2 : 1) >= allImages.length}
+                    disabled={currentPageIndex + visibleIndices.length >= allImages.length}
                     className="flex items-center gap-2 px-4 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-gray-700"
                   >
                     <ChevronLeft size={20} /> 다음 페이지
@@ -1472,7 +1498,7 @@ function App() {
                       onChange={(e) => {
                         const val = parseInt(e.target.value);
                         if (!isNaN(val) && val >= 1 && val <= allImages.length) {
-                          setCurrentPageIndex(viewMode === '2page' && val % 2 === 0 ? val - 2 : val - 1);
+                          setCurrentPageIndex(getSpreadStartIndex(val - 1));
                         }
                       }}
                       className="w-16 text-center border border-gray-300 rounded py-0.5 px-1 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm font-medium"
@@ -1512,7 +1538,12 @@ function App() {
                     className="flex-1 overflow-y-auto p-4 bg-white space-y-4" 
                     ref={scriptListRef}
                   >
-                    {visibleIndices.map((imgIndex) => {
+                    {visibleIndices.map((imgIndex, idxInVisible) => {
+                      let bubbleOffset = 0;
+                      for (let i = 0; i < idxInVisible; i++) {
+                        const prevKey = getCacheKey(allImages[visibleIndices[i]].file);
+                        bubbleOffset += (translationCache[prevKey] || []).length;
+                      }
                       const img = allImages[imgIndex];
                       const key = getCacheKey(img.file);
                       const results = translationCache[key];
@@ -1576,8 +1607,7 @@ function App() {
                           
                           {results.map((result, bubbleIndex) => {
                             const isHovered = hoveredBubble?.imageIndex === imgIndex && hoveredBubble?.bubbleIndex === bubbleIndex;
-                            globalScriptCounter++;
-                            
+                            const displayNum = bubbleOffset + bubbleIndex + 1;
                             return (
                               <div
                                 id={`script-${imgIndex}-${bubbleIndex}`}
@@ -1602,7 +1632,7 @@ function App() {
                                 <div className={`flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-xs font-bold mt-0.5 transition-colors ${
                                   isHovered ? 'bg-yellow-400 text-yellow-900 shadow-sm' : 'bg-gray-200 text-gray-600'
                                 }`}>
-                                  {globalScriptCounter}
+                                  {displayNum}
                                 </div>
                                 <div className="flex flex-col flex-1">
                                   {editingBubble?.imgIndex === imgIndex && editingBubble?.bubbleIndex === bubbleIndex ? (

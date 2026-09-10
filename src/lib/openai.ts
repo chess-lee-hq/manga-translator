@@ -63,13 +63,15 @@ Each object in the array MUST match this format:
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(`OpenAI API Error ${res.status}: ${errorText}`);
+        const error = new Error(`OpenAI API Error ${res.status}: ${errorText}`) as any;
+        error.status = res.status;
+        throw error;
       }
       
       response = await res.json();
       break;
     } catch (err: any) {
-      if (err.message?.includes('502') || err.message?.includes('503') || err.message?.includes('429')) {
+      if (err.status === 429 || err.status === 502 || err.status === 503) {
         retries--;
         if (retries === 0) throw err;
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -87,13 +89,13 @@ Each object in the array MUST match this format:
     const translatedItems: { id: number, translated_text: string }[] = parsed.translations || [];
 
     // OpenAI의 번역 결과를 기존 Gemini의 좌표 데이터(원본 배열)에 병합
-    const finalResults: TranslationResult[] = [...geminiResults];
-    
-    for (const item of translatedItems) {
-      if (finalResults[item.id]) {
-        finalResults[item.id].translated_text = item.translated_text;
+    const finalResults: TranslationResult[] = geminiResults.map((result, idx) => {
+      const translated = translatedItems.find(item => item.id === idx);
+      if (translated) {
+        return { ...result, translated_text: translated.translated_text };
       }
-    }
+      return { ...result };
+    });
 
     return finalResults;
   } catch (error: any) {
@@ -115,21 +117,43 @@ Original text: ${originalText}
 
 Respond ONLY with the translated Korean text string, nothing else. Do not include quotes or JSON formatting.`;
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: modelName,
-      messages: [
-        { role: 'user', content: prompt }
-      ]
-    })
-  });
+  let retries = 3;
+  let response;
+  while (retries > 0) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'user', content: prompt }
+          ]
+        })
+      });
 
-  if (!res.ok) throw new Error(`OpenAI API Error`);
-  const response = await res.json();
+      if (!res.ok) {
+        const errorText = await res.text();
+        const error = new Error(`OpenAI API Error ${res.status}: ${errorText}`) as any;
+        error.status = res.status;
+        throw error;
+      }
+      
+      response = await res.json();
+      break;
+    } catch (err: any) {
+      if (err.status === 429 || err.status === 502 || err.status === 503) {
+        retries--;
+        if (retries === 0) throw err;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } else {
+        throw err;
+      }
+    }
+  }
+  
   return response?.choices?.[0]?.message?.content?.trim() || "번역 실패";
 }

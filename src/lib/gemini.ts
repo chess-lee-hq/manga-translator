@@ -98,7 +98,7 @@ ${glossaryInstruction}
           throw new Error(`구글 서버 과부하 (503): 사용량이 너무 많습니다. 잠시 후 다시 시도해주세요. (${errMessage})`);
         }
         
-        const waitTime = (4 - retries) * 3000; // 3s, 6s, 9s...
+        const waitTime = (4 - retries) * 3000; // 6s, 9s...
         console.warn(`503 Error (High Demand), retrying in ${waitTime/1000} seconds...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
@@ -173,11 +173,27 @@ Original text: ${originalText}
 
 Respond ONLY with the translated Korean text string, nothing else. Do not include quotes or JSON formatting.`;
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: prompt,
-    config: { temperature: 0.7 }
-  });
+  let retries = 3;
+  let response;
+  while (retries > 0) {
+    try {
+      response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: { temperature: 0.7 }
+      });
+      break;
+    } catch (err: any) {
+      let errMessage = err.message || err.toString();
+      if (errMessage?.includes('503') || errMessage?.includes('UNAVAILABLE') || errMessage?.includes('high demand') || err.status === 503) {
+        retries--;
+        if (retries === 0) throw new Error(`구글 서버 과부하 (503). 잠시 후 다시 시도해주세요.`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      } else {
+        throw err;
+      }
+    }
+  }
   
   return response?.text?.trim() || "번역 실패";
 }
@@ -277,7 +293,7 @@ ${glossaryInstruction}
   
   try {
     let cleanText = text.trim();
-    if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.substring(7);
+    if (cleanText.startsWith('```json')) cleanText = cleanText.substring(7);
     else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.substring(3);
     if (cleanText.endsWith('\`\`\`')) cleanText = cleanText.substring(0, cleanText.length - 3);
     cleanText = cleanText.trim();

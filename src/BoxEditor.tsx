@@ -10,6 +10,8 @@ interface BoxEditorProps {
 
 export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, children }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
+  const boxRef = useRef(initialBox);
+  useEffect(() => { boxRef.current = box; }, [box]);
   const isDragging = useRef(false);
   const isResizing = useRef(false);
   const startPos = useRef({ x: 0, y: 0 });
@@ -18,7 +20,7 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
 
   useEffect(() => {
     setBox(initialBox);
-  }, [initialBox]);
+  }, [initialBox.join(',')]);
 
   const handlePointerDown = (e: React.PointerEvent, type: 'move' | 'resize') => {
     e.stopPropagation();
@@ -55,10 +57,7 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
     isResizing.current = false;
     document.removeEventListener('pointermove', handlePointerMove);
     document.removeEventListener('pointerup', handlePointerUp);
-    setBox(prev => {
-      onChange(prev);
-      return prev;
-    });
+    onChange(boxRef.current);
   };
 
   const top = `${(box[0] / 1000) * 100}%`;

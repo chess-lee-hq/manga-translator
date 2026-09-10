@@ -15,18 +15,24 @@ export interface BoundingBox {
   classId: number;
 }
 
+let loadingPromise: Promise<void> | null = null;
 export async function loadYoloModel() {
   if (session) return;
-  try {
-    const modelPath = import.meta.env.BASE_URL + 'manga109_yolo_s.onnx';
-    session = await ort.InferenceSession.create(modelPath, {
-      executionProviders: ['wasm']
-    });
-    console.log("YOLO model loaded successfully.");
-  } catch (e) {
-    console.error("Failed to load YOLO model:", e);
-    throw e;
+  if (!loadingPromise) {
+    loadingPromise = (async () => {
+      try {
+        const modelPath = import.meta.env.BASE_URL + 'manga109_yolo_s.onnx';
+        session = await ort.InferenceSession.create(modelPath, {
+          executionProviders: ['wasm']
+        });
+        console.log("YOLO model loaded successfully.");
+      } catch (e) {
+        console.error("Failed to load YOLO model:", e);
+        throw e;
+      }
+    })();
   }
+  await loadingPromise;
 }
 
 /**
@@ -44,7 +50,7 @@ export async function detectSpeechBubbles(image: HTMLImageElement, confThreshold
   feeds[session.inputNames[0]] = tensor;
   
   const results = await session.run(feeds);
-  const output = results[session.outputNames[0]]; // Shape: [1, 6, 8400]
+  const output = results[session.outputNames[0]]; // Shape: [1, 8, 8400]
   
   return postprocess(output, xRatio, yRatio, padW, padH, confThreshold, iouThreshold);
 }
@@ -94,7 +100,7 @@ function postprocess(tensor: ort.Tensor, xRatio: number, yRatio: number, padW: n
   
   const numRows = dims[1]; // 6
   const numCols = dims[2]; // 8400
-  const numClasses = numRows - 4; // 2
+  const numClasses = numRows - 4; // Should be 4 for our model (0: body, 1: face, 2: frame, 3: text)
   
   let boxes: BoundingBox[] = [];
   
