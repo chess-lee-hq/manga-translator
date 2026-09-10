@@ -1,27 +1,35 @@
-import { buildCacheKey } from "./lib/cacheKey";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X } from 'lucide-react';
-import html2canvas from 'html2canvas';
 import JSZip from 'jszip';
+import { buildCacheKey } from './lib/cacheKey';
 import { translateMangaImage, retranslateTextGemini, translateGridImage } from './lib/gemini';
 import { translateMangaImageOpenAI, retranslateTextOpenAI } from './lib/openai';
 import { detectSpeechBubbles } from './lib/yolo';
-import { createGridImageFromBoxes, loadImage } from './lib/imageUtils';
+import { createGridImageFromBoxes, loadImage, readFileAsDataURL } from './lib/imageUtils';
 import { sortTextByReadingOrder } from './lib/readingOrder';
 import { uploadToGoogleDrive, listMangaSaves, downloadFromGoogleDrive, createMangaZip, extractMangaZip } from './lib/drive';
-import type { TranslationResult, GridTranslationResult } from './lib/gemini';
+import type { TranslationResult, RawTranslationResult, GridTranslationResult } from './lib/gemini';
+import { basename, isImageEntryPath, mimeTypeFromPath, naturalCompare, stripArchiveExtension } from './lib/fileImport';
+import { sanitizeResults } from './lib/results';
+import { canvasToBlob, exportFormatFor, getDisplayBox, renderTranslatedPage } from './lib/exportCanvas';
+import { downloadBlob } from './lib/download';
 import { BoxEditor } from './BoxEditor';
 
 interface UploadedImage {
   src: string;
   file: File;
   mimeType: string;
+  /** 정렬 기준: ZIP 내부 전체 경로 또는 파일 이름 */
+  sortKey: string;
   width: number;
   height: number;
   isSpread: boolean;
 }
 
-// ... (renderFurigana omitted for brevity)
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+const hasDraggedFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+
 function renderFurigana(text: string) {
   if (!text) return null;
   const parts = text.split(/([一-龯]+)\(([ぁ-んァ-ヶ]+)\)/g);
@@ -62,11 +70,10 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
-  const zipRef = useRef<any>(null);
-  const [exportState, setExportState] = useState<{ isExporting: boolean, currentIndex: number }>({ isExporting: false, currentIndex: 0 });
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
   const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra'>('terra');
-  const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
+  const [editingBubble, setEditingBubble] = useState<{ key: string, id: string } | null>(null);
   const [editingText, setEditingText] = useState('');
   const [isEditingBoxes, setIsEditingBoxes] = useState(false);
   const [drawingBox, setDrawingBox] = useState<{imgIndex: number, startX: number, startY: number, currentX: number, currentY: number} | null>(null);
@@ -111,14 +118,17 @@ function App() {
     const savedOpenaiKey = localStorage.getItem('manga-translator-openai-key');
     if (savedOpenaiKey) setOpenaiKey(savedOpenaiKey);
 
-    // Load saved translation caches from LocalStorage
+    // Load saved translation caches from LocalStorage (좌표가 깨진 항목은 걸러냄)
     const initialCache: Record<string, TranslationResult[]> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (k && k.startsWith('manga-cache-')) {
         try {
-          initialCache[k] = JSON.parse(localStorage.getItem(k) || '[]');
-        } catch(e) {}
+          const sanitized = sanitizeResults(JSON.parse(localStorage.getItem(k) || '[]'));
+          if (sanitized) initialCache[k] = sanitized;
+        } catch {
+          console.warn('손상된 번역 캐시를 건너뜁니다:', k);
+        }
       }
     }
     setTranslationCache(initialCache);
@@ -131,6 +141,28 @@ function App() {
       console.error(e);
       setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.');
     }
+  };
+
+  /** 한 페이지의 번역 배열을 갱신하고 localStorage에도 저장합니다. 해당 페이지 캐시가 없으면 무시합니다. */
+  const updatePageResults = (key: string, updater: (results: TranslationResult[]) => TranslationResult[]) => {
+    setTranslationCache(prev => {
+      const current = prev[key];
+      if (!current) return prev;
+      const next = updater(current);
+      safeSetCache(key, next);
+      return { ...prev, [key]: next };
+    });
+  };
+
+  // 비동기 번역이 진행 중인 말풍선 id (여러 개 동시 진행 가능)
+  const [pendingBubbleIds, setPendingBubbleIds] = useState<Set<string>>(() => new Set());
+  const setBubblePending = (id: string, pending: boolean) => {
+    setPendingBubbleIds(prev => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   };
 
   const getCacheKey = useCallback((file: File) => {
@@ -202,15 +234,25 @@ function App() {
 
   const loginToGoogleDrive = () => {
     return new Promise<string>((resolve, reject) => {
+      const oauth2 = window.google?.accounts?.oauth2;
+      if (!oauth2) {
+        reject(new Error('구글 로그인 스크립트를 아직 불러오지 못했습니다. 잠시 후 다시 시도해주세요.'));
+        return;
+      }
       try {
-        const client = window.google.accounts.oauth2.initTokenClient({
+        const client = oauth2.initTokenClient({
           client_id: googleClientId,
-          scope: 'https://www.googleapis.com/auth/drive.file',
+          scope: DRIVE_SCOPE,
           callback: (response: any) => {
             if (response.error !== undefined) {
-              return reject(response);
+              reject(new Error(response.error_description || response.error));
+              return;
             }
             resolve(response.access_token);
+          },
+          // 팝업을 닫거나 열지 못한 경우. 이 콜백이 없으면 Promise가 끝나지 않아 버튼이 로딩 상태로 고정됨
+          error_callback: (err: any) => {
+            reject(new Error(err?.type === 'popup_closed' ? 'POPUP_CLOSED' : `구글 로그인 실패 (${err?.type ?? 'unknown'})`));
           },
         });
         client.requestAccessToken();
@@ -220,58 +262,95 @@ function App() {
     });
   };
 
+  const getDriveToken = async () => {
+    if (driveToken) return driveToken;
+    const token = await loginToGoogleDrive();
+    setDriveToken(token);
+    return token;
+  };
+
+  const handleDriveError = (e: any, action: string) => {
+    if (e?.message === 'POPUP_CLOSED') return; // 사용자가 팝업을 닫은 경우는 조용히 종료
+    console.error(e);
+    if (e?.message === 'AUTH_EXPIRED') {
+      setDriveToken(null);
+      alert('구글 로그인 인증이 만료되었습니다. 다시 시도해주세요.');
+    } else {
+      alert(`${action} 실패: ${e?.message ?? e}`);
+    }
+  };
+
+  const toUploadedImage = async (file: File, src: string, sortKey: string, mimeType: string): Promise<UploadedImage> => {
+    const imageObj = await loadImage(src);
+    return {
+      src,
+      file,
+      mimeType,
+      sortKey,
+      width: imageObj.width,
+      height: imageObj.height,
+      isSpread: imageObj.width > imageObj.height,
+    };
+  };
+
+  /** 백업 ZIP(manga_data.json 포함)을 복원하고, 읽지 못한 이미지 수를 반환합니다. */
+  const restoreBackupZip = async (zipBlob: Blob, name: string) => {
+    const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob);
+
+    const loadedImages: UploadedImage[] = [];
+    let failed = 0;
+    for (const img of images) {
+      try {
+        loadedImages.push(await toUploadedImage(img.file, img.src, img.file.name, img.mimeType));
+      } catch (err) {
+        console.warn('백업 이미지 로드 실패:', img.file.name, err);
+        failed++;
+      }
+    }
+
+    updateGlossary(loadedGlossary || {});
+    setLoadedFilename(name);
+    setAllImages(loadedImages);
+    setTranslationCache(prev => ({ ...prev, ...translations }));
+    Object.keys(translations).forEach(key => safeSetCache(key, translations[key]));
+    setCurrentPageIndex(Math.min(lastReadPage || 0, Math.max(0, loadedImages.length - 1)));
+    return failed;
+  };
+
   const handleSaveToDrive = async () => {
     if (allImages.length === 0) {
       alert("저장할 만화가 없습니다.");
       return;
     }
-    
+
     const defaultName = loadedFilename ? `${loadedFilename}.zip` : `Manga_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
     const filename = window.prompt("구글 드라이브에 저장할 파일 이름을 입력해주세요 (확장자 .zip 포함):", defaultName);
     if (!filename) return;
 
     setIsDriveSyncing(true);
     try {
-      let token = driveToken;
-      if (!token) {
-        token = await loginToGoogleDrive();
-        setDriveToken(token);
-      }
-      
+      const token = await getDriveToken();
       const zipBlob = await createMangaZip(allImages, translationCache, currentPageIndex, glossary);
-      await uploadToGoogleDrive(token!, zipBlob, filename);
+      await uploadToGoogleDrive(token, zipBlob, filename);
       alert("구글 드라이브에 성공적으로 저장되었습니다!");
     } catch (e: any) {
-      console.error(e);
-      if (e.message === 'AUTH_EXPIRED') {
-        setDriveToken(null);
-        alert("구글 로그인 인증이 만료되었습니다. 다시 '드라이브 저장' 버튼을 눌러 로그인해주세요.");
-      } else {
-        alert("구글 드라이브 저장 실패: " + e.message);
-      }
+      handleDriveError(e, '구글 드라이브 저장');
     } finally {
       setIsDriveSyncing(false);
     }
   };
 
   const loadDriveFileList = async () => {
+    setIsDriveSyncing(true);
     try {
-      let token = driveToken;
-      if (!token) {
-        token = await loginToGoogleDrive();
-        setDriveToken(token);
-      }
-      const files = await listMangaSaves(token!);
+      const token = await getDriveToken();
+      const files = await listMangaSaves(token);
       setDriveSaves(files);
       setShowDriveModal(true);
     } catch (e: any) {
-      console.error(e);
-      if (e.message === 'AUTH_EXPIRED') {
-        setDriveToken(null);
-        alert("구글 로그인 인증이 만료되었습니다. 다시 시도해주세요.");
-      } else {
-        alert("구글 드라이브 파일 목록 불러오기 실패: " + e.message);
-      }
+      handleDriveError(e, '구글 드라이브 파일 목록 불러오기');
+    } finally {
+      setIsDriveSyncing(false);
     }
   };
 
@@ -279,164 +358,105 @@ function App() {
     setIsDriveSyncing(true);
     setShowDriveModal(false);
     try {
-      let token = driveToken;
-      if (!token) {
-        token = await loginToGoogleDrive();
-        setDriveToken(token);
-      }
-      setLoadedFilename(filename.replace('.zip', ''));
+      const token = await getDriveToken();
       const zipBlob = await downloadFromGoogleDrive(token, fileId);
-      const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob);
-      
-      updateGlossary(loadedGlossary || {});
-      const loadedImages: UploadedImage[] = [];
-      for (const img of images) {
-        const imageObj = await loadImage(img.src);
-        const imgProps = { width: imageObj.width, height: imageObj.height, isSpread: imageObj.width > imageObj.height };
-        
-        loadedImages.push({
-          ...img,
-          ...imgProps
-        });
-      }
-      
-      setAllImages(loadedImages);
-      setTranslationCache(prev => ({ ...prev, ...translations }));
-      setCurrentPageIndex(lastReadPage || 0);
-      
-      Object.keys(translations).forEach(key => {
-        safeSetCache(key, translations[key]);
-      });
-      alert("성공적으로 불러왔습니다!");
+      const failed = await restoreBackupZip(zipBlob, stripArchiveExtension(filename));
+      alert(failed > 0 ? `불러왔지만 이미지 ${failed}장을 읽지 못했습니다.` : "성공적으로 불러왔습니다!");
     } catch (e: any) {
-      console.error(e);
-      if (e.message === 'AUTH_EXPIRED') {
-        setDriveToken(null);
-        alert("구글 로그인 인증이 만료되었습니다. 드라이브 버튼을 눌러 다시 시도해주세요.");
-      } else {
-        alert("파일 불러오기 실패: " + e.message);
-      }
+      handleDriveError(e, '파일 불러오기');
     } finally {
       setIsDriveSyncing(false);
     }
   };
 
 
-  const processFiles = async (files: FileList | File[]) => {
-    let validFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-    const jsonFile = Array.from(files).find(f => f.name.endsWith('.json'));
-    const zipFile = Array.from(files).find(f => f.name.endsWith('.zip') || f.name.endsWith('.cbz'));
-    
-    if (validFiles.length === 0 && !zipFile && !jsonFile) {
+  const processFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    const looseImages = files.filter(f => f.type.startsWith('image/') || isImageEntryPath(f.name));
+    const jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
+    const archiveFile = files.find(f => /\.(zip|cbz)$/i.test(f.name));
+
+    if (looseImages.length === 0 && !archiveFile && !jsonFile) {
       setError('올바른 이미지 파일이나 압축 파일(.zip, .cbz)을 업로드해주세요.');
       return;
     }
 
     setError(null);
-    
-    if (zipFile) {
-      try {
-        const zip = await JSZip.loadAsync(zipFile);
+
+    try {
+      const candidates = looseImages.map(file => ({ file, sortKey: file.webkitRelativePath || file.name }));
+
+      if (archiveFile) {
+        const zip = await JSZip.loadAsync(archiveFile);
         if (zip.file("manga_data.json")) {
           // 백업 복구용
-          setLoadedFilename(zipFile.name.replace('.zip', ''));
-          const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipFile);
-          
-          updateGlossary(loadedGlossary || {});
-          const loadedImages: UploadedImage[] = [];
-          for (const img of images) {
-            const imageObj = await loadImage(img.src);
-            const imgProps = { width: imageObj.width, height: imageObj.height, isSpread: imageObj.width > imageObj.height };
-            
-            loadedImages.push({
-              ...img,
-              ...imgProps
-            });
-          }
-          
-          setAllImages(loadedImages);
-          setTranslationCache(prev => ({ ...prev, ...translations }));
-          Object.keys(translations).forEach(key => safeSetCache(key, translations[key]));
-          setCurrentPageIndex(lastReadPage || 0);
+          const failed = await restoreBackupZip(archiveFile, stripArchiveExtension(archiveFile.name));
+          if (failed > 0) setError(`백업에서 이미지 ${failed}장을 읽지 못했습니다.`);
           return;
         }
 
-        setLoadedFilename(zipFile.name.replace('.zip', '').replace('.cbz', ''));
-        const extractedFiles: File[] = [];
-        
-        // 정렬을 위해 파일 이름을 저장
-        const fileNames = Object.keys(zip.files).sort();
-        
-        for (const filename of fileNames) {
-          const file = zip.files[filename];
-          if (!file.dir && (filename.endsWith('.jpg') || filename.endsWith('.jpeg') || filename.endsWith('.png') || filename.endsWith('.webp'))) {
-            const blob = await file.async("blob");
-            const ext = filename.split('.').pop()?.toLowerCase();
-            const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : (ext === 'png' ? 'image/png' : 'image/webp');
-            const newFile = new File([blob], filename.split('/').pop() || filename, { type: mimeType });
-            extractedFiles.push(newFile);
-          }
-        }
-        
-        validFiles = [...validFiles, ...extractedFiles];
-      } catch (err) {
-        console.error("ZIP 파싱 에러:", err);
-        setError("압축 파일을 푸는 중 오류가 발생했습니다.");
-      }
-    }
-    
-    if (jsonFile) {
-      await new Promise<void>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          try {
-            const imported = JSON.parse(e.target?.result as string);
-            setTranslationCache(prev => ({ ...prev, ...imported }));
-            
-            Object.keys(imported).forEach(key => {
-              if (key.startsWith('manga-cache-')) {
-                safeSetCache(key, imported[key]);
-              }
-            });
-          } catch (err) {
-            console.error("JSON 파싱 에러:", err);
-          }
-          resolve();
-        };
-        reader.readAsText(jsonFile);
-      });
-    }
-
-    const loadedImages: UploadedImage[] = [];
-
-    for (const file of validFiles) {
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.readAsDataURL(file);
-      });
-      
-      const img = await loadImage(dataUrl);
-      const imgProps = { width: img.width, height: img.height, isSpread: img.width > img.height };
-
-      loadedImages.push({ 
-        src: dataUrl, 
-        file, 
-        mimeType: file.type,
-        ...imgProps
-      });
-    }
-
-    setAllImages(prev => {
-      const combined = [...prev];
-      for (const newImg of loadedImages) {
-        if (!combined.some(existing => existing.file.name === newImg.file.name && existing.file.size === newImg.file.size)) {
-          combined.push(newImg);
+        setLoadedFilename(stripArchiveExtension(archiveFile.name));
+        // __MACOSX 메타데이터·숨김 파일은 제외하고, 확장자는 대소문자 구분 없이 판별
+        const entries = Object.values(zip.files).filter(entry => !entry.dir && isImageEntryPath(entry.name));
+        for (const entry of entries) {
+          const blob = await entry.async("blob");
+          const mimeType = mimeTypeFromPath(entry.name);
+          candidates.push({
+            file: new File([blob], basename(entry.name), { type: mimeType }),
+            // 폴더 경로까지 정렬 기준으로 써서 ch1/001, ch2/001이 섞이지 않게 함
+            sortKey: entry.name,
+          });
         }
       }
-      combined.sort((a, b) => a.file.name.localeCompare(b.file.name));
-      return combined;
-    });
+
+      if (jsonFile) {
+        try {
+          const imported = JSON.parse(await jsonFile.text());
+          const validEntries: Record<string, TranslationResult[]> = {};
+          for (const key of Object.keys(imported)) {
+            if (!key.startsWith('manga-cache-')) continue;
+            const sanitized = sanitizeResults(imported[key]);
+            if (sanitized) validEntries[key] = sanitized;
+          }
+          setTranslationCache(prev => ({ ...prev, ...validEntries }));
+          Object.keys(validEntries).forEach(key => safeSetCache(key, validEntries[key]));
+        } catch (err) {
+          console.error("JSON 파싱 에러:", err);
+          setError('번역 데이터(.json) 파일을 읽지 못했습니다.');
+        }
+      }
+
+      const loadedImages: UploadedImage[] = [];
+      let failed = 0;
+      for (const { file, sortKey } of candidates) {
+        try {
+          const dataUrl = await readFileAsDataURL(file);
+          loadedImages.push(await toUploadedImage(file, dataUrl, sortKey, file.type || mimeTypeFromPath(file.name)));
+        } catch (err) {
+          // 한 장이 깨져도 나머지는 계속 불러옴
+          console.warn('이미지 로드 실패:', file.name, err);
+          failed++;
+        }
+      }
+
+      setAllImages(prev => {
+        const combined = [...prev];
+        for (const newImg of loadedImages) {
+          if (!combined.some(existing => existing.file.name === newImg.file.name && existing.file.size === newImg.file.size)) {
+            combined.push(newImg);
+          }
+        }
+        combined.sort((a, b) => naturalCompare(a.sortKey, b.sortKey));
+        return combined;
+      });
+
+      if (failed > 0) {
+        setError(`${failed}개 파일은 이미지로 읽을 수 없어 건너뛰었습니다.`);
+      }
+    } catch (err: any) {
+      console.error("파일 처리 에러:", err);
+      setError(`파일을 불러오는 중 오류가 발생했습니다: ${err?.message ?? err}`);
+    }
   };
 
   const visibleIndices = useMemo(() => {
@@ -477,7 +497,7 @@ function App() {
     const img = allImages[idx];
     const base64Data = img.src.split(',')[1];
     
-    let rawResults: TranslationResult[] = [];
+    let rawResults: RawTranslationResult[] = [];
 
     // Step 1: Create an HTMLImageElement to process with YOLO and Canvas
     const imgElement = await loadImage(img.src);
@@ -518,7 +538,7 @@ function App() {
         const geminiTranslations = await translateGridImage(googleKey, base64Data, gridBase64, img.mimeType, gridResult.cells.length, geminiVersion);
         
         // Convert to intermediate format for OpenAI pass
-        let geminiResults: TranslationResult[] = [];
+        let geminiResults: RawTranslationResult[] = [];
         for (const t of geminiTranslations) {
           const cell = gridResult.cells.find(c => c.id === t.id);
           if (cell) {
@@ -558,7 +578,7 @@ function App() {
       }
     }
 
-    let finalResults = rawResults.map(r => ({ ...r, id: crypto.randomUUID() }));
+    const finalResults = sanitizeResults(rawResults) ?? []; // 좌표가 깨진 응답 제거 + id 부여
 
     // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
     if (img.isSpread && finalResults.length > 0) {
@@ -570,90 +590,58 @@ function App() {
     return finalResults;
   };
 
-  const [isRetranslating, setIsRetranslating] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
-
-  const handleDeleteTranslation = (imgIndex: number, bubbleIndex: number) => {
+  const handleDeleteTranslation = (imgIndex: number, id: string) => {
     if (!confirm('이 번역을 삭제하시겠습니까? (오버레이 화면에서도 삭제됩니다)')) return;
-    const img = allImages[imgIndex];
-    const key = getCacheKey(img.file);
-    
-    setTranslationCache(prev => {
-      const currentArr = prev[key] || [];
-      const newArr = currentArr.filter((_, idx) => idx !== bubbleIndex);
-      safeSetCache(key, newArr);
-      return { ...prev, [key]: newArr };
-    });
+    const key = getCacheKey(allImages[imgIndex].file);
+    updatePageResults(key, results => results.filter(r => r.id !== id));
   };
 
-  const handleBoxChange = (imgIndex: number, bubbleIndex: number, newBox: [number, number, number, number]) => {
-    const img = allImages[imgIndex];
-    const key = getCacheKey(img.file);
-    setTranslationCache(prev => {
-      const currentArr = prev[key] || [];
-      const newArr = [...currentArr];
-      if (newArr[bubbleIndex]) {
-        newArr[bubbleIndex] = { ...newArr[bubbleIndex], box_2d: newBox, is_edited_box: true };
-      }
-      safeSetCache(key, newArr);
-      return { ...prev, [key]: newArr };
-    });
+  const handleBoxChange = (imgIndex: number, id: string, newBox: [number, number, number, number]) => {
+    const key = getCacheKey(allImages[imgIndex].file);
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, box_2d: newBox, is_edited_box: true } : r)));
   };
 
-  const handleToggleKeepAll = (imgIndex: number, bubbleIndex: number) => {
-    const img = allImages[imgIndex];
-    const key = getCacheKey(img.file);
-    setTranslationCache(prev => {
-      const currentArr = prev[key] || [];
-      if (!currentArr[bubbleIndex]) return prev;
-      const newArr = [...currentArr];
-      newArr[bubbleIndex] = { ...newArr[bubbleIndex], disable_keep_all: !newArr[bubbleIndex].disable_keep_all };
-      safeSetCache(key, newArr);
-      return { ...prev, [key]: newArr };
-    });
+  const handleToggleKeepAll = (imgIndex: number, id: string) => {
+    const key = getCacheKey(allImages[imgIndex].file);
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, disable_keep_all: !r.disable_keep_all } : r)));
   };
 
   const handleCreateAndTranslateBox = async (imgIndex: number, newBox2d: [number, number, number, number]) => {
     const img = allImages[imgIndex];
     const key = getCacheKey(img.file);
-    
-    const currentArr = translationCache[key] || [];
-    const bubbleIndex = currentArr.length;
-    setTranslationCache(prev => {
-      const currentArr = prev[key] || [];
-      const newDummy: TranslationResult = {
-        id: crypto.randomUUID(),
-        box_2d: newBox2d,
-        original_text: "...",
-        translated_text: "번역 중...",
-        is_edited_box: true
-      };
-      const newArr = [...currentArr, newDummy];
-      return { ...prev, [key]: newArr };
-    });
+    // 결과는 배열 위치가 아니라 id로 찾아 갱신합니다. (대기 중 삭제·재정렬해도 다른 말풍선을 덮어쓰지 않음)
+    const id = crypto.randomUUID();
 
-    setIsRetranslating({ imgIndex, bubbleIndex });
-    
+    setTranslationCache(prev => ({
+      ...prev,
+      [key]: [
+        ...(prev[key] || []),
+        { id, box_2d: newBox2d, original_text: "...", translated_text: "번역 중...", is_edited_box: true },
+      ],
+    }));
+    setBubblePending(id, true);
+
     try {
       // 1. Create a single-box grid image
       const imgElement = await loadImage(img.src);
-      
+
       const w = img.width;
       const h = img.height;
       const ymin = (newBox2d[0] / 1000) * h;
       const xmin = (newBox2d[1] / 1000) * w;
       const ymax = (newBox2d[2] / 1000) * h;
       const xmax = (newBox2d[3] / 1000) * w;
-      
+
       const singleBox = [{ xmin, ymin, xmax, ymax, classId: 3, confidence: 1 }];
       const gridResult = await createGridImageFromBoxes(imgElement, singleBox);
       if (!gridResult) throw new Error("크롭 실패");
-      
+
       const gridBase64 = gridResult.dataUrl.split(',')[1];
       const fullBase64 = img.src.split(',')[1];
-      
+
       let newTranslation = "";
       let newOriginalText = "...";
-      
+
       if (provider === 'google') {
         if (!googleKey) throw new Error("Google API 키가 필요합니다.");
         const results = await translateGridImage(googleKey, fullBase64, gridBase64, img.mimeType, 1, geminiVersion, glossary);
@@ -665,7 +653,7 @@ function App() {
         // OpenAI fallback: Use Gemini to extract text, then OpenAI to translate
         if (!googleKey) throw new Error("새 박스 인식을 위해 Google API 키가 반드시 필요합니다.");
         if (!openaiKey) throw new Error("번역을 위해 OpenAI API 키가 필요합니다.");
-        
+
         const results = await translateGridImage(googleKey, fullBase64, gridBase64, img.mimeType, 1, geminiVersion, glossary);
         if (results && results[0]) {
           newOriginalText = results[0].original_text || "...";
@@ -677,39 +665,21 @@ function App() {
         }
       }
 
-      setTranslationCache(prev => {
-        const updated = { ...prev };
-        if (updated[key]) {
-          updated[key] = [...updated[key]];
-          updated[key][bubbleIndex] = {
-            ...updated[key][bubbleIndex],
-            original_text: newOriginalText,
-            translated_text: newTranslation
-          };
-          safeSetCache(key, updated[key]);
-        }
-        return updated;
-      });
+      updatePageResults(key, results =>
+        results.map(r => (r.id === id ? { ...r, original_text: newOriginalText, translated_text: newTranslation } : r)),
+      );
     } catch (error: any) {
       alert("새 영역 번역 실패: " + error.message);
-      setTranslationCache(prev => {
-        const updated = { ...prev };
-        if (updated[key]) {
-          updated[key] = updated[key].filter((_, i) => i !== bubbleIndex);
-        }
-        return updated;
-      });
+      updatePageResults(key, results => results.filter(r => r.id !== id));
     } finally {
-      setIsRetranslating(null);
+      setBubblePending(id, false);
     }
   };
 
-  const handleRetranslate = async (imgIndex: number, bubbleIndex: number, originalText: string) => {
-    setIsRetranslating({ imgIndex, bubbleIndex });
+  const handleRetranslate = async (imgIndex: number, id: string, originalText: string) => {
+    const key = getCacheKey(allImages[imgIndex].file);
+    setBubblePending(id, true);
     try {
-      const img = allImages[imgIndex];
-      const key = getCacheKey(img.file);
-      
       let newTranslation = "";
       if (provider === 'google') {
         if (!googleKey) throw new Error("Google API 키가 필요합니다.");
@@ -719,42 +689,19 @@ function App() {
         newTranslation = await retranslateTextOpenAI(openAiVersion, openaiKey, originalText, geminiVersion, glossary);
       }
 
-      setTranslationCache(prev => {
-        const updated = { ...prev };
-        if (updated[key]) {
-          updated[key] = [...updated[key]];
-          updated[key][bubbleIndex] = {
-            ...updated[key][bubbleIndex],
-            translated_text: newTranslation
-          };
-          safeSetCache(key, updated[key]);
-        }
-        return updated;
-      });
+      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: newTranslation } : r)));
     } catch (e: any) {
       alert("재번역 실패: " + e.message);
     } finally {
-      setIsRetranslating(null);
+      setBubblePending(id, false);
     }
   };
 
-  const handleSaveEdit = (imgIndex: number, bubbleIndex: number) => {
+  const handleSaveEdit = () => {
     if (!editingBubble) return;
-    const img = allImages[imgIndex];
-    const key = getCacheKey(img.file);
-
-    setTranslationCache(prev => {
-      const updated = { ...prev };
-      if (updated[key]) {
-        updated[key] = [...updated[key]];
-        updated[key][bubbleIndex] = {
-          ...updated[key][bubbleIndex],
-          translated_text: editingText
-        };
-        safeSetCache(key, updated[key]);
-      }
-      return updated;
-    });
+    const { key, id } = editingBubble;
+    const text = editingText;
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: text } : r)));
     setEditingBubble(null);
   };
 
@@ -828,21 +775,50 @@ function App() {
     }
   }, [translationQueue.join(','), allImages, currentKey, provider, getCacheKey, retryTrigger]); 
 
-  const onDragOver = useCallback((e: React.DragEvent) => {
+  // 이미지가 로드된 뒤에도 파일을 끌어다 놓으면 추가되도록 main 전체를 드롭 영역으로 사용
+  const onDragOver = (e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
     e.preventDefault();
-    setIsDragging(true);
-  }, []);
+    e.dataTransfer.dropEffect = 'copy';
+    if (!isDragging) setIsDragging(true);
+  };
 
-  const onDragLeave = useCallback((e: React.DragEvent) => {
+  const onDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDragging(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
+  };
+
+  // 드롭 영역 밖(헤더 등)에 파일을 떨어뜨려도 브라우저가 파일을 열며 페이지를 떠나지 않게 막음
+  useEffect(() => {
+    const preventFileNavigation = (e: DragEvent) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault();
+    };
+    window.addEventListener('dragover', preventFileNavigation);
+    window.addEventListener('drop', preventFileNavigation);
+    return () => {
+      window.removeEventListener('dragover', preventFileNavigation);
+      window.removeEventListener('drop', preventFileNavigation);
+    };
   }, []);
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files) processFiles(e.dataTransfer.files);
-  }, [currentKey]);
+  // 이미지는 새로고침하면 사라지므로 작업 중 페이지 이탈 시 경고
+  const hasImages = allImages.length > 0;
+  useEffect(() => {
+    if (!hasImages) return;
+    const warnBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [hasImages]);
 
   const scrollToScript = (imgIdx: number, bubbleIdx: number) => {
     if (scriptListRef.current && scriptStyle === 'side') {
@@ -937,15 +913,7 @@ function App() {
       }
     }
     const data = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'manga_translation_data.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([data], { type: 'application/json' }), 'manga_translation_data.json');
   };
 
   const handleClearCache = () => {
@@ -1006,111 +974,64 @@ function App() {
   };
 
   const handleDownloadImage = async (imgIndex: number) => {
-    const element = document.getElementById(`manga-page-${imgIndex}`);
-    if (!element) return;
-    
+    const img = allImages[imgIndex];
     try {
-      const clone = element.cloneNode(true) as HTMLElement;
-      clone.style.width = element.offsetWidth + 'px';
-      clone.style.height = element.offsetHeight + 'px';
-      
-      const spans = clone.querySelectorAll('span');
-      spans.forEach(span => {
-        if (span.style.fontSize.includes('clamp')) {
-          span.style.fontSize = span.style.fontSize.replace(/clamp\([\d.]+px,/, 'clamp(13px,').replace(/, [\d.]+px\)/, ', 28px)');
-        }
-      });
-      
-      clone.style.position = 'absolute';
-      clone.style.left = '-9999px';
-      clone.style.top = '-9999px';
-      document.body.appendChild(clone);
-      
-      const canvas = await html2canvas(clone, { useCORS: true, allowTaint: true, scale: 2 });
-      document.body.removeChild(clone);
-      
-      const link = document.createElement('a');
-      link.download = `translated_page_${imgIndex + 1}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      const canvas = await renderTranslatedPage(img.src, translationCache[getCacheKey(img.file)] ?? []);
+      const format = exportFormatFor(img.mimeType);
+      const blob = await canvasToBlob(canvas, format.type, format.quality);
+      downloadBlob(blob, `translated_page_${imgIndex + 1}.${format.ext}`);
     } catch (err) {
-      console.error("Failed to capture image:", err);
+      console.error("Failed to render image:", err);
       setError("이미지 다운로드에 실패했습니다.");
     }
   };
 
-    const startExportAll = () => {
-    if (allImages.length === 0) return;
-    const confirmMsg = `총 ${allImages.length}장의 덮어쓰기 이미지를 ZIP으로 압축하여 다운로드하시겠습니까?\n\n수십 초 이상 걸릴 수 있습니다. 진행하시겠습니까?`;
+  /**
+   * 전체 페이지를 원본 해상도로 합성해 ZIP으로 내보냅니다.
+   * 화면을 넘기며 캡처하지 않으므로 자동 번역(과금)을 유발하지 않고, 보기 모드와 무관하게 번역이 입혀집니다.
+   */
+  const handleExportAll = async () => {
+    if (allImages.length === 0 || exportProgress) return;
+
+    const images = allImages;
+    const cache = translationCache;
+    const untranslatedCount = images.filter(img => !cache[getCacheKey(img.file)]?.length).length;
+    const confirmMsg = `총 ${images.length}장을 번역이 입혀진 원본 해상도 이미지로 ZIP 저장합니다.`
+      + (untranslatedCount > 0 ? `\n\n⚠️ 아직 번역이 없는 ${untranslatedCount}장은 원본 그대로 들어갑니다. (추가 번역 요청은 하지 않습니다)` : '')
+      + '\n\n진행하시겠습니까?';
     if (!window.confirm(confirmMsg)) return;
-    
-    zipRef.current = new JSZip();
-    setExportState({ isExporting: true, currentIndex: 0 });
-  };
 
-  useEffect(() => {
-    if (!exportState.isExporting) return;
-    const currentIndex = exportState.currentIndex;
-    const zip = zipRef.current;
-    if (!zip) return;
-    
-    if (currentIndex >= allImages.length) {
-      zip.generateAsync({ type: "blob" }).then((content: Blob) => {
-        const url = URL.createObjectURL(content);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = loadedFilename ? `${loadedFilename}_translated.zip` : `manga_translated.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        zipRef.current = null;
-        setExportState({ isExporting: false, currentIndex: 0 });
-        alert('다운로드가 완료되었습니다!');
-      });
-      return;
-    }
-    
-    setCurrentPageIndex(currentIndex);
-    
-    const timer = setTimeout(async () => {
-      try {
-        const element = document.getElementById(`manga-page-${currentIndex}`);
-        if (element) {
-          const clone = element.cloneNode(true) as HTMLElement;
-          clone.style.width = element.offsetWidth + 'px';
-          clone.style.height = element.offsetHeight + 'px';
-          
-          const spans = clone.querySelectorAll('span');
-          spans.forEach(span => {
-            if (span.style.fontSize.includes('clamp')) {
-              span.style.fontSize = span.style.fontSize.replace(/clamp\([\d.]+px,/, 'clamp(13px,').replace(/, [\d.]+px\)/, ', 28px)');
-            }
-          });
-          
-          clone.style.position = 'absolute';
-          clone.style.left = '-9999px';
-          clone.style.top = '-9999px';
-          document.body.appendChild(clone);
-          
-          const canvas = await html2canvas(clone, { useCORS: true, allowTaint: true, scale: 2 });
-          document.body.removeChild(clone);
-          
-          const imgData = canvas.toDataURL('image/png').split(',')[1];
-          const padLength = Math.max(3, String(allImages.length).length);
-          const fileName = `page_${String(currentIndex + 1).padStart(padLength, '0')}.png`;
-          zip.file(fileName, imgData, { base64: true });
+    setExportProgress({ done: 0, total: images.length });
+    try {
+      const zip = new JSZip();
+      const padLength = Math.max(3, String(images.length).length);
+      let failed = 0;
+
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        try {
+          const canvas = await renderTranslatedPage(img.src, cache[getCacheKey(img.file)] ?? []);
+          const format = exportFormatFor(img.mimeType);
+          const blob = await canvasToBlob(canvas, format.type, format.quality);
+          canvas.width = 0; // 큰 캔버스 메모리를 바로 반환
+          zip.file(`page_${String(i + 1).padStart(padLength, '0')}.${format.ext}`, blob);
+        } catch (err) {
+          console.error("Export page failed:", i + 1, err);
+          failed++;
         }
-      } catch (err) {
-        console.error("Export page failed:", err);
-      } finally {
-        setExportState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1 }));
+        setExportProgress({ done: i + 1, total: images.length });
       }
-    }, 200);
 
-    return () => clearTimeout(timer);
-  }, [exportState.isExporting, exportState.currentIndex, allImages, loadedFilename]);
+      const content = await zip.generateAsync({ type: "blob" });
+      downloadBlob(content, loadedFilename ? `${loadedFilename}_translated.zip` : `manga_translated.zip`);
+      if (failed > 0) setError(`${failed}장은 변환에 실패해 ZIP에서 제외되었습니다.`);
+    } catch (err: any) {
+      console.error(err);
+      setError(`ZIP 내보내기 실패: ${err?.message ?? err}`);
+    } finally {
+      setExportProgress(null);
+    }
+  };
 
 
   return (
@@ -1192,8 +1113,8 @@ function App() {
               <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium border border-blue-200 hover:bg-blue-100 shrink-0">
                 <Upload size={14} /> 추가
               </button>
-              <button onClick={startExportAll} disabled={exportState.isExporting} className="flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium border border-orange-200 hover:bg-orange-100 disabled:opacity-50 shrink-0">
-                {exportState.isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} ZIP
+              <button onClick={handleExportAll} disabled={!!exportProgress} title="번역이 입혀진 전체 페이지를 원본 해상도로 ZIP 저장" className="flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-700 rounded text-xs font-medium border border-orange-200 hover:bg-orange-100 disabled:opacity-50 shrink-0">
+                {exportProgress ? <><Loader2 size={14} className="animate-spin" /> {exportProgress.done}/{exportProgress.total}</> : <><Download size={14} /> ZIP</>}
               </button>
               <button onClick={handleExportJSON} className="flex items-center gap-1 px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-medium border border-green-200 hover:bg-green-100 shrink-0">
                 <Save size={14} /> JSON
@@ -1259,7 +1180,17 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col p-4 overflow-hidden relative">
+      <main
+        className="flex-1 flex flex-col p-4 overflow-hidden relative"
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        {isDragging && allImages.length > 0 && (
+          <div className="absolute inset-4 z-[60] rounded-xl border-4 border-dashed border-blue-500 bg-blue-500/10 flex items-center justify-center pointer-events-none">
+            <span className="px-4 py-2 bg-white rounded-lg shadow text-blue-700 font-medium">놓으면 이미지를 추가합니다</span>
+          </div>
+        )}
         <input 
           type="file" 
           ref={fileInputRef}
@@ -1286,9 +1217,6 @@ function App() {
                 isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'
               }`}
               onClick={() => fileInputRef.current?.click()}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onDrop={onDrop}
             >
               <Upload size={48} className="text-gray-400 mb-4" />
               <p className="text-lg font-medium text-gray-600">여러 장의 이미지를 드래그하여 업로드하세요</p>
@@ -1407,24 +1335,10 @@ function App() {
                             />
                             
                             {results.map((result, bubbleIndex) => {
-                              const [ymin, xmin, ymax, xmax] = result.box_2d;
-                              const boxWidth = xmax - xmin;
-                              const boxHeight = ymax - ymin;
-                              
-                              let expandedWidth = boxWidth;
-                              let expandedHeight = boxHeight;
-                              let newXmin = xmin;
-                              let newYmin = ymin;
+                              const [newYmin, newXmin, displayYmax, displayXmax] = getDisplayBox(result);
+                              const expandedWidth = displayXmax - newXmin;
+                              const expandedHeight = displayYmax - newYmin;
 
-                              if (!result.is_edited_box) {
-                                expandedWidth = boxWidth * 1.3;
-                                expandedHeight = boxHeight * 1.1;
-                                const cx = xmin + boxWidth / 2;
-                                const cy = ymin + boxHeight / 2;
-                                newXmin = cx - expandedWidth / 2;
-                                newYmin = cy - expandedHeight / 2;
-                              }
-                              
                               const top = `${(newYmin / 1000) * 100}%`;
                               const left = `${(newXmin / 1000) * 100}%`;
                               const height = `${(expandedHeight / 1000) * 100}%`;
@@ -1468,11 +1382,11 @@ function App() {
                                 if (isEditingBoxes) {
                                   return (
                                     <BoxEditor
-                                      key={result.id ?? bubbleIndex}
+                                      key={result.id}
                                       initialBox={[newYmin, newXmin, newYmin + expandedHeight, newXmin + expandedWidth]}
-                                      onChange={(newBox: [number, number, number, number]) => handleBoxChange(imgIndex, bubbleIndex, newBox)}
+                                      onChange={(newBox: [number, number, number, number]) => handleBoxChange(imgIndex, result.id, newBox)}
                                       isKeepAll={!result.disable_keep_all}
-                                      onToggleKeepAll={() => handleToggleKeepAll(imgIndex, bubbleIndex)}
+                                      onToggleKeepAll={() => handleToggleKeepAll(imgIndex, result.id)}
                                     >
                                       {textContent}
                                     </BoxEditor>
@@ -1481,7 +1395,7 @@ function App() {
 
                                 return (
                                   <div
-                                    key={result.id ?? bubbleIndex}
+                                    key={result.id}
                                     className="absolute flex flex-col items-center justify-center pointer-events-auto"
                                     style={{
                                       top, left, height, width,
@@ -1496,7 +1410,7 @@ function App() {
 
                               return (
                                 <div
-                                  key={result.id ?? bubbleIndex}
+                                  key={result.id}
                                   onMouseEnter={() => {
                                     setHoveredBubble({ imageIndex: imgIndex, bubbleIndex });
                                     scrollToScript(imgIndex, bubbleIndex);
@@ -1513,15 +1427,14 @@ function App() {
                             })}
                           </div>
                           
-                          {scriptStyle === 'overlay' && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDownloadImage(imgIndex); }}
-                              className="absolute top-4 right-4 bg-black bg-opacity-60 hover:bg-blue-600 text-white p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center gap-2"
-                              title="이 페이지를 이미지로 다운로드"
-                            >
-                              <Download size={20} />
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDownloadImage(imgIndex); }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="absolute top-4 right-4 bg-black bg-opacity-60 hover:bg-blue-600 text-white p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center gap-2"
+                            title="이 페이지를 번역이 입혀진 이미지로 다운로드"
+                          >
+                            <Download size={20} />
+                          </button>
                         </div>
                       );
                     })}
@@ -1663,7 +1576,7 @@ function App() {
                             return (
                               <div
                                 id={`script-${imgIndex}-${bubbleIndex}`}
-                                key={result.id ?? bubbleIndex}
+                                key={result.id}
                                 draggable
                                 onDragStart={(e) => handleScriptDragStart(e, imgIndex, bubbleIndex)}
                                 onDragEnd={handleScriptDragEnd}
@@ -1687,7 +1600,7 @@ function App() {
                                   {displayNum}
                                 </div>
                                 <div className="flex flex-col flex-1">
-                                  {editingBubble?.imgIndex === imgIndex && editingBubble?.bubbleIndex === bubbleIndex ? (
+                                  {editingBubble?.id === result.id ? (
                                     <div className="flex flex-col gap-2">
                                       <textarea
                                         value={editingText}
@@ -1698,7 +1611,7 @@ function App() {
                                         onKeyDown={(e) => {
                                           if (e.key === 'Enter' && !e.shiftKey) {
                                             e.preventDefault();
-                                            handleSaveEdit(imgIndex, bubbleIndex);
+                                            handleSaveEdit();
                                           } else if (e.key === 'Escape') {
                                             setEditingBubble(null);
                                           }
@@ -1708,7 +1621,7 @@ function App() {
                                         <button onClick={() => setEditingBubble(null)} className="p-1.5 hover:bg-gray-200 rounded-md text-gray-500 transition-colors" title="취소 (Esc)">
                                           <X size={14} />
                                         </button>
-                                        <button onClick={() => handleSaveEdit(imgIndex, bubbleIndex)} className="p-1.5 hover:bg-green-100 bg-green-50 text-green-600 rounded-md transition-colors" title="저장 (Enter)">
+                                        <button onClick={handleSaveEdit} className="p-1.5 hover:bg-green-100 bg-green-50 text-green-600 rounded-md transition-colors" title="저장 (Enter)">
                                           <Check size={14} />
                                         </button>
                                       </div>
@@ -1734,7 +1647,7 @@ function App() {
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        setEditingBubble({ imgIndex, bubbleIndex });
+                                        setEditingBubble({ key, id: result.id });
                                         setEditingText(result.translated_text);
                                       }}
                                       title="직접 번역 텍스트 수정하기"
@@ -1746,7 +1659,7 @@ function App() {
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        handleDeleteTranslation(imgIndex, bubbleIndex);
+                                        handleDeleteTranslation(imgIndex, result.id);
                                       }}
                                       title="번역 삭제하기"
                                       className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors relative z-10"
@@ -1757,13 +1670,13 @@ function App() {
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        handleRetranslate(imgIndex, bubbleIndex, result.original_text);
+                                        handleRetranslate(imgIndex, result.id, result.original_text);
                                       }}
-                                      disabled={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex}
+                                      disabled={pendingBubbleIds.has(result.id)}
                                       title="이 문장만 다시 AI 재번역"
                                       className="p-1 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 relative z-10"
                                     >
-                                      <RefreshCw size={14} className={isRetranslating?.imgIndex === imgIndex && isRetranslating?.bubbleIndex === bubbleIndex ? 'animate-spin' : ''} />
+                                      <RefreshCw size={14} className={pendingBubbleIds.has(result.id) ? 'animate-spin' : ''} />
                                     </button>
                                     <button 
                                       onClick={() => {

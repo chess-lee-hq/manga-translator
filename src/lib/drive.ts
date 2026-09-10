@@ -1,4 +1,5 @@
 import { buildCacheKey } from "./cacheKey";
+import { sanitizeResults } from "./results";
 import JSZip from 'jszip';
 import type { TranslationResult } from './gemini';
 
@@ -216,8 +217,9 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
     });
 
     const key = buildCacheKey(imgData.filename, blob.size);
-    if (imgData.translations) {
-      loadedTranslations[key] = imgData.translations;
+    const translations = sanitizeResults(imgData.translations);
+    if (translations) {
+      loadedTranslations[key] = translations;
     }
   }
 

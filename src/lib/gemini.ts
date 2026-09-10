@@ -2,7 +2,7 @@ import { sortMangaBoxesByTier } from "./readingOrder";
 import { GoogleGenAI, Type } from '@google/genai';
 
 export interface TranslationResult {
-  id?: string;
+  id: string;
   original_text: string;
   translated_text: string;
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized to 1000
@@ -10,7 +10,10 @@ export interface TranslationResult {
   disable_keep_all?: boolean;
 }
 
-export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<TranslationResult[]> {
+/** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */
+export type RawTranslationResult = Omit<TranslationResult, 'id'>;
+
+export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<RawTranslationResult[]> {
   const ai = new GoogleGenAI({ apiKey });
   
   const glossaryInstruction = glossary && Object.keys(glossary).length > 0
@@ -123,7 +126,7 @@ ${glossaryInstruction}
     }
     cleanText = cleanText.trim();
     
-    let translationResults: TranslationResult[] = JSON.parse(cleanText);
+    let translationResults: RawTranslationResult[] = JSON.parse(cleanText);
 
     // 프론트엔드에서 한 번 더 완벽한 일본 만화 읽는 순서로 정렬합니다.
     translationResults = sortMangaBoxesByTier(translationResults, t => t.box_2d);
