@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X } from 'lucide-react';
+import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X, Zap, ZapOff } from 'lucide-react';
 import JSZip from 'jszip';
 import { buildCacheKey } from './lib/cacheKey';
 import { translateMangaImage, retranslateTextGemini, translateGridImage } from './lib/gemini';
@@ -27,6 +27,22 @@ interface UploadedImage {
 }
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const AUTO_TRANSLATE_STORAGE_KEY = 'manga-translator-auto-translate';
+/** 동시에 번역을 요청하는 페이지 수 */
+const TRANSLATION_CONCURRENCY = 3;
+/** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
+const PRELOAD_PAGE_COUNT = 10;
+/** API 키 입력이 멈춘 뒤 이 시간이 지나야 번역을 시작 */
+const API_KEY_DEBOUNCE_MS = 800;
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 const hasDraggedFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
@@ -55,8 +71,9 @@ declare global {
 
 function App() {
   const [provider, setProvider] = useState<'google' | 'openai'>('google');
-  const [googleKey, setGoogleKey] = useState('');
-  const [openaiKey, setOpenaiKey] = useState('');
+  // 저장된 키를 첫 렌더부터 읽어, 새로고침 직후 키 디바운스 때문에 번역이 늦게 시작되지 않게 함
+  const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('manga-translator-google-key') || '');
+  const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('manga-translator-openai-key') || '');
   
   const [googleClientId] = useState(() => localStorage.getItem('googleClientId') || '499460859404-ub21a3onu2807hmeei71110c5d3b4ugo.apps.googleusercontent.com');
   const [driveToken, setDriveToken] = useState<string | null>(null);
@@ -96,8 +113,22 @@ function App() {
       localStorage.setItem('manga-glossary-current', JSON.stringify(newGlossary));
     } catch {}
   };
-  const [isTranslating, setIsTranslating] = useState(false);
-  const inFlightRef = useRef<Set<number>>(new Set());
+  /** 항목을 현재 단어장에 합칩니다. 같은 원문은 새 값으로 바뀌고 나머지 기존 항목은 유지됩니다. */
+  const mergeGlossary = (entries: Record<string, string>) => {
+    setGlossary(prev => {
+      const next = { ...prev, ...entries };
+      try {
+        localStorage.setItem('manga-glossary-current', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+  // 번역 진행 상태는 페이지 번호가 아니라 캐시 키(파일) 기준으로 추적 → 이미지 추가·재정렬 중에도 중복 호출·누락 없음
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(() => new Set());
+  // credential: 실패 당시의 제공자·키. 키를 바꾸면 실패했던 페이지도 자동으로 다시 시도함
+  const [pageErrors, setPageErrors] = useState<Record<string, { message: string; credential: string }>>({});
+  const [autoTranslate, setAutoTranslate] = useState(() => localStorage.getItem(AUTO_TRANSLATE_STORAGE_KEY) !== 'false');
   const [retryTrigger, setRetryTrigger] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -113,11 +144,6 @@ function App() {
   const viewerContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const savedGoogleKey = localStorage.getItem('manga-translator-google-key');
-    if (savedGoogleKey) setGoogleKey(savedGoogleKey);
-    const savedOpenaiKey = localStorage.getItem('manga-translator-openai-key');
-    if (savedOpenaiKey) setOpenaiKey(savedOpenaiKey);
-
     // Load saved translation caches from LocalStorage (좌표가 깨진 항목은 걸러냄)
     const initialCache: Record<string, TranslationResult[]> = {};
     for (let i = 0; i < localStorage.length; i++) {
@@ -231,6 +257,17 @@ function App() {
   }, [allImages, getCacheKey]);
 
   const currentKey = provider === 'google' ? googleKey : openaiKey;
+  // API 키를 한 글자씩 입력하는 도중에는 번역을 시작하지 않도록, 입력이 멈춘 뒤의 값만 사용
+  const liveCredential = `${provider}|${googleKey}|${openaiKey}`;
+  const credential = useDebouncedValue(liveCredential, API_KEY_DEBOUNCE_MS);
+  const isCredentialSettled = credential === liveCredential;
+
+  const updateAutoTranslate = (enabled: boolean) => {
+    setAutoTranslate(enabled);
+    try {
+      localStorage.setItem(AUTO_TRANSLATE_STORAGE_KEY, String(enabled));
+    } catch {}
+  };
 
   const loginToGoogleDrive = () => {
     return new Promise<string>((resolve, reject) => {
@@ -293,7 +330,7 @@ function App() {
     };
   };
 
-  /** 백업 ZIP(manga_data.json 포함)을 복원하고, 읽지 못한 이미지 수를 반환합니다. */
+  /** 백업 ZIP(manga_data.json 포함)을 복원합니다. 읽지 못한 이미지 수와 합친 단어장 항목 수를 반환합니다. */
   const restoreBackupZip = async (zipBlob: Blob, name: string) => {
     const { images, translations, lastReadPage, glossary: loadedGlossary } = await extractMangaZip(zipBlob);
 
@@ -308,13 +345,15 @@ function App() {
       }
     }
 
-    updateGlossary(loadedGlossary || {});
+    // 백업의 단어장은 현재 단어장에 합칩니다. (예전에는 통째로 덮어써서 기존 단어장이 사라졌음)
+    const glossaryEntries = loadedGlossary || {};
+    if (Object.keys(glossaryEntries).length > 0) mergeGlossary(glossaryEntries);
     setLoadedFilename(name);
     setAllImages(loadedImages);
     setTranslationCache(prev => ({ ...prev, ...translations }));
     Object.keys(translations).forEach(key => safeSetCache(key, translations[key]));
     setCurrentPageIndex(Math.min(lastReadPage || 0, Math.max(0, loadedImages.length - 1)));
-    return failed;
+    return { failed, mergedGlossaryCount: Object.keys(glossaryEntries).length };
   };
 
   const handleSaveToDrive = async () => {
@@ -360,8 +399,11 @@ function App() {
     try {
       const token = await getDriveToken();
       const zipBlob = await downloadFromGoogleDrive(token, fileId);
-      const failed = await restoreBackupZip(zipBlob, stripArchiveExtension(filename));
-      alert(failed > 0 ? `불러왔지만 이미지 ${failed}장을 읽지 못했습니다.` : "성공적으로 불러왔습니다!");
+      const { failed, mergedGlossaryCount } = await restoreBackupZip(zipBlob, stripArchiveExtension(filename));
+      alert(
+        (failed > 0 ? `불러왔지만 이미지 ${failed}장을 읽지 못했습니다.` : "성공적으로 불러왔습니다!")
+        + (mergedGlossaryCount > 0 ? `\n단어장 ${mergedGlossaryCount}개 항목을 현재 단어장에 합쳤습니다.` : ''),
+      );
     } catch (e: any) {
       handleDriveError(e, '파일 불러오기');
     } finally {
@@ -390,7 +432,7 @@ function App() {
         const zip = await JSZip.loadAsync(archiveFile);
         if (zip.file("manga_data.json")) {
           // 백업 복구용
-          const failed = await restoreBackupZip(archiveFile, stripArchiveExtension(archiveFile.name));
+          const { failed } = await restoreBackupZip(archiveFile, stripArchiveExtension(archiveFile.name));
           if (failed > 0) setError(`백업에서 이미지 ${failed}장을 읽지 못했습니다.`);
           return;
         }
@@ -484,7 +526,7 @@ function App() {
     if (visibleIndices.length === 0) return [];
     const needed = [...visibleIndices];
     
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= PRELOAD_PAGE_COUNT; i++) {
       const nextIdx = visibleIndices[visibleIndices.length - 1] + i;
       if (nextIdx < allImages.length) {
         needed.push(nextIdx);
@@ -493,8 +535,7 @@ function App() {
     return needed;
   }, [visibleIndices, allImages.length]);
 
-  const executeTranslation = async (idx: number) => {
-    const img = allImages[idx];
+  const executeTranslation = async (img: UploadedImage): Promise<TranslationResult[]> => {
     const base64Data = img.src.split(',')[1];
     
     let rawResults: RawTranslationResult[] = [];
@@ -705,75 +746,66 @@ function App() {
     setEditingBubble(null);
   };
 
-  useEffect(() => {
-    if (allImages.length === 0 || !currentKey || translationQueue.length === 0) return;
+  /**
+   * 지정한 페이지들을 번역합니다. 호출 시점에 파일(캐시 키)로 고정하므로 도중에 이미지가 추가·재정렬돼도 안전합니다.
+   * 동시에 TRANSLATION_CONCURRENCY장씩 처리하고, 끝난 페이지부터 바로 화면에 반영합니다.
+   */
+  const translatePages = async (indices: number[]) => {
+    const jobs = indices
+      .filter(idx => allImages[idx])
+      .map(idx => ({ idx, img: allImages[idx], key: getCacheKey(allImages[idx].file) }))
+      .filter(job => !inFlightRef.current.has(job.key));
+    if (jobs.length === 0) return;
 
+    const attemptCredential = credential;
+    jobs.forEach(job => inFlightRef.current.add(job.key));
+    setTranslatingKeys(new Set(inFlightRef.current));
+    setPageErrors(prev => {
+      const next = { ...prev };
+      jobs.forEach(job => delete next[job.key]);
+      return next;
+    });
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < jobs.length) {
+        const job = jobs[cursor++];
+        try {
+          const results = await executeTranslation(job.img);
+          safeSetCache(job.key, results);
+          setTranslationCache(prev => ({ ...prev, [job.key]: results }));
+        } catch (err: any) {
+          console.error(`Page ${job.idx + 1} 번역 실패:`, err);
+          setPageErrors(prev => ({
+            ...prev,
+            [job.key]: { message: err?.message || '번역 중 오류가 발생했습니다.', credential: attemptCredential },
+          }));
+        } finally {
+          inFlightRef.current.delete(job.key);
+          setTranslatingKeys(new Set(inFlightRef.current));
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(TRANSLATION_CONCURRENCY, jobs.length) }, () => worker()));
+  };
+
+  const retryPage = (imgIndex: number) => {
+    translatePages([imgIndex]);
+  };
+
+  useEffect(() => {
+    if (!autoTranslate || !isCredentialSettled || !currentKey || allImages.length === 0 || translationQueue.length === 0) return;
+
+    // translationQueue는 보이는 페이지가 앞에 오므로 그 순서대로 처리됨
     const missingIndices = translationQueue.filter(i => {
       const key = getCacheKey(allImages[i].file);
-      return !translationCache[key] && !inFlightRef.current.has(i);
+      const failure = pageErrors[key];
+      // 같은 키로 이미 실패한 페이지는 자동으로 다시 부르지 않음 (반복 실패·과금 방지). 키를 바꾸거나 '다시 시도'로 재요청
+      return !translationCache[key] && !inFlightRef.current.has(key) && !(failure && failure.credential === credential);
     });
-    
-    if (missingIndices.length > 0) {
-      const translateMissing = async () => {
-        setIsTranslating(true);
-        setError(null);
-        
-        missingIndices.forEach(i => inFlightRef.current.add(i));
 
-        const processInChunks = async (indices: number[], chunkSize: number = 3) => {
-          for (let i = 0; i < indices.length; i += chunkSize) {
-            const chunk = indices.slice(i, i + chunkSize);
-            const promises = chunk.map(async (idx) => {
-              const results = await executeTranslation(idx);
-              return { idx, results };
-            });
-            
-            const settled = await Promise.allSettled(promises);
-            const successful = settled
-              .filter((r): r is PromiseFulfilledResult<{idx: number, results: any}> => r.status === 'fulfilled')
-              .map(r => r.value);
-            
-            if (successful.length > 0) {
-              setTranslationCache(prev => {
-                const updated = { ...prev };
-                successful.forEach(({idx, results}) => {
-                  const key = getCacheKey(allImages[idx].file);
-                  updated[key] = results;
-                  safeSetCache(key, results);
-                });
-                return updated;
-              });
-            }
-            
-            // If any failed, log them or set error
-            const failed = settled.filter(r => r.status === 'rejected');
-            if (failed.length > 0) {
-              console.error("Some translations failed:", failed);
-            }
-          }
-        };
-
-        try {
-          const visibleMissing = missingIndices.filter(i => visibleIndices.includes(i));
-          if (visibleMissing.length > 0) {
-            await processInChunks(visibleMissing, 3);
-          }
-
-          const preloadMissing = missingIndices.filter(i => !visibleIndices.includes(i));
-          if (preloadMissing.length > 0) {
-            await processInChunks(preloadMissing, 3);
-          }
-        } catch (err: any) {
-          setError(err.message || '번역 중 오류가 발생했습니다.');
-        } finally {
-          missingIndices.forEach(i => inFlightRef.current.delete(i));
-          setIsTranslating(false);
-        }
-      };
-      
-      translateMissing();
-    }
-  }, [translationQueue.join(','), allImages, currentKey, provider, getCacheKey, retryTrigger]); 
+    if (missingIndices.length > 0) translatePages(missingIndices);
+  }, [translationQueue.join(','), allImages, credential, isCredentialSettled, autoTranslate, retryTrigger]);
 
   // 이미지가 로드된 뒤에도 파일을 끌어다 놓으면 추가되도록 main 전체를 드롭 영역으로 사용
   const onDragOver = (e: React.DragEvent) => {
@@ -833,12 +865,18 @@ function App() {
   const handleZoomIn = () => setScale(s => Math.min(s + 0.1, 3.0));
   const handleZoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      if (e.deltaY < 0) handleZoomIn();
-      else handleZoomOut();
-    }
-  };
+  // Ctrl/⌘ + 휠(트랙패드 핀치) 확대. React의 onWheel은 passive라 preventDefault가 안 돼 브라우저 화면까지 같이 확대됐음
+  useEffect(() => {
+    const el = viewerContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setScale(s => (e.deltaY < 0 ? Math.min(s + 0.1, 3.0) : Math.max(s - 0.1, 0.5)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [hasImages]);
 
   const handlePanStart = (e: React.MouseEvent) => {
     if (!viewerContainerRef.current) return;
@@ -917,18 +955,19 @@ function App() {
   };
 
   const handleClearCache = () => {
-    if (confirm('브라우저에 자동 저장된 모든 번역 기록을 영구적으로 삭제하시겠습니까?')) {
-      const keysToRemove = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('manga-cache-')) {
-          keysToRemove.push(k);
-        }
+    if (!confirm('브라우저에 자동 저장된 모든 번역 기록을 영구적으로 삭제하시겠습니까?\n\n삭제 직후 보이는 페이지가 다시 번역되며 요금이 나가는 것을 막기 위해 자동 번역이 꺼집니다.')) return;
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('manga-cache-')) {
+        keysToRemove.push(k);
       }
-      keysToRemove.forEach(k => localStorage.removeItem(k));
-      setTranslationCache({});
-      alert('저장된 캐시가 모두 삭제되었습니다.');
     }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    setTranslationCache({});
+    setPageErrors({});
+    updateAutoTranslate(false);
+    alert('저장된 번역 기록을 삭제했습니다.\n다시 번역하려면 상단의 [자동 번역] 버튼을 켜거나, 대본 패널에서 페이지별로 번역하세요.');
   };
 
   const handleScriptDragStart = (e: React.DragEvent, imgIndex: number, itemIndex: number) => {
@@ -1033,6 +1072,14 @@ function App() {
     }
   };
 
+  // 하단 바 번역 상태 (덮어쓰기 모드에는 대본 패널이 없으므로 여기서도 보여줌)
+  const visibleKeys = visibleIndices.filter(i => allImages[i]).map(i => getCacheKey(allImages[i].file));
+  const visibleIsTranslating = visibleKeys.some(k => translatingKeys.has(k));
+  const visibleFailedIndex = visibleIndices.find(i => {
+    const k = allImages[i] ? getCacheKey(allImages[i].file) : '';
+    return !!k && !translationCache[k] && !!pageErrors[k] && !translatingKeys.has(k);
+  });
+  const visibleFailedMessage = visibleFailedIndex !== undefined ? pageErrors[getCacheKey(allImages[visibleFailedIndex].file)]?.message : undefined;
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100 font-sans h-screen overflow-hidden">
@@ -1134,6 +1181,14 @@ function App() {
               <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
             </>
           )}
+
+          <button
+            onClick={() => updateAutoTranslate(!autoTranslate)}
+            title={autoTranslate ? '페이지를 넘기면 보이는 페이지와 다음 페이지들을 자동으로 번역합니다. 클릭하면 끕니다.' : '자동 번역이 꺼져 있습니다. 대본 패널에서 페이지별로 번역할 수 있습니다.'}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border whitespace-nowrap shrink-0 ${autoTranslate ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'}`}
+          >
+            {autoTranslate ? <Zap size={12} /> : <ZapOff size={12} />} 자동 번역 {autoTranslate ? 'ON' : 'OFF'}
+          </button>
 
           <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0 items-center">
             <button onClick={() => setProvider('google')} className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium ${provider === 'google' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}>
@@ -1245,7 +1300,6 @@ function App() {
                   ref={viewerContainerRef}
                   className={`flex-1 overflow-auto bg-gray-800 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'} [&::-webkit-scrollbar]:hidden`}
                   style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                  onWheel={handleWheel}
                   onMouseDown={handlePanStart}
                   onMouseMove={handlePanMove}
                   onMouseUp={handlePanEnd}
@@ -1468,10 +1522,24 @@ function App() {
                       }}
                       className="w-16 text-center border border-gray-300 rounded py-0.5 px-1 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm font-medium"
                     />
-                    {viewMode === '2page' ? (
-                      <span>- {Math.min(currentPageIndex + 2, allImages.length)} / {allImages.length}</span>
+                    {visibleIndices.length > 1 ? (
+                      <span>- {currentPageIndex + 2} / {allImages.length}</span>
                     ) : (
                       <span>/ {allImages.length}</span>
+                    )}
+                    {visibleIsTranslating && (
+                      <span className="flex items-center gap-1 text-xs text-blue-600 font-medium">
+                        <Loader2 size={12} className="animate-spin" /> 번역 중
+                      </span>
+                    )}
+                    {visibleFailedIndex !== undefined && (
+                      <button
+                        onClick={() => retryPage(visibleFailedIndex)}
+                        title={visibleFailedMessage}
+                        className="flex items-center gap-1 text-xs text-red-600 font-medium hover:underline"
+                      >
+                        <AlertTriangle size={12} /> 번역 실패 · 다시 시도
+                      </button>
                     )}
                   </div>
 
@@ -1491,10 +1559,10 @@ function App() {
                     <span className="font-semibold text-gray-700 flex items-center gap-2">
                       <MessageSquareText size={18} /> 한국어 대본
                     </span>
-                    {isTranslating && (
+                    {translatingKeys.size > 0 && (
                       <div className="flex items-center text-sm text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
                         <Loader2 className="animate-spin mr-2" size={16} />
-                        번역 중...
+                        번역 중 ({translatingKeys.size}장)
                       </div>
                     )}
                   </div>
@@ -1513,20 +1581,40 @@ function App() {
                       const key = getCacheKey(img.file);
                       const results = translationCache[key];
                       if (!results) {
+                        const pageError = pageErrors[key];
                         return (
-                          <div key={`loading-${imgIndex}`} className="flex flex-col items-center justify-center py-10 text-gray-400">
-                            {isTranslating ? (
+                          <div key={`loading-${imgIndex}`} className="flex flex-col items-center justify-center py-10 px-4 text-center text-gray-400">
+                            {translatingKeys.has(key) ? (
                               <>
                                 <Loader2 className="animate-spin mb-2" size={24} />
-                                <span className="text-sm">Page {imgIndex + 1} 번역을 불러오는 중...</span>
+                                <span className="text-sm">Page {imgIndex + 1} 번역 중...</span>
+                              </>
+                            ) : pageError ? (
+                              <>
+                                <AlertTriangle className="text-red-400 mb-2" size={24} />
+                                <span className="text-sm text-red-500 font-medium">Page {imgIndex + 1} 번역 실패</span>
+                                <span className="text-xs text-red-400 mt-1 break-all">{pageError.message}</span>
+                                <button onClick={() => retryPage(imgIndex)} className="mt-3 px-3 py-1 bg-gray-100 rounded text-xs text-gray-600 hover:bg-gray-200">
+                                  다시 시도
+                                </button>
+                              </>
+                            ) : !currentKey ? (
+                              <>
+                                <Key className="mb-2" size={24} />
+                                <span className="text-sm">상단에 {provider === 'google' ? 'Gemini' : 'OpenAI'} API 키를 입력하면 번역이 시작됩니다.</span>
+                              </>
+                            ) : !autoTranslate ? (
+                              <>
+                                <ZapOff className="mb-2" size={24} />
+                                <span className="text-sm">자동 번역이 꺼져 있습니다.</span>
+                                <button onClick={() => translatePages([imgIndex])} className="mt-3 px-3 py-1 bg-blue-50 text-blue-600 rounded text-xs font-medium hover:bg-blue-100">
+                                  이 페이지만 번역
+                                </button>
                               </>
                             ) : (
                               <>
-                                <AlertTriangle className="text-red-400 mb-2" size={24} />
-                                <span className="text-sm text-red-500">Page {imgIndex + 1} 번역 실패 (오류 발생)</span>
-                                <button onClick={() => setRetryTrigger(prev => prev + 1)} className="mt-2 px-3 py-1 bg-gray-100 rounded text-xs text-gray-600 hover:bg-gray-200">
-                                  다시 시도
-                                </button>
+                                <Loader2 className="animate-spin mb-2" size={24} />
+                                <span className="text-sm">Page {imgIndex + 1} 번역 대기 중...</span>
                               </>
                             )}
                           </div>
@@ -1538,19 +1626,20 @@ function App() {
                             <span className="text-sm mb-3">Page {imgIndex + 1}: 번역된 텍스트가 없습니다.</span>
                             <button 
                               onClick={() => {
+                                // 현재 페이지부터 마지막 페이지까지 빈 배열([])로 저장된 캐시를 지워 자동 번역을 재개합니다.
+                                const emptyKeys = allImages
+                                  .slice(imgIndex)
+                                  .map(im => getCacheKey(im.file))
+                                  .filter(k => translationCache[k]?.length === 0);
+                                emptyKeys.forEach(k => localStorage.removeItem(k));
                                 setTranslationCache(prev => {
                                   const updated = { ...prev };
-                                  // 현재 페이지부터 마지막 페이지까지, 잘못 저장된 빈 배열([]) 캐시를 모두 날려서 자동 번역을 재개시킵니다.
-                                  for (let i = imgIndex; i < allImages.length; i++) {
-                                    const futureKey = getCacheKey(allImages[i].file);
-                                    if (updated[futureKey] && updated[futureKey].length === 0) {
-                                      delete updated[futureKey];
-                                    }
-                                  }
+                                  emptyKeys.forEach(k => delete updated[k]);
                                   return updated;
                                 });
+                                updateAutoTranslate(true);
                                 setRetryTrigger(r => r + 1);
-                              }} 
+                              }}
                               className="px-4 py-2 bg-blue-50 text-blue-600 rounded-md text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-2"
                             >
                               <RefreshCw size={14} /> 이어서 자동 번역 재개하기
@@ -1609,6 +1698,8 @@ function App() {
                                         rows={3}
                                         autoFocus
                                         onKeyDown={(e) => {
+                                          // 한글 IME 조합 중 Enter는 글자 확정용이므로 저장하지 않음
+                                          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                                           if (e.key === 'Enter' && !e.shiftKey) {
                                             e.preventDefault();
                                             handleSaveEdit();
@@ -1740,16 +1831,17 @@ function App() {
                 value={glossaryForm.translated}
                 onChange={e => setGlossaryForm({...glossaryForm, translated: e.target.value})}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && glossaryForm.original && glossaryForm.translated) {
-                    updateGlossary({ ...glossary, [glossaryForm.original]: glossaryForm.translated });
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 무시
+                  if (e.key === 'Enter' && glossaryForm.original.trim() && glossaryForm.translated.trim()) {
+                    mergeGlossary({ [glossaryForm.original.trim()]: glossaryForm.translated.trim() });
                     setGlossaryForm({ original: '', translated: '' });
                   }
                 }}
               />
-              <button 
+              <button
                 onClick={() => {
-                  if (glossaryForm.original && glossaryForm.translated) {
-                    updateGlossary({ ...glossary, [glossaryForm.original]: glossaryForm.translated });
+                  if (glossaryForm.original.trim() && glossaryForm.translated.trim()) {
+                    mergeGlossary({ [glossaryForm.original.trim()]: glossaryForm.translated.trim() });
                     setGlossaryForm({ original: '', translated: '' });
                   }
                 }}

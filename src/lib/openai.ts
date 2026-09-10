@@ -1,115 +1,106 @@
 import type { RawTranslationResult } from './gemini';
+import { buildGlossaryInstruction, parseJsonResponse } from './prompt';
+import { toFriendlyError, withRetry } from './retry';
 
-export async function translateMangaImageOpenAI(
-  openAiVersion: 'sol' | 'terra',
-  apiKey: string, 
-  geminiResults: RawTranslationResult[], 
-  _geminiVersion: '3.6' | '3.7' = '3.6',
-  glossary?: Record<string, string>
-): Promise<RawTranslationResult[]> {
-  
-  if (geminiResults.length === 0) return [];
+type OpenAiVersion = 'sol' | 'terra';
+type HttpError = Error & { status?: number; retryAfterMs?: number };
 
-  // 사용자의 요청에 따라 Pro/Flash 구분 없이 gpt-5.6-terra 엔진을 사용합니다.
-  const modelName = `gpt-5.6-${openAiVersion}`;
-  
-  // 구글이 뽑아준 원문을 인덱스와 함께 추출
-  const textPayload = geminiResults.map((res, index) => ({
-    id: index,
-    original_text: res.original_text
-  }));
-
-  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
-    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
-    : '';
-
-  const prompt = `You are a professional manga translator with deep knowledge of Japanese culture, slang, and contextual nuances.
-I will provide you with a JSON array of extracted Japanese text elements from a manga page. 
-Your task is to translate the "original_text" of each element into highly natural, conversational Korean. 
-Adapt the tone, emotion, idioms, and character speech styles to match a high-quality professional Korean webtoon or comic book.
-${glossaryInstruction}
-You MUST respond ONLY with a JSON object containing a single key "translations" which maps to an array of objects. 
-Each object in the array MUST match this format:
-{
-  "id": [the exact same integer id from the input],
-  "translated_text": "[your highly natural Korean translation]"
-}`;
-
-  let response;
-  let retries = 3;
-  while (retries > 0) {
-    try {
+/** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
+async function createChatCompletion(apiKey: string, body: Record<string, unknown>): Promise<any> {
+  try {
+    return await withRetry(async () => {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            {
-              role: 'system',
-              content: prompt
-            },
-            {
-              role: 'user',
-              content: JSON.stringify(textPayload)
-            }
-          ],
-          response_format: { type: 'json_object' }
-        })
+        body: JSON.stringify(body)
       });
 
       if (!res.ok) {
         const errorText = await res.text();
-        const error = new Error(`OpenAI API Error ${res.status}: ${errorText}`) as any;
+        const error: HttpError = new Error(`OpenAI API Error ${res.status}: ${errorText}`);
         error.status = res.status;
+        const retryAfterSeconds = Number(res.headers.get('retry-after'));
+        if (retryAfterSeconds > 0) error.retryAfterMs = retryAfterSeconds * 1000;
         throw error;
       }
-      
-      response = await res.json();
-      break;
-    } catch (err: any) {
-      if (err.status === 429 || err.status === 502 || err.status === 503) {
-        retries--;
-        if (retries === 0) throw err;
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        throw err;
-      }
-    }
+
+      return res.json();
+    }, {
+      onRetry: ({ attempt, delayMs, error }) => {
+        console.warn(`OpenAI 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
+      },
+    });
+  } catch (error) {
+    throw toFriendlyError(error, 'OpenAI');
   }
+}
+
+export async function translateMangaImageOpenAI(
+  openAiVersion: OpenAiVersion,
+  apiKey: string,
+  geminiResults: RawTranslationResult[],
+  _geminiVersion: '3.6' | '3.7' = '3.6',
+  glossary?: Record<string, string>
+): Promise<RawTranslationResult[]> {
+
+  if (geminiResults.length === 0) return [];
+
+  const modelName = `gpt-5.6-${openAiVersion}`;
+
+  // 구글이 뽑아준 원문을 인덱스와 함께 추출
+  const textPayload = geminiResults.map((res, index) => ({
+    id: index,
+    original_text: res.original_text
+  }));
+
+  // 원문이 정해져 있으므로 실제로 등장하는 단어장 항목만 넣음
+  const glossaryInstruction = buildGlossaryInstruction(glossary, geminiResults.map(r => r.original_text).join('\n'));
+
+  const prompt = `You are a professional manga translator with deep knowledge of Japanese culture, slang, and contextual nuances.
+I will provide you with a JSON array of extracted Japanese text elements from a manga page.
+Your task is to translate the "original_text" of each element into highly natural, conversational Korean.
+Adapt the tone, emotion, idioms, and character speech styles to match a high-quality professional Korean webtoon or comic book.
+${glossaryInstruction}
+You MUST respond ONLY with a JSON object containing a single key "translations" which maps to an array of objects.
+Each object in the array MUST match this format:
+{
+  "id": [the exact same integer id from the input],
+  "translated_text": "[your highly natural Korean translation]"
+}`;
+
+  const response = await createChatCompletion(apiKey, {
+    model: modelName,
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: JSON.stringify(textPayload) }
+    ],
+    response_format: { type: 'json_object' }
+  });
 
   const content = response?.choices?.[0]?.message?.content;
   if (!content) throw new Error("No response from OpenAI API");
-  
+
   try {
-    const parsed = JSON.parse(content);
-    const translatedItems: { id: number, translated_text: string }[] = parsed.translations || [];
+    const parsed = parseJsonResponse<{ translations?: { id: number, translated_text: string }[] }>(content);
+    const translatedItems = parsed.translations || [];
 
     // OpenAI의 번역 결과를 기존 Gemini의 좌표 데이터(원본 배열)에 병합
-    const finalResults: RawTranslationResult[] = geminiResults.map((result, idx) => {
+    return geminiResults.map((result, idx) => {
       const translated = translatedItems.find(item => item.id === idx);
-      if (translated) {
-        return { ...result, translated_text: translated.translated_text };
-      }
-      return { ...result };
+      return translated ? { ...result, translated_text: translated.translated_text } : { ...result };
     });
-
-    return finalResults;
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }
 }
 
 export async function retranslateTextOpenAI(
-  openAiVersion: 'sol' | 'terra',apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
+  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, _geminiVersion: '3.6' | '3.7' = '3.6', glossary?: Record<string, string>): Promise<string> {
   const modelName = `gpt-5.6-${openAiVersion}`;
-  
-  const glossaryInstruction = glossary && Object.keys(glossary).length > 0
-    ? `\n# Glossary (Translation Memory)\n해당 단어장이 제공된 경우, 원문에 아래 단어가 포함되어 있다면 반드시 단어장대로 번역해:\n${Object.entries(glossary).map(([k, v]) => `- ${k} -> ${v}`).join('\n')}\n`
-    : '';
+  const glossaryInstruction = buildGlossaryInstruction(glossary, originalText);
 
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
 ${glossaryInstruction}
@@ -117,43 +108,12 @@ Original text: ${originalText}
 
 Respond ONLY with the translated Korean text string, nothing else. Do not include quotes or JSON formatting.`;
 
-  let retries = 3;
-  let response;
-  while (retries > 0) {
-    try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'user', content: prompt }
-          ]
-        })
-      });
+  const response = await createChatCompletion(apiKey, {
+    model: modelName,
+    messages: [
+      { role: 'user', content: prompt }
+    ]
+  });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        const error = new Error(`OpenAI API Error ${res.status}: ${errorText}`) as any;
-        error.status = res.status;
-        throw error;
-      }
-      
-      response = await res.json();
-      break;
-    } catch (err: any) {
-      if (err.status === 429 || err.status === 502 || err.status === 503) {
-        retries--;
-        if (retries === 0) throw err;
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        throw err;
-      }
-    }
-  }
-  
   return response?.choices?.[0]?.message?.content?.trim() || "번역 실패";
 }

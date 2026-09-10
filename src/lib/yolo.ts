@@ -16,6 +16,15 @@ export interface BoundingBox {
 }
 
 let loadingPromise: Promise<void> | null = null;
+
+let runQueue: Promise<unknown> = Promise.resolve();
+/** onnxruntime-web 세션은 동시에 run할 수 없으므로("Session already started") 추론을 한 번에 하나씩 순서대로 실행합니다. */
+function enqueueRun<T>(task: () => Promise<T>): Promise<T> {
+  const result = runQueue.then(task, task);
+  runQueue = result.catch(() => undefined);
+  return result;
+}
+
 export async function loadYoloModel() {
   if (session) return;
   if (!loadingPromise) {
@@ -28,6 +37,7 @@ export async function loadYoloModel() {
         console.log("YOLO model loaded successfully.");
       } catch (e) {
         console.error("Failed to load YOLO model:", e);
+        loadingPromise = null; // 다음 호출에서 다시 로드할 수 있게 함
         throw e;
       }
     })();
@@ -49,7 +59,8 @@ export async function detectSpeechBubbles(image: HTMLImageElement, confThreshold
   const feeds: Record<string, ort.Tensor> = {};
   feeds[session.inputNames[0]] = tensor;
   
-  const results = await session.run(feeds);
+  const activeSession = session;
+  const results = await enqueueRun(() => activeSession.run(feeds));
   const output = results[session.outputNames[0]]; // Shape: [1, 8, 8400]
   
   return postprocess(output, xRatio, yRatio, padW, padH, confThreshold, iouThreshold);
