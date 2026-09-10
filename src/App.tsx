@@ -1,3 +1,4 @@
+import { buildCacheKey } from "./lib/cacheKey";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Upload, Key, Loader2, Image as ImageIcon, MessageSquareText, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, BookOpen, PanelRight, Layers, Save, Download, Cpu, AlertTriangle, Trash2, GripVertical, RefreshCw, Cloud, FolderDown, Bot, Edit2, Check, X } from 'lucide-react';
 import html2canvas from 'html2canvas';
@@ -5,7 +6,7 @@ import JSZip from 'jszip';
 import { translateMangaImage, retranslateTextGemini, translateGridImage } from './lib/gemini';
 import { translateMangaImageOpenAI, retranslateTextOpenAI } from './lib/openai';
 import { detectSpeechBubbles } from './lib/yolo';
-import { createGridImageFromBoxes } from './lib/imageUtils';
+import { createGridImageFromBoxes, loadImage } from './lib/imageUtils';
 import { sortTextByReadingOrder } from './lib/readingOrder';
 import { uploadToGoogleDrive, listMangaSaves, downloadFromGoogleDrive, createMangaZip, extractMangaZip } from './lib/drive';
 import type { TranslationResult, GridTranslationResult } from './lib/gemini';
@@ -121,8 +122,17 @@ function App() {
     setTranslationCache(initialCache);
   }, []);
 
+  const safeSetCache = (key: string, data: any) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      console.error(e);
+      setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.');
+    }
+  };
+
   const getCacheKey = useCallback((file: File) => {
-    return `manga-cache-unified-${file.name}-${file.size}`;
+    return buildCacheKey(file.name, file.size);
   }, []);
 
   const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -146,24 +156,38 @@ function App() {
       
       allImages.forEach(img => {
         const unifiedKey = getCacheKey(img.file);
-        // 이미 통합 캐시가 있으면 스킵
-        if (next[unifiedKey] && next[unifiedKey].length > 0) return;
 
-        // 이 파일에 해당하는 예전 분할 캐시 키들을 모두 찾음 (이름과 용량으로 매칭)
-        const suffix = `-${img.file.name}-${img.file.size}`;
-        const oldKeys = Object.keys(next).filter(k => k.endsWith(suffix) && k !== unifiedKey);
-        
-        if (oldKeys.length > 0) {
-          // 가장 번역이 많이 된(길이가 긴) 캐시 데이터를 우선적으로 마이그레이션
-          let bestOldKey = oldKeys[0];
-          for (const k of oldKeys) {
-            if ((next[k] || []).length > (next[bestOldKey] || []).length) bestOldKey = k;
-          }
+        // 마이그레이션
+        if (!next[unifiedKey] || next[unifiedKey].length === 0) {
+          const suffix = `-${img.file.name}-${img.file.size}`;
+          const oldKeys = Object.keys(next).filter(k => k.endsWith(suffix) && k !== unifiedKey);
           
-          if (next[bestOldKey] && next[bestOldKey].length > 0) {
-            next[unifiedKey] = [...next[bestOldKey]];
+          if (oldKeys.length > 0) {
+            let bestOldKey = oldKeys[0];
+            for (const k of oldKeys) {
+              if ((next[k] || []).length > (next[bestOldKey] || []).length) bestOldKey = k;
+            }
+            if (next[bestOldKey] && next[bestOldKey].length > 0) {
+              next[unifiedKey] = [...next[bestOldKey]];
+              changed = true;
+            }
+          }
+        }
+        
+        // ID 백필
+        if (next[unifiedKey]) {
+          let needsUpdate = false;
+          next[unifiedKey] = next[unifiedKey].map(tr => {
+            if (!tr.id) {
+              needsUpdate = true;
+              return { ...tr, id: crypto.randomUUID() };
+            }
+            return tr;
+          });
+          
+          if (needsUpdate || changed) {
+            safeSetCache(unifiedKey, next[unifiedKey]);
             changed = true;
-            try { localStorage.setItem(unifiedKey, JSON.stringify(next[unifiedKey])); } catch(e) {}
           }
         }
       });
@@ -260,17 +284,8 @@ function App() {
       updateGlossary(loadedGlossary || {});
       const loadedImages: UploadedImage[] = [];
       for (const img of images) {
-        const imgProps = await new Promise<{width: number, height: number, isSpread: boolean}>((resolve) => {
-          const imageObj = new Image();
-          imageObj.onload = () => {
-            resolve({
-              width: imageObj.width,
-              height: imageObj.height,
-              isSpread: imageObj.width > imageObj.height
-            });
-          };
-          imageObj.src = img.src;
-        });
+        const imageObj = await loadImage(img.src);
+        const imgProps = { width: imageObj.width, height: imageObj.height, isSpread: imageObj.width > imageObj.height };
         
         loadedImages.push({
           ...img,
@@ -283,7 +298,7 @@ function App() {
       setCurrentPageIndex(lastReadPage || 0);
       
       Object.keys(translations).forEach(key => {
-        try { localStorage.setItem(key, JSON.stringify(translations[key])); } catch(e) {}
+        safeSetCache(key, translations[key]);
       });
       alert("성공적으로 불러왔습니다!");
     } catch (e: any) {
@@ -349,7 +364,7 @@ function App() {
           // 새로 추가된 기능: JSON으로 불러온 과거 데이터도 브라우저 자동저장소(LocalStorage)에 영구 등록합니다.
           Object.keys(imported).forEach(key => {
             if (key.startsWith('manga-cache-')) {
-              try { localStorage.setItem(key, JSON.stringify(imported[key])); } catch(e) {}
+              safeSetCache(key, imported[key]);
             }
           });
         } catch (err) {
@@ -368,17 +383,8 @@ function App() {
         reader.readAsDataURL(file);
       });
       
-      const imgProps = await new Promise<{width: number, height: number, isSpread: boolean}>((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          resolve({
-            width: img.width,
-            height: img.height,
-            isSpread: img.width > img.height
-          });
-        };
-        img.src = dataUrl;
-      });
+      const img = await loadImage(dataUrl);
+      const imgProps = { width: img.width, height: img.height, isSpread: img.width > img.height };
 
       loadedImages.push({ 
         src: dataUrl, 
@@ -441,9 +447,7 @@ function App() {
     let rawResults: TranslationResult[] = [];
 
     // Step 1: Create an HTMLImageElement to process with YOLO and Canvas
-    const imgElement = new Image();
-    imgElement.src = img.src;
-    await new Promise((resolve) => { imgElement.onload = resolve; });
+    const imgElement = await loadImage(img.src);
 
     // Step 2: YOLO Detection for Panels and Speech Bubbles
     const allBoxes = await detectSpeechBubbles(imgElement);
@@ -499,35 +503,38 @@ function App() {
         }
         
         rawResults = await translateMangaImageOpenAI(openAiVersion, openaiKey, geminiResults, geminiVersion, glossary);
-        gridTranslations = []; // Skip the next block since rawResults is already populated
       }
-
-      // Step 5: Map Grid translations back to original coordinates
-      for (const t of gridTranslations) {
-        const cell = gridResult.cells.find(c => c.id === t.id);
-        if (cell) {
-          rawResults.push({
-            original_text: t.original_text,
-            translated_text: t.translated_text,
-            box_2d: [
-              (cell.box.ymin / imgElement.height) * 1000,
-              (cell.box.xmin / imgElement.width) * 1000,
-              (cell.box.ymax / imgElement.height) * 1000,
-              (cell.box.xmax / imgElement.width) * 1000,
-            ]
-          });
+      
+      if (provider === 'google') {
+        // Step 5: Map Grid translations back to original coordinates
+        for (const t of gridTranslations) {
+          const cell = gridResult.cells.find(c => c.id === t.id);
+          if (cell) {
+            rawResults.push({
+              original_text: t.original_text,
+              translated_text: t.translated_text,
+              box_2d: [
+                (cell.box.ymin / imgElement.height) * 1000,
+                (cell.box.xmin / imgElement.width) * 1000,
+                (cell.box.ymax / imgElement.height) * 1000,
+                (cell.box.xmax / imgElement.width) * 1000,
+              ]
+            });
+          }
         }
       }
     }
 
+    let finalResults = rawResults.map(r => ({ ...r, id: crypto.randomUUID() }));
+
     // 2페이지 양면(스프레드)인 경우, 절반(x축 500)을 기준으로 우측 텍스트 배열을 전부 먼저 출력하도록 재정렬합니다.
-    if (img.isSpread && rawResults.length > 0) {
-      const rightPage = rawResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) >= 500);
-      const leftPage = rawResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) < 500);
+    if (img.isSpread && finalResults.length > 0) {
+      const rightPage = finalResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) >= 500);
+      const leftPage = finalResults.filter(r => ((r.box_2d[1] + r.box_2d[3]) / 2) < 500);
       return [...rightPage, ...leftPage];
     }
     
-    return rawResults;
+    return finalResults;
   };
 
   const [isRetranslating, setIsRetranslating] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
@@ -540,7 +547,7 @@ function App() {
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
       const newArr = currentArr.filter((_, idx) => idx !== bubbleIndex);
-      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      safeSetCache(key, newArr);
       return { ...prev, [key]: newArr };
     });
   };
@@ -554,7 +561,7 @@ function App() {
       if (newArr[bubbleIndex]) {
         newArr[bubbleIndex] = { ...newArr[bubbleIndex], box_2d: newBox, is_edited_box: true };
       }
-      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      safeSetCache(key, newArr);
       return { ...prev, [key]: newArr };
     });
   };
@@ -567,7 +574,7 @@ function App() {
       if (!currentArr[bubbleIndex]) return prev;
       const newArr = [...currentArr];
       newArr[bubbleIndex] = { ...newArr[bubbleIndex], disable_keep_all: !newArr[bubbleIndex].disable_keep_all };
-      try { localStorage.setItem(key, JSON.stringify(newArr)); } catch(e) {}
+      safeSetCache(key, newArr);
       return { ...prev, [key]: newArr };
     });
   };
@@ -576,11 +583,12 @@ function App() {
     const img = allImages[imgIndex];
     const key = getCacheKey(img.file);
     
-    let bubbleIndex = 0;
+    const currentArr = translationCache[key] || [];
+    const bubbleIndex = currentArr.length;
     setTranslationCache(prev => {
       const currentArr = prev[key] || [];
-      bubbleIndex = currentArr.length;
       const newDummy: TranslationResult = {
+        id: crypto.randomUUID(),
         box_2d: newBox2d,
         original_text: "...",
         translated_text: "번역 중...",
@@ -594,9 +602,7 @@ function App() {
     
     try {
       // 1. Create a single-box grid image
-      const imgElement = new Image();
-      imgElement.src = img.src;
-      await new Promise((resolve) => { imgElement.onload = resolve; });
+      const imgElement = await loadImage(img.src);
       
       const w = img.width;
       const h = img.height;
@@ -647,7 +653,7 @@ function App() {
             original_text: newOriginalText,
             translated_text: newTranslation
           };
-          try { localStorage.setItem(key, JSON.stringify(updated[key])); } catch(e) {}
+          safeSetCache(key, updated[key]);
         }
         return updated;
       });
@@ -688,7 +694,7 @@ function App() {
             ...updated[key][bubbleIndex],
             translated_text: newTranslation
           };
-          try { localStorage.setItem(key, JSON.stringify(updated[key])); } catch(e) {}
+          safeSetCache(key, updated[key]);
         }
         return updated;
       });
@@ -712,7 +718,7 @@ function App() {
           ...updated[key][bubbleIndex],
           translated_text: editingText
         };
-        try { localStorage.setItem(key, JSON.stringify(updated[key])); } catch(e) {}
+        safeSetCache(key, updated[key]);
       }
       return updated;
     });
@@ -745,7 +751,7 @@ function App() {
               visibleResults.forEach(({idx, results}) => {
                 const key = getCacheKey(allImages[idx].file);
                 updated[key] = results;
-                try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
+                safeSetCache(key, results);
               });
               return updated;
             });
@@ -764,7 +770,7 @@ function App() {
               preloadResults.forEach(({idx, results}) => {
                 const key = getCacheKey(allImages[idx].file);
                 updated[key] = results;
-                try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) { console.warn("LocalStorage full"); }
+                safeSetCache(key, results);
               });
               return updated;
             });
@@ -934,7 +940,7 @@ function App() {
       const [movedItem] = results.splice(draggedItem.itemIndex, 1);
       results.splice(targetItemIndex, 0, movedItem);
       
-      try { localStorage.setItem(key, JSON.stringify(results)); } catch(e) {}
+      safeSetCache(key, results);
       
       return {
         ...prev,

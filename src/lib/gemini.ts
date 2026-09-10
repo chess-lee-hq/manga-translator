@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 
 export interface TranslationResult {
+  id?: string;
   original_text: string;
   translated_text: string;
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized to 1000

@@ -97,3 +97,12 @@ export async function createGridImageFromBoxes(
   const dataUrl = gridCanvas.toDataURL('image/jpeg', 0.8);
   return { dataUrl, cells };
 }
+
+export async function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = src;
+  });
+}
