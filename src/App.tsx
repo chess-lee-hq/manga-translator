@@ -62,7 +62,8 @@ function App() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'1page' | '2page'>('2page');
   const [scriptStyle, setScriptStyle] = useState<'side' | 'overlay'>('side');
-  const [exportState, setExportState] = useState<{ isExporting: boolean, currentIndex: number, zip: any }>({ isExporting: false, currentIndex: 0, zip: null });
+  const zipRef = useRef<any>(null);
+  const [exportState, setExportState] = useState<{ isExporting: boolean, currentIndex: number }>({ isExporting: false, currentIndex: 0 });
   const [geminiVersion, setGeminiVersion] = useState<'3.6' | '3.7'>('3.6');
   const [openAiVersion, setOpenAiVersion] = useState<'sol' | 'terra'>('terra');
   const [editingBubble, setEditingBubble] = useState<{imgIndex: number, bubbleIndex: number} | null>(null);
@@ -979,37 +980,50 @@ function App() {
     const element = document.getElementById(`manga-page-${imgIndex}`);
     if (!element) return;
     
-    const oldScale = scale;
-    setScale(1.0);
-    
-    setTimeout(async () => {
-      try {
-        const canvas = await html2canvas(element, { useCORS: true, allowTaint: true, scale: 2 });
-        const link = document.createElement('a');
-        link.download = `translated_page_${imgIndex + 1}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      } catch (err) {
-        console.error("Failed to capture image:", err);
-        setError("이미지 다운로드에 실패했습니다.");
-      } finally {
-        setScale(oldScale);
-      }
-    }, 100);
+    try {
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.width = element.offsetWidth + 'px';
+      clone.style.height = element.offsetHeight + 'px';
+      
+      const spans = clone.querySelectorAll('span');
+      spans.forEach(span => {
+        if (span.style.fontSize.includes('clamp')) {
+          span.style.fontSize = span.style.fontSize.replace(/clamp\([\d.]+px,/, 'clamp(13px,').replace(/, [\d.]+px\)/, ', 28px)');
+        }
+      });
+      
+      clone.style.position = 'absolute';
+      clone.style.left = '-9999px';
+      clone.style.top = '-9999px';
+      document.body.appendChild(clone);
+      
+      const canvas = await html2canvas(clone, { useCORS: true, allowTaint: true, scale: 2 });
+      document.body.removeChild(clone);
+      
+      const link = document.createElement('a');
+      link.download = `translated_page_${imgIndex + 1}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error("Failed to capture image:", err);
+      setError("이미지 다운로드에 실패했습니다.");
+    }
   };
 
     const startExportAll = () => {
     if (allImages.length === 0) return;
-    const confirmMsg = `총 ${allImages.length}장의 덮어쓰기 이미지를 ZIP으로 압축하여 다운로드하시겠습니까?\n\n진행 중에는 화면이 번쩍거리며 수십 초 이상 걸릴 수 있습니다. 진행하시겠습니까?`;
+    const confirmMsg = `총 ${allImages.length}장의 덮어쓰기 이미지를 ZIP으로 압축하여 다운로드하시겠습니까?\n\n수십 초 이상 걸릴 수 있습니다. 진행하시겠습니까?`;
     if (!window.confirm(confirmMsg)) return;
     
-    setExportState({ isExporting: true, currentIndex: 0, zip: new JSZip() });
+    zipRef.current = new JSZip();
+    setExportState({ isExporting: true, currentIndex: 0 });
   };
 
   useEffect(() => {
-    if (!exportState.isExporting || !exportState.zip) return;
-    
-    const { currentIndex, zip } = exportState;
+    if (!exportState.isExporting) return;
+    const currentIndex = exportState.currentIndex;
+    const zip = zipRef.current;
+    if (!zip) return;
     
     if (currentIndex >= allImages.length) {
       zip.generateAsync({ type: "blob" }).then((content: Blob) => {
@@ -1022,7 +1036,8 @@ function App() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
-        setExportState({ isExporting: false, currentIndex: 0, zip: null });
+        zipRef.current = null;
+        setExportState({ isExporting: false, currentIndex: 0 });
         alert('다운로드가 완료되었습니다!');
       });
       return;
@@ -1034,18 +1049,29 @@ function App() {
       try {
         const element = document.getElementById(`manga-page-${currentIndex}`);
         if (element) {
-          const oldScale = scale;
-          setScale(1.0); // Reset scale for cleaner capture
-          await new Promise(res => setTimeout(res, 50)); // Wait for React to apply scale
+          const clone = element.cloneNode(true) as HTMLElement;
+          clone.style.width = element.offsetWidth + 'px';
+          clone.style.height = element.offsetHeight + 'px';
           
-          const canvas = await html2canvas(element, { useCORS: true, allowTaint: true, scale: 2 });
+          const spans = clone.querySelectorAll('span');
+          spans.forEach(span => {
+            if (span.style.fontSize.includes('clamp')) {
+              span.style.fontSize = span.style.fontSize.replace(/clamp\([\d.]+px,/, 'clamp(13px,').replace(/, [\d.]+px\)/, ', 28px)');
+            }
+          });
+          
+          clone.style.position = 'absolute';
+          clone.style.left = '-9999px';
+          clone.style.top = '-9999px';
+          document.body.appendChild(clone);
+          
+          const canvas = await html2canvas(clone, { useCORS: true, allowTaint: true, scale: 2 });
+          document.body.removeChild(clone);
+          
           const imgData = canvas.toDataURL('image/png').split(',')[1];
-          
           const padLength = Math.max(3, String(allImages.length).length);
           const fileName = `page_${String(currentIndex + 1).padStart(padLength, '0')}.png`;
           zip.file(fileName, imgData, { base64: true });
-          
-          setScale(oldScale); // Restore scale
         }
       } catch (err) {
         console.error("Export page failed:", err);
@@ -1053,9 +1079,9 @@ function App() {
         setExportState(prev => ({ ...prev, currentIndex: prev.currentIndex + 1 }));
       }
     }, 200);
-    
+
     return () => clearTimeout(timer);
-  }, [exportState, allImages.length, loadedFilename, scale]);
+  }, [exportState.isExporting, exportState.currentIndex, allImages, loadedFilename]);
 
 
   return (
