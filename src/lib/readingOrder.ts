@@ -64,10 +64,11 @@ export function sortTextByReadingOrder(boxes: BoundingBox[]): BoundingBox[] {
   return result;
 }
 
+const TIER_THRESHOLD_RATIO = 3;
+
 /**
  * Sorts a list of boxes using a Top-to-Bottom, Right-to-Left heuristic, grouping by Y-tiers using relative height.
  */
-const TIER_THRESHOLD_RATIO = 3;
 
 export function sortMangaBoxesByTier<T>(
   boxes: T[], 
