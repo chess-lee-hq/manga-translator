@@ -118,7 +118,7 @@ function postprocess(tensor: ort.Tensor, xRatio: number, yRatio: number, padW: n
     }
     
     if (maxScore > confThreshold) {
-      const cx = data[0 * numCols + col];
+      const cx = data[col];
       const cy = data[1 * numCols + col];
       const w = data[2 * numCols + col];
       const h = data[3 * numCols + col];

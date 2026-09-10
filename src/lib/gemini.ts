@@ -90,7 +90,7 @@ ${glossaryInstruction}
         try {
           const parsed = JSON.parse(errMessage);
           if (parsed.error?.message) errMessage = parsed.error.message;
-        } catch(e) {}
+        } catch { /* ignore */ }
       }
 
       if (errMessage?.includes('503') || errMessage?.includes('UNAVAILABLE') || errMessage?.includes('high demand') || err.status === 503) {
