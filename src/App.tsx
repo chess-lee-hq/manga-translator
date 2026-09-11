@@ -14,7 +14,7 @@ import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
 import { useTranslationQueue } from './hooks/useTranslationQueue';
 import { downloadBlob } from './lib/download';
 import { createMangaZip } from './lib/drive';
-import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
+import { canvasToBlob, exportFormatFor, renderTranslatedPage, VIEWER_CHROME_PX } from './lib/exportCanvas';
 import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
@@ -306,10 +306,17 @@ function App() {
     downloadBlob(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }), 'manga_translation_data.json');
   };
 
+  /** 지금 화면의 덮어쓰기와 같은 글자 크기로 저장하기 위한 기준 (뷰어 페이지 높이·배율·글꼴) */
+  const getRenderOptions = () => ({
+    displayPageHeight: Math.max(1, (window.innerHeight - VIEWER_CHROME_PX) * scale),
+    viewScale: scale,
+    fontFamily: getComputedStyle(document.documentElement).fontFamily,
+  });
+
   const handleDownloadPage = async (imgIndex: number) => {
     const img = allImages[imgIndex];
     try {
-      const canvas = await renderTranslatedPage(img.src, translationCache[getCacheKey(img.file)] ?? []);
+      const canvas = await renderTranslatedPage(img.src, translationCache[getCacheKey(img.file)] ?? [], getRenderOptions());
       const format = exportFormatFor(img.mimeType);
       downloadBlob(await canvasToBlob(canvas, format.type, format.quality), `translated_page_${imgIndex + 1}.${format.ext}`);
     } catch (err) {
@@ -328,12 +335,13 @@ function App() {
     const images = allImages;
     const cache = translationCache;
     const untranslatedCount = images.filter(img => !cache[getCacheKey(img.file)]?.length).length;
-    const confirmMsg = `총 ${images.length}장을 번역이 입혀진 원본 해상도 이미지로 ZIP 저장합니다.`
+    const confirmMsg = `총 ${images.length}장을 번역이 입혀진 고해상도 이미지로 ZIP 저장합니다.`
       + (untranslatedCount > 0 ? `\n\n⚠️ 아직 번역이 없는 ${untranslatedCount}장은 원본 그대로 들어갑니다. (추가 번역 요청은 하지 않습니다)` : '')
       + '\n\n진행하시겠습니까?';
     if (!window.confirm(confirmMsg)) return;
 
     setExportProgress({ done: 0, total: images.length });
+    const renderOptions = getRenderOptions();
     try {
       const zip = new JSZip();
       const padLength = Math.max(3, String(images.length).length);
@@ -342,7 +350,7 @@ function App() {
       for (let i = 0; i < images.length; i++) {
         const img = images[i];
         try {
-          const canvas = await renderTranslatedPage(img.src, cache[getCacheKey(img.file)] ?? []);
+          const canvas = await renderTranslatedPage(img.src, cache[getCacheKey(img.file)] ?? [], renderOptions);
           const format = exportFormatFor(img.mimeType);
           const blob = await canvasToBlob(canvas, format.type, format.quality);
           canvas.width = 0; // 큰 캔버스 메모리를 바로 반환

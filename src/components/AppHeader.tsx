@@ -135,7 +135,7 @@ export function AppHeader(props: AppHeaderProps) {
             <button onClick={onAddFiles} title="이미지 추가" className={`${actionButton} bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100`}>
               <Upload size={14} /> <span className={WIDE_LABEL}>추가</span>
             </button>
-            <button onClick={onExportAll} disabled={!!exportProgress} title="번역이 입혀진 전체 페이지를 원본 해상도로 ZIP 저장" className={`${actionButton} bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100`}>
+            <button onClick={onExportAll} disabled={!!exportProgress} title="번역이 입혀진 전체 페이지를 고해상도 이미지로 ZIP 저장" className={`${actionButton} bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100`}>
               {exportProgress
                 ? <><Loader2 size={14} className="animate-spin" /> {exportProgress.done}/{exportProgress.total}</>
                 : <><Download size={14} /> <span className={WIDE_LABEL}>ZIP</span></>}

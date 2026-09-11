@@ -1,7 +1,7 @@
 import { Download } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
-import { getDisplayBox } from '../lib/exportCanvas';
+import { estimateFontRatios, getDisplayBox, OVERLAY_STYLE, VIEWER_CHROME_PX } from '../lib/exportCanvas';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
 
@@ -162,7 +162,7 @@ export function MangaViewer({
                         src={img.src}
                         alt={`Manga Page ${imgIndex + 1}`}
                         className="block transition-all duration-200"
-                        style={{ height: `calc((100vh - 250px) * ${scale})`, width: 'auto', objectFit: 'contain' }}
+                        style={{ height: `calc((100vh - ${VIEWER_CHROME_PX}px) * ${scale})`, width: 'auto', objectFit: 'contain' }}
                         draggable={false}
                       />
 
@@ -177,31 +177,28 @@ export function MangaViewer({
                         const isHovered = hoveredBubble?.imageIndex === imgIndex && hoveredBubble?.bubbleIndex === bubbleIndex;
 
                         if (scriptStyle === 'overlay') {
-                          // 박스 비율과 글자 수로 한 줄 글자 수·줄 수를 추정해 컨테이너 단위(cqi/cqh)로 글자 크기를 맞춤
-                          const aspect = boxWidth / boxHeight;
-                          const textLen = Math.max(1, result.translated_text.length);
-                          const charsPerLine = Math.max(1, Math.sqrt(textLen * aspect));
-                          const lines = Math.max(1, textLen / charsPerLine);
-                          const maxCqi = (100 / charsPerLine) * 0.85;
-                          const maxCqh = (100 / (lines * 1.15)) * 0.9;
+                          // 글자 규칙은 이미지 저장(lib/exportCanvas.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
+                          const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
 
                           const textContent = (
                             <span
-                              className="bg-white text-gray-900 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex flex-col items-center justify-center"
+                              className="bg-white text-gray-900 flex flex-col items-center justify-center"
                               style={{
-                                fontSize: `clamp(${13 * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${28 * scale}px)`,
-                                fontWeight: '800',
-                                lineHeight: '1.15',
+                                fontSize: `clamp(${OVERLAY_STYLE.minFontPx * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${OVERLAY_STYLE.maxFontPx * scale}px)`,
+                                fontWeight: OVERLAY_STYLE.fontWeight,
+                                lineHeight: OVERLAY_STYLE.lineHeight,
                                 wordBreak: result.disable_keep_all ? 'break-all' : 'keep-all',
                                 lineBreak: result.disable_keep_all ? 'anywhere' : 'auto',
                                 whiteSpace: 'pre-wrap',
                                 overflowWrap: 'break-word',
                                 textAlign: 'center',
-                                letterSpacing: '-0.02em',
+                                letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
                                 minWidth: '100%',
-                                maxWidth: '200%',
+                                maxWidth: `${OVERLAY_STYLE.maxWidthRatio * 100}%`,
                                 minHeight: '100%',
-                                padding: '4px 8px',
+                                padding: `${OVERLAY_STYLE.paddingYPx}px ${OVERLAY_STYLE.paddingXPx}px`,
+                                borderRadius: `${OVERLAY_STYLE.radiusPx}px`,
+                                boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx}px ${OVERLAY_STYLE.shadowBlurPx}px rgba(0, 0, 0, 0.15)`,
                               }}
                             >
                               {result.translated_text}
