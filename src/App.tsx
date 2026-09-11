@@ -12,9 +12,11 @@ import { useGlossary } from './hooks/useGlossary';
 import { useSessionPersistence, type RestoredSession } from './hooks/useSessionPersistence';
 import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
 import { useTranslationQueue } from './hooks/useTranslationQueue';
+import { resolveDisplayMode } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip } from './lib/drive';
-import { canvasToBlob, exportFormatFor, renderTranslatedPage, VIEWER_CHROME_PX } from './lib/exportCanvas';
+import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
+import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
@@ -197,6 +199,13 @@ function App() {
 
   const handleToggleKeepAll = (imgIndex: number, id: string) => {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, disable_keep_all: !r.disable_keep_all } : r)));
+  };
+
+  /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */
+  const handleToggleDisplayMode = (imgIndex: number, id: string) => {
+    updatePageResults(keyOf(imgIndex), results =>
+      results.map(r => (r.id === id ? { ...r, display_mode: resolveDisplayMode(r) === 'tag' ? 'cover' : 'tag' } : r)),
+    );
   };
 
   const handleReorder = (imgIndex: number, fromIndex: number, toIndex: number) => {
@@ -485,6 +494,7 @@ function App() {
                 onHoverBubble={handleHoverBubble}
                 onBoxChange={handleBoxChange}
                 onToggleKeepAll={handleToggleKeepAll}
+                onToggleDisplayMode={handleToggleDisplayMode}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}
                 footer={
@@ -521,6 +531,7 @@ function App() {
                   onRetranslate={handleRetranslate}
                   onAddToGlossary={(original, translated) => setGlossaryDraft({ original, translated })}
                   onReorder={handleReorder}
+                  onToggleDisplayMode={handleToggleDisplayMode}
                   onRetryPage={queue.retryPage}
                   onTranslatePage={(imgIndex) => queue.translatePages([imgIndex])}
                   onResumeFromEmpty={handleResumeFromEmpty}

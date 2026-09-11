@@ -10,6 +10,8 @@ export interface TranslationResult {
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized to 1000
   is_edited_box?: boolean;
   disable_keep_all?: boolean;
+  /** 덮어쓰기 표시 방식. cover: 원문을 흰 말풍선으로 덮음 / tag: 원문은 두고 바깥에 작은 딱지 / 없으면 자동 판별 */
+  display_mode?: 'cover' | 'tag';
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

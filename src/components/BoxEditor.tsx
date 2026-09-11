@@ -5,10 +5,12 @@ interface BoxEditorProps {
   onChange: (newBox: [number, number, number, number]) => void;
   isKeepAll?: boolean;
   onToggleKeepAll?: () => void;
+  displayMode?: 'cover' | 'tag';
+  onToggleDisplayMode?: () => void;
   children: React.ReactNode;
 }
 
-export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, children }: BoxEditorProps) {
+export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode, children }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
   useEffect(() => { boxRef.current = box; }, [box]);
@@ -73,6 +75,18 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
       onPointerDown={(e) => handlePointerDown(e, 'move')}
     >
       {children}
+      {onToggleDisplayMode && (
+        <button
+          className="absolute -top-3 -left-3 px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onToggleDisplayMode();
+          }}
+          title="표시 방식 전환: 덮기(원문을 흰 말풍선으로 덮음) ↔ 작게(원문은 그대로 두고 바깥에 작은 딱지)"
+        >
+          {displayMode === 'tag' ? '작게' : '덮기'}
+        </button>
+      )}
       {onToggleKeepAll && (
         <button
           className="absolute -top-3 -right-3 px-1.5 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"

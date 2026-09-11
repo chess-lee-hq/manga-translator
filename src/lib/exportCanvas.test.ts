@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { estimateFontRatios, getDisplayBox, getExportScale, layoutOverlayText, overlayFontSize, wrapText } from './exportCanvas';
+import { getExportScale } from './exportCanvas';
+import { estimateFontRatios, getDisplayBox, layoutOverlayText, overlayFontSize, wrapText } from './overlayLayout';
 
 // 글자당 10px 고정폭으로 가정
 const measure = (t: string) => Array.from(t).length * 10;

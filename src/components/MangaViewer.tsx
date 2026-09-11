@@ -1,7 +1,8 @@
 import { Download } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
-import { estimateFontRatios, getDisplayBox, OVERLAY_STYLE, VIEWER_CHROME_PX } from '../lib/exportCanvas';
+import { layoutTags, resolveDisplayMode, TAG_STYLE } from '../lib/bubbleDisplay';
+import { createTextMeasurer, estimateFontRatios, getDisplayBox, OVERLAY_STYLE, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
 
@@ -18,6 +19,7 @@ interface MangaViewerProps {
   onHoverBubble: (bubble: HoveredBubble | null) => void;
   onBoxChange: (imgIndex: number, id: string, box: Box2d) => void;
   onToggleKeepAll: (imgIndex: number, id: string) => void;
+  onToggleDisplayMode: (imgIndex: number, id: string) => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
   footer: ReactNode;
@@ -42,9 +44,18 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
-  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onCreateBox, onDownloadPage, footer,
+  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+  const { measure: measureText } = useMemo(() => createTextMeasurer(getComputedStyle(document.documentElement).fontFamily), []);
+
+  useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [drawingBox, setDrawingBox] = useState<DrawingBox | null>(null);
@@ -106,6 +117,10 @@ export function MangaViewer({
                 const img = images[imgIndex];
                 const results = translationCache[getCacheKey(img.file)] || [];
                 const isDrawingHere = drawingBox?.imgIndex === imgIndex;
+                const pageHeight = Math.max(1, (viewportHeight - VIEWER_CHROME_PX) * scale);
+                const pageWidth = (pageHeight * img.width) / img.height;
+                // 작은 딱지 위치는 이미지 저장과 같은 계산(lib/bubbleDisplay.ts)으로 페이지 px 기준 배치
+                const tagLayouts = scriptStyle === 'overlay' ? layoutTags(results, pageWidth, pageHeight, scale, measureText) : {};
 
                 return (
                   <div key={imgIndex} className="relative shadow-2xl bg-white select-none flex-shrink-0 group">
@@ -177,7 +192,50 @@ export function MangaViewer({
                         const isHovered = hoveredBubble?.imageIndex === imgIndex && hoveredBubble?.bubbleIndex === bubbleIndex;
 
                         if (scriptStyle === 'overlay') {
-                          // 글자 규칙은 이미지 저장(lib/exportCanvas.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
+                          if (resolveDisplayMode(result) === 'tag') {
+                            // 효과음 등: 원문은 그대로 보이게 두고, 원문 영역 바깥에 작은 딱지
+                            const tag = tagLayouts[result.id];
+                            return (
+                              <Fragment key={result.id}>
+                                {isEditingBoxes && (
+                                  <BoxEditor
+                                    initialBox={result.box_2d}
+                                    onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
+                                    isKeepAll={!result.disable_keep_all}
+                                    onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
+                                    displayMode="tag"
+                                    onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                  >
+                                    <span className="text-[10px] font-bold text-indigo-700 bg-white/80 px-1 rounded pointer-events-none">원문 영역</span>
+                                  </BoxEditor>
+                                )}
+                                {tag && (
+                                  <div
+                                    className="absolute bg-white text-gray-900 flex flex-col items-center justify-center pointer-events-none"
+                                    style={{
+                                      left: tag.rect.x,
+                                      top: tag.rect.y,
+                                      width: tag.rect.width,
+                                      height: tag.rect.height,
+                                      zIndex: 25,
+                                      fontSize: tag.fontSize,
+                                      fontWeight: OVERLAY_STYLE.fontWeight,
+                                      lineHeight: OVERLAY_STYLE.lineHeight,
+                                      letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
+                                      borderRadius: TAG_STYLE.radiusPx * scale,
+                                      boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx * scale}px ${OVERLAY_STYLE.shadowBlurPx * scale}px rgba(0, 0, 0, 0.15)`,
+                                    }}
+                                  >
+                                    {tag.lines.map((line, i) => (
+                                      <div key={i} style={{ whiteSpace: 'pre' }}>{line}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </Fragment>
+                            );
+                          }
+
+                          // 글자 규칙은 이미지 저장(lib/overlayLayout.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
                           const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
 
                           const textContent = (
@@ -213,6 +271,8 @@ export function MangaViewer({
                                 onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
                                 isKeepAll={!result.disable_keep_all}
                                 onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
+                                displayMode="cover"
+                                onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                               >
                                 {textContent}
                               </BoxEditor>

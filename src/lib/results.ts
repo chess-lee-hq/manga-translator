@@ -19,5 +19,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       box_2d: r.box_2d as [number, number, number, number],
       original_text: typeof r.original_text === 'string' ? r.original_text : '',
       translated_text: typeof r.translated_text === 'string' ? r.translated_text : '',
+      display_mode: r.display_mode === 'cover' || r.display_mode === 'tag' ? r.display_mode : undefined,
     }));
 }

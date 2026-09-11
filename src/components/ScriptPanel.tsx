@@ -1,6 +1,7 @@
 import { AlertTriangle, BookOpen, Check, Edit2, GripVertical, Key, Loader2, MessageSquareText, RefreshCw, Trash2, X, ZapOff } from 'lucide-react';
 import { useState } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
+import { resolveDisplayMode } from '../lib/bubbleDisplay';
 import type { HoveredBubble, PageError, TranslationCache, UploadedImage, ViewMode } from '../types';
 
 interface ScriptPanelProps {
@@ -21,6 +22,7 @@ interface ScriptPanelProps {
   onRetranslate: (imgIndex: number, id: string, originalText: string) => void;
   onAddToGlossary: (original: string, translated: string) => void;
   onReorder: (imgIndex: number, fromIndex: number, toIndex: number) => void;
+  onToggleDisplayMode: (imgIndex: number, id: string) => void;
   onRetryPage: (imgIndex: number) => void;
   onTranslatePage: (imgIndex: number) => void;
   onResumeFromEmpty: (imgIndex: number) => void;
@@ -46,7 +48,7 @@ function renderFurigana(text: string) {
 
 export function ScriptPanel({
   images, visibleIndices, viewMode, translationCache, translatingKeys, pageErrors, hasApiKey, providerLabel, autoTranslate,
-  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDelete, onRetranslate, onAddToGlossary, onReorder,
+  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDelete, onRetranslate, onAddToGlossary, onReorder, onToggleDisplayMode,
   onRetryPage, onTranslatePage, onResumeFromEmpty,
 }: ScriptPanelProps) {
   const [editingBubble, setEditingBubble] = useState<{ key: string; id: string } | null>(null);
@@ -234,6 +236,19 @@ export function ScriptPanel({
                         className="flex items-center gap-1 text-gray-300 justify-end mt-2 opacity-50 hover:opacity-100 transition-opacity"
                         onPointerDown={(e) => e.stopPropagation()}
                       >
+                        {resolveDisplayMode(result) === 'tag' && (
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onToggleDisplayMode(imgIndex, result.id);
+                            }}
+                            title="덮어쓰기 모드에서 원문(효과음 등)을 가리지 않고 바깥에 작은 딱지로 표시 중입니다. 클릭하면 덮기로 바꿉니다."
+                            className="mr-auto px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                          >
+                            작게 표시
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.preventDefault();
