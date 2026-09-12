@@ -308,6 +308,57 @@ OpenAI 모드에서는 번역을 OpenAI가 하는데도 Gemini에게 **전체 �
 
 ---
 
+## 추가 수정 8 — OpenAI 주력 전환 · Gemini 보조 · 지침/단어장/맥락 공통화
+
+### 결정
+실제 만화로 "비전 단독(플라스크)" 모드를 써본 결과 품질에 문제가 없어, **OpenAI를 주력으로 정식 채택**하고 실험 토글을 제거했다.
+
+| 항목 | 전 | 후 |
+|---|---|---|
+| 기본 엔진 | Gemini | **OpenAI 5.6 Terra** (Sol도 선택 가능) |
+| OpenAI 모드 동작 | Gemini가 원문 인식(OCR) → OpenAI가 번역 (키 2개 필요) | **OpenAI가 격자 이미지를 직접 읽어 인식·번역 한 번에** (OpenAI 키만) |
+| Gemini | 필수 (OCR 담당) | **보조 옵션** — 같은 일을 Gemini가 처리 (Gemini 키만) |
+| 요청 수 / 페이지 | 2회 (Gemini + OpenAI) | **1회** |
+| 프롬프트 | 엔진마다 다른 문구, OCR 단계에는 단어장·맥락 없음 | **엔진 무관 공통** (번역 지침 + 단어장 + 앞 페이지 맥락) |
+| 플라스크 토글 | 임시 실험용 | 제거 |
+
+### 변경 내용
+| 변경 | 파일 |
+|---|---|
+| 번역 지침·읽기 규칙·단어장·맥락·작품 노트 프롬프트를 한곳에서 생성. 두 엔진이 같은 모듈을 씀 | `lib/translationPrompt.ts`(신규) |
+| 효과음 치환·분류 태그 금지 규칙을 공통 지침으로 끌어올림 (전에는 페이지 전체 경로에만 있었음) | `lib/translationPrompt.ts` |
+| OpenAI: 격자 번역(주력) · 페이지 전체 대체 경로 · 작품 노트 정리 · 문장 재번역 | `lib/openai.ts` |
+| Gemini: `ocrOnly` 제거, 공통 프롬프트 사용, 보조 경로로 정리 | `lib/gemini.ts` |
+| 제공자별로 자기 키만 요구 (교차 의존 제거) | `lib/translatePage.ts` |
+| 작품 노트도 고른 엔진으로 정리 → **Gemini 키 없이도 말투 맥락 기능이 동작** | `App.tsx`, `lib/openai.ts` |
+| 엔진·모델 선택을 기억 (새로고침·재방문에도 유지) | `App.tsx` |
+| 헤더: OpenAI를 앞(주력)·Gemini를 뒤(보조)로 배치, Terra를 첫 옵션으로, 키 입력란에 엔진 이름 표시, 플라스크 버튼 삭제 | `components/AppHeader.tsx` |
+| API 키에 한글·개행이 섞였을 때 브라우저 원본 오류(`non ISO-8859-1 code point`) 대신 한국어 안내. 키 입력은 자동 trim | `lib/retry.ts`, `lib/openai.ts`, `lib/gemini.ts`, `App.tsx` |
+
+### 새 저장 키
+- `manga-translator-provider` / `manga-translator-gemini-version` / `manga-translator-openai-version` — 고른 엔진·모델 기억
+- 제거: `manga-translator-openai-vision-only` (실험 토글). 남아 있어도 무해
+
+### 되돌리기
+- 이 패치 직전 상태: `git revert <이 커밋>` 또는 `git checkout 00c4036 -- src docs`
+- Gemini를 다시 주력으로 되돌리려면 `App.tsx`의 provider 기본값을 `'google'`로 바꾸고 헤더 순서만 되돌리면 됨 (두 엔진 경로는 독립적이라 서로 영향 없음)
+
+### 검증
+- `tsc -b` 통과, `vitest` **103개** 통과, `oxlint` 경고 12개(이전과 동일), `vite build` 통과
+- 단위 테스트로 확인: 두 엔진 프롬프트에 단어장·맥락·번역 지침이 모두 실림 / Gemini는 응답에 번역문까지 요구 / OpenAI 격자 요청은 이미지 1장·요청 1회 / 페이지 전체 대체 경로는 좌표를 받아 일본 만화 읽는 순서로 정렬 / 작품 노트는 대사가 없으면 호출하지 않음 / 재번역은 원문에 등장하는 단어장만 실음
+- 브라우저(가짜 API 목): 기본값이 **OpenAI Terra**, 헤더 순서 OpenAI→Gemini, 플라스크 없음, 키 입력란 "OpenAI Key"
+  - OpenAI 키만 넣고 3장 자동 번역 → 페이지당 OpenAI 요청 1건, **Gemini 0건**, 프롬프트에 단어장(`拳王 -> 권왕`)·`이어지는 맥락`·`직전까지의 번역`·`작품 노트`·`번역 지침` 모두 포함
+  - 3장 번역 시점에 **작품 노트가 OpenAI로 자동 생성**됨 (Gemini 키 없음)
+  - Gemini 보조 모드로 전환 → Gemini로만 요청이 가고 OpenAI 호출 0건, 엔진 선택이 새로고침 후에도 유지
+  - 한글 섞인 키로 번역 시 "OpenAI API 키에 입력할 수 없는 문자…" 안내 표시 (원본 브라우저 오류 아님)
+- 참고: `@google/genai` SDK는 내부에서 fetch 참조를 따로 잡아 브라우저 목으로 가로채지지 않음 → Gemini 프롬프트 내용은 SDK를 직접 목으로 바꾼 단위 테스트로 검증
+- 테스트 후 localStorage·IndexedDB 정리
+
+### 토큰 사용량 (측정치)
+1200×1700 페이지, 말풍선 6개 기준 격자 이미지 900×600 → 이미지 약 **765 토큰**(high detail) + 프롬프트·맥락 약 700~1500 토큰 = **페이지당 입력 1500~2300 토큰, 요청 1회**. 콘솔 `[tokens]` 로그와 `window.__mangaTokenUsage`로 확인 가능
+
+---
+
 ## 이번 패치 범위 밖 (다음 후보)
 - 템플릿 잔재 정리: `src/App.css`, `src/assets/*`, 템플릿 README, `test-lint.json`, `index.html`의 `lang="en"`
 - 배포물에 WASM 27.8MB가 들어가지만 실제로는 CDN에서 받음 → 한쪽으로 통일, WebGPU·모델 양자화 검토

@@ -68,6 +68,20 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
   }
 }
 
+/**
+ * API 키를 HTTP 헤더(Authorization 등)에 실어 보낼 수 있는지 확인합니다.
+ * 헤더 값은 ISO-8859-1(코드 포인트 0~255)만 허용되는데, 붙여넣기 과정에서 한글이나 개행이 섞이면
+ * 브라우저가 "Failed to execute 'fetch'... non ISO-8859-1 code point" 같은 원본 오류를 그대로 던집니다.
+ * 실제 요청을 보내기 전에 미리 걸러 알아보기 쉬운 안내로 바꿔줍니다.
+ */
+export function assertHeaderSafeApiKey(key: string, providerLabel: string): void {
+  for (const ch of key) {
+    if (ch.codePointAt(0)! > 255) {
+      throw new Error(`${providerLabel} API 키에 입력할 수 없는 문자(한글 등)가 섞여 있어 요청을 보낼 수 없습니다. 키 입력란을 비우고 다시 붙여넣어주세요.`);
+    }
+  }
+}
+
 /** 최종 실패한 API 오류를 화면에 보여줄 한국어 안내로 바꿉니다. 해당하지 않으면 원래 오류를 그대로 돌려줍니다. */
 export function toFriendlyError(error: unknown, providerLabel: string): Error {
   const message = errorMessage(error);

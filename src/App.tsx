@@ -18,6 +18,7 @@ import { resolveDisplayMode } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
 import { summarizeWorkNotes } from './lib/gemini';
+import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
@@ -38,17 +39,20 @@ const NOTES_REFRESH_PAGES = 10;
 const NOTES_SOURCE_PAIRS = 60;
 const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
-/** [임시] OpenAI 비전 단독 실험 토글. 품질 비교가 끝나면 이 키와 관련 코드를 함께 제거합니다. */
-const OPENAI_VISION_ONLY_STORAGE_KEY = 'manga-translator-openai-vision-only';
+/** 고른 번역 엔진·모델을 다음 실행에도 유지 */
+const PROVIDER_STORAGE_KEY = 'manga-translator-provider';
+const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
+const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
 
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 function App() {
-  const [provider, setProvider] = useState<Provider>('google');
+  // 주력은 OpenAI(Terra). Gemini는 보조 옵션
+  const [provider, setProvider] = useState<Provider>(() => (localStorage.getItem(PROVIDER_STORAGE_KEY) === 'google' ? 'google' : 'openai'));
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
-  const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>('3.6');
-  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>('terra');
+  const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
+  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(() => (localStorage.getItem(OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'terra'));
 
   const [allImages, setAllImages] = useState<UploadedImage[]>([]);
   const [loadedFilename, setLoadedFilename] = useState<string | null>(null);
@@ -67,7 +71,6 @@ function App() {
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const [contextFirst, setContextFirst] = useState(() => localStorage.getItem(CONTEXT_FIRST_STORAGE_KEY) === 'true');
-  const [openAiVisionOnly, setOpenAiVisionOnly] = useState(() => localStorage.getItem(OPENAI_VISION_ONLY_STORAGE_KEY) === 'true');
   const notesBusyRef = useRef(false);
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +86,9 @@ function App() {
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
   );
 
-  const settings: TranslationSettings = { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, openAiVisionOnly };
+  // 지금 고른 엔진의 키. 작품 노트 정리도 이 엔진으로 처리
+  const activeKey = provider === 'openai' ? openaiKey : googleKey;
+  const settings: TranslationSettings = { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary };
 
   const visibleIndices = useMemo(() => getVisibleIndices(allImages, currentPageIndex, viewMode), [allImages, currentPageIndex, viewMode]);
   const translationQueue = useMemo(
@@ -121,16 +126,18 @@ function App() {
 
   const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
 
-  /** 지금까지 번역된 대사로 작품 노트를 다시 정리합니다. (Gemini 요청 1회) */
+  /** 지금까지 번역된 대사로 작품 노트를 다시 정리합니다. (고른 엔진에 요청 1회) */
   const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
-    if (notesBusyRef.current || !googleKey || allImages.length === 0) return;
+    if (notesBusyRef.current || !activeKey || allImages.length === 0) return;
     const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
     if (pairs.length === 0) return;
 
     notesBusyRef.current = true;
     setIsGeneratingNotes(true);
     try {
-      const text = await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text);
+      const text = provider === 'openai'
+        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text)
+        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text);
       if (text) saveNotes(text, translatedPageCount);
     } catch (err: any) {
       console.warn('작품 노트 갱신 실패:', err);
@@ -144,10 +151,10 @@ function App() {
 
   // 번역이 쌓이면 노트를 자동으로 갱신 (처음 3장, 이후 10장마다)
   useEffect(() => {
-    if (!autoNotes || !googleKey || allImages.length === 0) return;
+    if (!autoNotes || !activeKey || allImages.length === 0) return;
     const due = notes ? translatedPageCount - notes.pageCount >= NOTES_REFRESH_PAGES : translatedPageCount >= NOTES_FIRST_PAGES;
     if (due) regenerateWorkNotes({ silent: true });
-  }, [translatedPageCount, autoNotes, googleKey, notes?.pageCount]);
+  }, [translatedPageCount, autoNotes, activeKey, notes?.pageCount]);
 
   const updateAutoNotes = (enabled: boolean) => {
     setAutoNotes(enabled);
@@ -162,15 +169,6 @@ function App() {
     setContextFirst(enabled);
     try {
       localStorage.setItem(CONTEXT_FIRST_STORAGE_KEY, String(enabled));
-    } catch (err) {
-      console.warn('설정 저장 실패:', err);
-    }
-  };
-
-  const updateOpenAiVisionOnly = (enabled: boolean) => {
-    setOpenAiVisionOnly(enabled);
-    try {
-      localStorage.setItem(OPENAI_VISION_ONLY_STORAGE_KEY, String(enabled));
     } catch (err) {
       console.warn('설정 저장 실패:', err);
     }
@@ -399,7 +397,33 @@ function App() {
 
   // ---------- 헤더 동작 ----------
 
-  const handleApiKeyChange = (value: string) => {
+  /** 고른 엔진·모델은 다음 실행에도 유지 */
+  const remember = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (err) {
+      console.warn('설정 저장 실패:', err);
+    }
+  };
+
+  const handleProviderChange = (next: Provider) => {
+    setProvider(next);
+    remember(PROVIDER_STORAGE_KEY, next);
+  };
+
+  const handleGeminiVersionChange = (next: GeminiVersion) => {
+    setGeminiVersion(next);
+    remember(GEMINI_VERSION_STORAGE_KEY, next);
+  };
+
+  const handleOpenAiVersionChange = (next: OpenAiVersion) => {
+    setOpenAiVersion(next);
+    remember(OPENAI_VERSION_STORAGE_KEY, next);
+  };
+
+  const handleApiKeyChange = (rawValue: string) => {
+    // 복사·붙여넣기로 앞뒤 공백·줄바꿈이 섞여 들어오는 경우가 많아 헤더 전송 전에 미리 제거
+    const value = rawValue.trim();
     if (provider === 'google') {
       setGoogleKey(value);
       localStorage.setItem(GOOGLE_KEY_STORAGE, value);
@@ -538,13 +562,11 @@ function App() {
         autoTranslate={queue.autoTranslate}
         onToggleAutoTranslate={() => queue.setAutoTranslate(!queue.autoTranslate)}
         provider={provider}
-        onProviderChange={setProvider}
+        onProviderChange={handleProviderChange}
         geminiVersion={geminiVersion}
-        onGeminiVersionChange={setGeminiVersion}
+        onGeminiVersionChange={handleGeminiVersionChange}
         openAiVersion={openAiVersion}
-        onOpenAiVersionChange={setOpenAiVersion}
-        openAiVisionOnly={openAiVisionOnly}
-        onToggleOpenAiVisionOnly={() => updateOpenAiVisionOnly(!openAiVisionOnly)}
+        onOpenAiVersionChange={handleOpenAiVersionChange}
         apiKey={provider === 'google' ? googleKey : openaiKey}
         onApiKeyChange={handleApiKeyChange}
       />
@@ -665,7 +687,7 @@ function App() {
           notes={notes}
           recentPairCount={collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS).length}
           isRegenerating={isGeneratingNotes}
-          canRegenerate={!!googleKey && translatedPageCount > 0}
+          canRegenerate={!!activeKey && translatedPageCount > 0}
           autoUpdate={autoNotes}
           contextFirst={contextFirst}
           onSave={text => saveNotes(text)}

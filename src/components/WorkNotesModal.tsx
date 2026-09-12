@@ -77,7 +77,7 @@ export function WorkNotesModal({
             <button
               onClick={onRegenerate}
               disabled={!canRegenerate || isRegenerating}
-              title={canRegenerate ? '지금까지 번역된 대사로 노트를 다시 정리합니다 (Gemini 요청 1회)' : 'Gemini API 키와 번역된 대사가 필요합니다'}
+              title={canRegenerate ? '지금까지 번역된 대사로 노트를 다시 정리합니다 (번역 엔진 요청 1회)' : 'API 키와 번역된 대사가 필요합니다'}
               className="flex items-center gap-1.5 px-3 py-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-lg text-sm font-medium hover:bg-teal-100 disabled:opacity-50"
             >
               {isRegenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} AI로 다시 정리

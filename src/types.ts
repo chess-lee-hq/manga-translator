@@ -32,11 +32,6 @@ export interface TranslationSettings {
   glossary: Glossary;
   /** 앞 페이지 번역·작품 노트로 만든 맥락 지시문 (프롬프트에 그대로 삽입) */
   context?: string;
-  /**
-   * [실험] true면 Gemini를 전혀 쓰지 않고 OpenAI가 이미지를 직접 읽어 원문 인식·번역까지 처리합니다.
-   * 실제 품질을 비교해보기 위한 임시 토글이며, 비교가 끝나면 이 옵션과 관련 분기를 함께 제거할 예정입니다.
-   */
-  openAiVisionOnly?: boolean;
 }
 
 export interface PageError {

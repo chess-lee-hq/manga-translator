@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Cloud, Cpu, Download, FlaskConical, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, OpenAiVersion, Provider, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
@@ -33,9 +33,6 @@ interface AppHeaderProps {
   onGeminiVersionChange: (version: GeminiVersion) => void;
   openAiVersion: OpenAiVersion;
   onOpenAiVersionChange: (version: OpenAiVersion) => void;
-  /** [임시] OpenAI 비전 단독 모드. 품질 비교가 끝나면 이 토글은 제거합니다. */
-  openAiVisionOnly: boolean;
-  onToggleOpenAiVisionOnly: () => void;
   apiKey: string;
   onApiKeyChange: (value: string) => void;
 }
@@ -49,7 +46,7 @@ export function AppHeader(props: AppHeaderProps) {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, onOpenWorkNotes,
     onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
-    openAiVersion, onOpenAiVersionChange, openAiVisionOnly, onToggleOpenAiVisionOnly, apiKey, onApiKeyChange,
+    openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
   } = props;
   const hasImages = imageCount > 0;
 
@@ -181,8 +178,32 @@ export function AppHeader(props: AppHeaderProps) {
           {autoTranslate ? <Zap size={12} /> : <ZapOff size={12} />} <span className={WIDE_LABEL}>자동 번역</span> {autoTranslate ? 'ON' : 'OFF'}
         </button>
 
+        {/* 주력: OpenAI(이미지에서 원문 인식·번역을 한 번에) / 보조: Gemini */}
         <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0 items-center">
-          <button onClick={() => onProviderChange('google')} title="Gemini" className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'google' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}>
+          <button
+            onClick={() => onProviderChange('openai')}
+            title="OpenAI 5.6 (주력): 말풍선 이미지를 직접 읽어 원문 인식·번역을 한 번에 처리합니다. OpenAI 키만 있으면 됩니다."
+            className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}
+          >
+            <Bot size={12} /> <span className={WIDE_LABEL}>OpenAI 5.6</span>
+          </button>
+          <select
+            value={openAiVersion}
+            onChange={(e) => { onOpenAiVersionChange(e.target.value as OpenAiVersion); onProviderChange('openai'); }}
+            title="Terra: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
+            className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
+          >
+            <option value="terra">Terra</option>
+            <option value="sol">Sol</option>
+          </select>
+
+          <div className="w-px h-3 bg-gray-300 mx-1"></div>
+
+          <button
+            onClick={() => onProviderChange('google')}
+            title="Gemini (보조): 같은 작업을 Gemini로 번역합니다. Gemini 키가 필요합니다."
+            className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'google' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}
+          >
             <Cpu size={12} /> <span className={WIDE_LABEL}>Gemini</span>
           </button>
           <select
@@ -193,38 +214,14 @@ export function AppHeader(props: AppHeaderProps) {
             <option value="3.6">3.6 Flash</option>
             <option value="3.7">3.7 Flash</option>
           </select>
-
-          <div className="w-px h-3 bg-gray-300 mx-1"></div>
-
-          <button onClick={() => onProviderChange('openai')} title="OpenAI 5.6" className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}>
-            <Bot size={12} /> <span className={WIDE_LABEL}>OpenAI 5.6</span>
-          </button>
-          <select
-            value={openAiVersion}
-            onChange={(e) => { onOpenAiVersionChange(e.target.value as OpenAiVersion); onProviderChange('openai'); }}
-            className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
-          >
-            <option value="sol">Sol</option>
-            <option value="terra">Terra</option>
-          </select>
         </div>
-
-        {/* [임시] Gemini 없이 OpenAI가 이미지를 직접 읽는 실험 모드. 품질 비교가 끝나면 제거 예정 */}
-        {provider === 'openai' && (
-          <button
-            onClick={onToggleOpenAiVisionOnly}
-            title={'[테스트] OpenAI 비전 단독: 켜면 Gemini를 전혀 호출하지 않고 OpenAI가 말풍선 이미지를 직접 읽어 번역까지 합니다.\n끄면 원문 인식은 Gemini, 번역은 OpenAI가 맡습니다.\n※ 이미 번역된 페이지는 저장된 결과를 그대로 보여주므로, 같은 페이지로 비교하려면 "기록 삭제"로 캐시를 지우세요.'}
-            className={`${actionButton} ${openAiVisionOnly ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-300'}`}
-          >
-            <FlaskConical size={14} /> <span className={WIDE_LABEL}>비전 단독</span> {openAiVisionOnly ? 'ON' : 'OFF'}
-          </button>
-        )}
 
         <div className="relative flex items-center shrink-0">
           <Key size={14} className="text-gray-400 absolute left-2 pointer-events-none" />
           <input
             type="password"
-            placeholder="API Key"
+            placeholder={provider === 'google' ? 'Gemini Key' : 'OpenAI Key'}
+            title={provider === 'google' ? 'Gemini API 키' : 'OpenAI API 키'}
             value={apiKey}
             onChange={(e) => onApiKeyChange(e.target.value)}
             autoComplete="new-password"

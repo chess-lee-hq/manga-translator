@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { computeBackoffMs, getErrorStatus, isRetryableError, toFriendlyError, withRetry } from './retry';
+import { assertHeaderSafeApiKey, computeBackoffMs, getErrorStatus, isRetryableError, toFriendlyError, withRetry } from './retry';
 
 const httpError = (status: number, message = `Error ${status}`) => Object.assign(new Error(message), { status });
+
+describe('assertHeaderSafeApiKey', () => {
+  it('보통 API 키는 통과시킨다', () => {
+    expect(() => assertHeaderSafeApiKey('sk-proj-abcDEF123-_.', 'OpenAI')).not.toThrow();
+  });
+
+  it('한글 등 ISO-8859-1을 벗어난 문자가 섞이면 알아보기 쉬운 오류로 막는다 (붙여넣기 사고 방지)', () => {
+    expect(() => assertHeaderSafeApiKey('sk-abc한글섞임', 'OpenAI'))
+      .toThrow(/OpenAI API 키에 입력할 수 없는 문자/);
+    expect(() => assertHeaderSafeApiKey('AIzaSy가짜키', 'Gemini'))
+      .toThrow(/Gemini API 키에 입력할 수 없는 문자/);
+  });
+});
 
 describe('isRetryableError', () => {
   it('429·5xx·네트워크 오류는 재시도한다', () => {
