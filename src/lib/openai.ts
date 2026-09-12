@@ -42,7 +42,8 @@ export async function translateMangaImageOpenAI(
   openAiVersion: OpenAiVersion,
   apiKey: string,
   geminiResults: RawTranslationResult[],
-  glossary?: Record<string, string>
+  glossary?: Record<string, string>,
+  context?: string,
 ): Promise<RawTranslationResult[]> {
 
   if (geminiResults.length === 0) return [];
@@ -62,7 +63,7 @@ export async function translateMangaImageOpenAI(
 I will provide you with a JSON array of extracted Japanese text elements from a manga page.
 Your task is to translate the "original_text" of each element into highly natural, conversational Korean.
 Adapt the tone, emotion, idioms, and character speech styles to match a high-quality professional Korean webtoon or comic book.
-${glossaryInstruction}
+${glossaryInstruction}${context ?? ''}
 You MUST respond ONLY with a JSON object containing a single key "translations" which maps to an array of objects.
 Each object in the array MUST match this format:
 {
@@ -97,12 +98,12 @@ Each object in the array MUST match this format:
 }
 
 export async function retranslateTextOpenAI(
-  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, glossary?: Record<string, string>): Promise<string> {
+  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, glossary?: Record<string, string>, context?: string): Promise<string> {
   const modelName = `gpt-5.6-${openAiVersion}`;
   const glossaryInstruction = buildGlossaryInstruction(glossary, originalText);
 
   const prompt = `You are a professional manga translator. Translate this specific Japanese text into highly natural, conversational Korean. Adapt the tone to match a high-quality Korean webtoon.
-${glossaryInstruction}
+${glossaryInstruction}${context ?? ''}
 Original text: ${originalText}
 
 Respond ONLY with the translated Korean text string, nothing else. Do not include quotes or JSON formatting.`;

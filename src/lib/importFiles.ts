@@ -11,6 +11,8 @@ export interface ImportResult {
   images: UploadedImage[];
   translations: TranslationCache;
   glossary?: Glossary;
+  /** 백업에 들어 있던 작품 노트 */
+  notes?: string;
   lastReadPage?: number;
   /** 작품 이름으로 표시할 압축 파일 이름 */
   loadedFilename?: string;
@@ -48,13 +50,14 @@ async function loadCandidates(candidates: { file: File; sortKey: string; src?: s
 
 /** 백업 ZIP(manga_data.json 포함)을 읽습니다. */
 export async function importBackupZip(zipBlob: Blob, name: string): Promise<ImportResult> {
-  const { images, translations, lastReadPage, glossary } = await extractMangaZip(zipBlob);
+  const { images, translations, lastReadPage, glossary, notes } = await extractMangaZip(zipBlob);
   const loaded = await loadCandidates(images.map(img => ({ file: img.file, sortKey: img.file.name, src: img.src, mimeType: img.mimeType })));
   return {
     mode: 'backup',
     images: loaded.images,
     translations,
     glossary,
+    notes,
     lastReadPage,
     loadedFilename: name,
     failedImages: loaded.failed,

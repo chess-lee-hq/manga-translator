@@ -6,7 +6,7 @@ import type { TranslationResult } from './gemini';
  */
 export const OVERLAY_STYLE = {
   /** 글자 크기 하한·상한 (뷰어 배율에 비례) */
-  minFontPx: 13,
+  minFontPx: 10,
   maxFontPx: 28,
   fontWeight: 800,
   lineHeight: 1.15,

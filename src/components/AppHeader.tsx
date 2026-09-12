@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, OpenAiVersion, Provider, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
@@ -20,6 +20,7 @@ interface AppHeaderProps {
   isDriveSyncing: boolean;
   onSaveToDrive: () => void;
   onOpenGlossary: () => void;
+  onOpenWorkNotes: () => void;
   onClearCache: () => void;
   onCloseSession: () => void;
   autoTranslate: boolean;
@@ -41,7 +42,7 @@ const actionButton = 'flex items-center gap-1 px-2 py-1 rounded text-xs font-med
 export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
-    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, onSaveToDrive, onOpenGlossary,
+    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, onSaveToDrive, onOpenGlossary, onOpenWorkNotes,
     onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
     openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
   } = props;
@@ -148,6 +149,9 @@ export function AppHeader(props: AppHeaderProps) {
             </button>
             <button onClick={onOpenGlossary} title="단어장" className={`${actionButton} bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100`}>
               <BookOpen size={14} /> <span className={WIDE_LABEL}>단어장</span>
+            </button>
+            <button onClick={onOpenWorkNotes} title="작품 노트: 인물 말투·호칭을 기억해 다음 번역에 반영" className={`${actionButton} bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100`}>
+              <NotebookPen size={14} /> <span className={WIDE_LABEL}>작품 노트</span>
             </button>
             <button onClick={onClearCache} title="저장된 번역 기록 모두 삭제" className={`${actionButton} bg-red-50 text-red-700 border-red-200 hover:bg-red-100`}>
               <Trash2 size={14} /> <span className={WIDE_LABEL}>기록 삭제</span>

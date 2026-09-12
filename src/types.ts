@@ -30,6 +30,8 @@ export interface TranslationSettings {
   geminiVersion: GeminiVersion;
   openAiVersion: OpenAiVersion;
   glossary: Glossary;
+  /** 앞 페이지 번역·작품 노트로 만든 맥락 지시문 (프롬프트에 그대로 삽입) */
+  context?: string;
 }
 
 export interface PageError {

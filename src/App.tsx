@@ -7,24 +7,35 @@ import { GlossaryModal, type GlossaryDraft } from './components/GlossaryModal';
 import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
+import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
 import { useGlossary } from './hooks/useGlossary';
+import { useWorkNotes } from './hooks/useWorkNotes';
 import { useSessionPersistence, type RestoredSession } from './hooks/useSessionPersistence';
 import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
 import { useTranslationQueue } from './hooks/useTranslationQueue';
 import { resolveDisplayMode } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip } from './lib/drive';
+import { summarizeWorkNotes } from './lib/gemini';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { retranslateText, translateRegion } from './lib/translatePage';
+import { collectRecentPairs } from './lib/translationContext';
 import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, Provider, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
 const PRELOAD_PAGE_COUNT = 10;
+const AUTO_NOTES_STORAGE_KEY = 'manga-translator-auto-notes';
+const CONTEXT_FIRST_STORAGE_KEY = 'manga-translator-context-first';
+/** 작품 노트를 처음 만드는 시점(번역된 페이지 수)과 이후 갱신 주기 */
+const NOTES_FIRST_PAGES = 3;
+const NOTES_REFRESH_PAGES = 10;
+/** 작품 노트를 만들 때 참고할 최대 대사 수 */
+const NOTES_SOURCE_PAIRS = 60;
 const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 
@@ -48,12 +59,20 @@ function App() {
   // 비동기 번역이 진행 중인 말풍선 id (여러 개 동시 진행 가능)
   const [pendingBubbleIds, setPendingBubbleIds] = useState<Set<string>>(() => new Set());
   const [glossaryDraft, setGlossaryDraft] = useState<GlossaryDraft | null>(null);
+  const [isWorkNotesOpen, setIsWorkNotesOpen] = useState(false);
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
+  const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
+  const [contextFirst, setContextFirst] = useState(() => localStorage.getItem(CONTEXT_FIRST_STORAGE_KEY) === 'true');
+  const notesBusyRef = useRef(false);
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { glossary, mergeGlossary, removeGlossaryEntry } = useGlossary();
+  // 작품 노트는 작품(불러온 파일 이름)별로 저장
+  const workName = loadedFilename ?? allImages[0]?.file.name ?? 'default';
+  const { notes, saveNotes } = useWorkNotes(workName);
   const { translationCache, updatePageResults, setPageResults, mergeTranslations, removePages, clearAll } = useTranslationCache(
     allImages,
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
@@ -73,6 +92,8 @@ function App() {
     settings,
     translationCache,
     onPageTranslated: setPageResults,
+    notes: notes?.text,
+    contextFirst,
   });
 
   const applyRestoredSession = (session: RestoredSession) => {
@@ -88,6 +109,56 @@ function App() {
     onRestore: applyRestoredSession,
     isBusy: !!exportProgress,
   });
+
+  // ---------- 작품 노트 (말투·호칭 기억) ----------
+
+  const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
+
+  /** 지금까지 번역된 대사로 작품 노트를 다시 정리합니다. (Gemini 요청 1회) */
+  const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (notesBusyRef.current || !googleKey || allImages.length === 0) return;
+    const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
+    if (pairs.length === 0) return;
+
+    notesBusyRef.current = true;
+    setIsGeneratingNotes(true);
+    try {
+      const text = await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text);
+      if (text) saveNotes(text, translatedPageCount);
+    } catch (err: any) {
+      console.warn('작품 노트 갱신 실패:', err);
+      // 자동 갱신은 번역 품질을 돕는 부가 기능이라 실패해도 화면을 방해하지 않음
+      if (!silent) setError(`작품 노트 갱신 실패: ${err?.message ?? err}`);
+    } finally {
+      notesBusyRef.current = false;
+      setIsGeneratingNotes(false);
+    }
+  };
+
+  // 번역이 쌓이면 노트를 자동으로 갱신 (처음 3장, 이후 10장마다)
+  useEffect(() => {
+    if (!autoNotes || !googleKey || allImages.length === 0) return;
+    const due = notes ? translatedPageCount - notes.pageCount >= NOTES_REFRESH_PAGES : translatedPageCount >= NOTES_FIRST_PAGES;
+    if (due) regenerateWorkNotes({ silent: true });
+  }, [translatedPageCount, autoNotes, googleKey, notes?.pageCount]);
+
+  const updateAutoNotes = (enabled: boolean) => {
+    setAutoNotes(enabled);
+    try {
+      localStorage.setItem(AUTO_NOTES_STORAGE_KEY, String(enabled));
+    } catch (err) {
+      console.warn('설정 저장 실패:', err);
+    }
+  };
+
+  const updateContextFirst = (enabled: boolean) => {
+    setContextFirst(enabled);
+    try {
+      localStorage.setItem(CONTEXT_FIRST_STORAGE_KEY, String(enabled));
+    } catch (err) {
+      console.warn('설정 저장 실패:', err);
+    }
+  };
 
   // ---------- 파일 가져오기 ----------
 
@@ -106,6 +177,10 @@ function App() {
       if (result.glossary && glossaryCount > 0) {
         mergeGlossary(result.glossary);
         info.push(`단어장 ${glossaryCount}개 항목을 현재 단어장에 합쳤습니다.`);
+      }
+      if (result.notes?.trim()) {
+        saveNotes(result.notes.trim(), 0);
+        info.push('작품 노트도 함께 불러왔습니다.');
       }
     } else {
       if (result.loadedFilename) setLoadedFilename(result.loadedFilename);
@@ -134,7 +209,7 @@ function App() {
   };
 
   const drive = useDriveSync({
-    buildBackupZip: () => createMangaZip(allImages, translationCache, currentPageIndex, glossary),
+    buildBackupZip: () => createMangaZip(allImages, translationCache, currentPageIndex, glossary, notes?.text),
     defaultFilename: () => (loadedFilename ? `${loadedFilename}.zip` : `Manga_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`),
     restoreBackup: async (zipBlob, filename) => {
       const { warnings, info } = applyImport(await importBackupZip(zipBlob, stripArchiveExtension(filename)));
@@ -430,6 +505,7 @@ function App() {
         isDriveSyncing={drive.isDriveSyncing}
         onSaveToDrive={drive.saveToDrive}
         onOpenGlossary={() => setGlossaryDraft({ original: '', translated: '' })}
+        onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
         onClearCache={handleClearCache}
         onCloseSession={handleCloseSession}
         autoTranslate={queue.autoTranslate}
@@ -550,6 +626,23 @@ function App() {
           onMerge={mergeGlossary}
           onRemove={removeGlossaryEntry}
           onClose={() => setGlossaryDraft(null)}
+        />
+      )}
+
+      {isWorkNotesOpen && (
+        <WorkNotesModal
+          workName={workName}
+          notes={notes}
+          recentPairCount={collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS).length}
+          isRegenerating={isGeneratingNotes}
+          canRegenerate={!!googleKey && translatedPageCount > 0}
+          autoUpdate={autoNotes}
+          contextFirst={contextFirst}
+          onSave={text => saveNotes(text)}
+          onRegenerate={() => regenerateWorkNotes()}
+          onToggleAutoUpdate={() => updateAutoNotes(!autoNotes)}
+          onToggleContextFirst={() => updateContextFirst(!contextFirst)}
+          onClose={() => setIsWorkNotesOpen(false)}
         />
       )}
 

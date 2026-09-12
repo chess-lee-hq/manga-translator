@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { translatePage } from '../lib/translatePage';
+import { buildContextInstruction, collectRecentPairs } from '../lib/translationContext';
 import type { PageError, TranslationCache, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { useDebouncedValue } from './useDebouncedValue';
 import { getCacheKey } from './useTranslationCache';
@@ -17,9 +18,13 @@ interface Options {
   settings: TranslationSettings;
   translationCache: TranslationCache;
   onPageTranslated: (key: string, results: TranslationResult[]) => void;
+  /** 작품 노트 (인물·말투 요약) — 번역 프롬프트에 함께 전달 */
+  notes?: string;
+  /** 한 장씩 순서대로 번역해 앞 페이지 내용을 최대한 반영 */
+  contextFirst?: boolean;
 }
 
-export function useTranslationQueue({ images, queue, settings, translationCache, onPageTranslated }: Options) {
+export function useTranslationQueue({ images, queue, settings, translationCache, onPageTranslated, notes, contextFirst }: Options) {
   // 진행 상태는 페이지 번호가 아니라 캐시 키(파일) 기준 → 이미지 추가·재정렬 중에도 중복 호출·누락 없음
   const inFlightRef = useRef<Set<string>>(new Set());
   const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(() => new Set());
@@ -63,12 +68,21 @@ export function useTranslationQueue({ images, queue, settings, translationCache,
       return next;
     });
 
+    // 이번 실행에서 방금 번역한 페이지도 다음 페이지의 맥락에 포함 (화면 상태 반영 전이라 따로 모아둠)
+    const runResults = new Map<string, TranslationResult[]>();
+    const contextFor = (pageIndex: number) => {
+      const cache = runResults.size > 0 ? { ...translationCache, ...Object.fromEntries(runResults) } : translationCache;
+      return buildContextInstruction(notes, collectRecentPairs(images, cache, pageIndex));
+    };
+
     let cursor = 0;
     const worker = async () => {
       while (cursor < jobs.length) {
         const job = jobs[cursor++];
         try {
-          onPageTranslated(job.key, await translatePage(job.img, attemptSettings));
+          const results = await translatePage(job.img, { ...attemptSettings, context: contextFor(job.idx) });
+          runResults.set(job.key, results);
+          onPageTranslated(job.key, results);
         } catch (err: any) {
           console.error(`Page ${job.idx + 1} 번역 실패:`, err);
           setPageErrors(prev => ({
@@ -81,7 +95,8 @@ export function useTranslationQueue({ images, queue, settings, translationCache,
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(TRANSLATION_CONCURRENCY, jobs.length) }, () => worker()));
+    const concurrency = Math.min(contextFirst ? 1 : TRANSLATION_CONCURRENCY, jobs.length);
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
   };
 
   const retryPage = (imgIndex: number) => {

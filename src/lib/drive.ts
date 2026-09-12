@@ -8,6 +8,8 @@ export interface MangaSaveData {
   timestamp: string;
   lastReadPage?: number;
   glossary?: Record<string, string>;
+  /** 작품 노트 (인물·말투 요약) */
+  notes?: string;
   images: {
     filename: string;
     mimeType: string;
@@ -141,7 +143,8 @@ export async function createMangaZip(
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number = 0,
-  glossary?: Record<string, string>
+  glossary?: Record<string, string>,
+  notes?: string,
 ): Promise<Blob> {
   const zip = new JSZip();
   const manifest: MangaSaveData = {
@@ -149,6 +152,7 @@ export async function createMangaZip(
     timestamp: new Date().toISOString(),
     lastReadPage,
     glossary,
+    notes,
     images: []
   };
 
@@ -182,7 +186,8 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
   images: { file: File; src: string; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number,
-  glossary?: Record<string, string>
+  glossary?: Record<string, string>,
+  notes?: string,
 }> {
   const zip = await JSZip.loadAsync(zipBlob);
   const dataFile = zip.file("manga_data.json");
@@ -223,5 +228,5 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
     }
   }
 
-  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0, glossary: manifest.glossary };
+  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0, glossary: manifest.glossary, notes: manifest.notes };
 }
