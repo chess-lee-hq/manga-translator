@@ -161,8 +161,12 @@ export const VERTICAL_TEXT = {
 
 /**
  * 글자 방향 결정. 사용자가 직접 고른 값이 있으면 그것을 씁니다.
- * 자동 판별은 "세로로 길고 좁아서 가로로는 한 줄에 몇 글자도 못 들어가는 박스"만 세로쓰기로 봅니다.
- * (말풍선 없이 세로 한 줄로 쓰인 원문 자리)
+ * 자동 판별은 "가로쓰기가 최대한 넓힐 수 있는 너비(박스의 maxWidthRatio배)로도 한 줄에 몇 글자 못 들어가는,
+ * 정말로 좁은 박스"만 세로쓰기로 봅니다. (말풍선 없이 세로 한 줄로 쓰인 원문 자리)
+ *
+ * 가로쓰기는 흰 상자를 박스 너비의 최대 maxWidthRatio배까지 넓혀서 쓸 수 있으므로(layoutOverlayText 참고),
+ * 판별도 그 넓어진 너비를 기준으로 해야 정확합니다. 원래 박스 너비만 보면, 원문이 세로 한 줄이라 좁게 잡힌
+ * 박스(예: 원문 한 글자 폭)를 번역문이 짧아 가로로도 충분히 들어가는데 세로쓰기로 잘못 판정하기 쉽습니다.
  */
 export function resolveTextDirection(
   result: Pick<TranslationResult, 'translated_text' | 'text_direction'>,
@@ -175,7 +179,8 @@ export function resolveTextDirection(
   const chars = Array.from((result.translated_text ?? '').trim()).length;
   if (chars < VERTICAL_TEXT.minChars) return 'horizontal';
   if (boxWidth >= boxHeight || minFontSize <= 0) return 'horizontal';
-  const usableWidth = boxWidth - OVERLAY_STYLE.paddingXPx * cssPx * 2;
+  const expandedWidth = boxWidth * OVERLAY_STYLE.maxWidthRatio;
+  const usableWidth = expandedWidth - OVERLAY_STYLE.paddingXPx * cssPx * 2;
   return usableWidth / minFontSize < VERTICAL_TEXT.minCharsPerLine ? 'vertical' : 'horizontal';
 }
 

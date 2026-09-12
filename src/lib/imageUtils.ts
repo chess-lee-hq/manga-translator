@@ -1,3 +1,4 @@
+import { chooseGridColumns } from './gridLayout';
 import type { BoundingBox } from './yolo';
 
 export interface GridCellInfo {
@@ -18,19 +19,21 @@ const CELL_PADDING = 20;
 /**
  * 말풍선들을 잘라 바둑판 이미지 한 장으로 붙입니다. (칸마다 빨간 번호를 적어 LLM이 순서대로 답하게 함)
  * 박스는 호출 전에 readingOrder로 정렬되어 있습니다.
+ * 열 수를 지정하지 않으면 칸 수에 맞춰 비전 토큰이 가장 적게 드는 배치를 자동으로 고릅니다.
  */
 export async function createGridImageFromBoxes(
   image: HTMLImageElement,
   boxes: BoundingBox[],
-  gridWidth: number = 3,
+  gridWidth?: number,
 ): Promise<GridResult | null> {
   if (boxes.length === 0) return null;
 
   const cells: GridCellInfo[] = boxes.map((box, index) => ({ id: index + 1, box }));
-  const rows = Math.ceil(cells.length / gridWidth);
+  const columns = gridWidth ?? chooseGridColumns(cells.length, CELL_SIZE);
+  const rows = Math.ceil(cells.length / columns);
 
   const canvas = document.createElement('canvas');
-  canvas.width = gridWidth * CELL_SIZE;
+  canvas.width = columns * CELL_SIZE;
   canvas.height = rows * CELL_SIZE;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
@@ -53,8 +56,8 @@ export async function createGridImageFromBoxes(
     const sh = Math.min(imageHeight, box.ymax + marginY) - sy;
     if (!(sw > 0 && sh > 0)) return;
 
-    const cellX = (i % gridWidth) * CELL_SIZE;
-    const cellY = Math.floor(i / gridWidth) * CELL_SIZE;
+    const cellX = (i % columns) * CELL_SIZE;
+    const cellY = Math.floor(i / columns) * CELL_SIZE;
     const inner = CELL_SIZE - CELL_PADDING * 2;
     const scale = Math.min(inner / sw, inner / sh);
     const drawW = sw * scale;

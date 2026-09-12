@@ -4,9 +4,15 @@ import { layoutVerticalText, resolveTextDirection } from './overlayLayout';
 const bubble = (translated_text: string, text_direction?: 'horizontal' | 'vertical') => ({ translated_text, text_direction });
 
 describe('resolveTextDirection', () => {
-  // 최소 글자 10px, 여백 좌우 8px씩 → 너비 40px 박스는 한 줄에 2.4자밖에 못 들어감
-  it('홀쭉해서 가로로는 한 줄에 3글자도 못 들어가면 세로쓰기', () => {
-    expect(resolveTextDirection(bubble('세로로 긴 글자'), 40, 300, 10, 1)).toBe('vertical');
+  // 최소 글자 10px, 여백 좌우 8px씩, 가로쓰기는 최대 2배(maxWidthRatio)까지 넓힐 수 있음
+  // → 너비 20px 박스는 넓혀도(40px) 한 줄에 2.4자밖에 못 들어감 → 세로쓰기
+  it('가로쓰기 최대 확장 너비로도 한 줄에 3글자도 못 들어가면 세로쓰기', () => {
+    expect(resolveTextDirection(bubble('세로로 긴 글자'), 20, 300, 10, 1)).toBe('vertical');
+  });
+
+  // 너비 40px 박스는 넓히면(80px) 6.4자가 들어가므로, 원본 박스가 좁아도 짧은 번역문은 가로쓰기로 충분함
+  it('원본 박스가 좁아도 넓혀서 쓸 수 있으면 가로쓰기 (번역문이 짧을 때 세로쓰기로 잘못 판정되던 문제)', () => {
+    expect(resolveTextDirection(bubble('너무 변한게 없어'), 40, 300, 10, 1)).toBe('horizontal');
   });
 
   it('가로 폭이 넉넉하면 가로쓰기', () => {
@@ -15,12 +21,12 @@ describe('resolveTextDirection', () => {
   });
 
   it('한 글자뿐이면 가로쓰기', () => {
-    expect(resolveTextDirection(bubble('쾅'), 40, 300, 10, 1)).toBe('horizontal');
+    expect(resolveTextDirection(bubble('쾅'), 20, 300, 10, 1)).toBe('horizontal');
   });
 
   it('직접 고른 방향이 자동 판별보다 우선', () => {
     expect(resolveTextDirection(bubble('평범한 대사입니다', 'vertical'), 200, 150, 10, 1)).toBe('vertical');
-    expect(resolveTextDirection(bubble('세로로 긴 글자', 'horizontal'), 40, 300, 10, 1)).toBe('horizontal');
+    expect(resolveTextDirection(bubble('세로로 긴 글자', 'horizontal'), 20, 300, 10, 1)).toBe('horizontal');
   });
 });
 
