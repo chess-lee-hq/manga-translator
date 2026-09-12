@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>manga-ocr 실험실 (0단계)</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 16px; font: 14px/1.5 ui-sans-serif, system-ui, "Apple SD Gothic Neo", sans-serif; background: #f8fafc; color: #0f172a; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #64748b; font-size: 12px; margin-bottom: 16px; }
+  .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  label { font-size: 12px; color: #475569; margin-right: 4px; }
+  select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
+  button.primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  button:disabled { opacity: .5; cursor: default; }
+  #drop { border: 2px dashed #cbd5e1; border-radius: 10px; padding: 24px; text-align: center; color: #64748b; }
+  #drop.over { border-color: #4f46e5; background: #eef2ff; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; vertical-align: middle; }
+  th { background: #f1f5f9; font-size: 12px; }
+  td img { max-height: 80px; border: 1px solid #e2e8f0; border-radius: 4px; display: block; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stat { display: inline-block; margin-right: 18px; }
+  .stat b { font-size: 18px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: 8px; overflow: auto; max-height: 220px; font-size: 12px; white-space: pre-wrap; }
+  .jp { font-size: 16px; }
+</style>
+</head>
+<body>
+<h1>manga-ocr 실험실</h1>
+<div class="sub">0단계: 브라우저에서 도는가 · 얼마나 큰가 · 말풍선 하나에 몇 초 걸리는가. <b>정확도 판정용이 아닙니다</b>(그건 1단계).</div>
+
+<div class="panel">
+  <label>정밀도</label>
+  <select id="dtype">
+    <option value="_quantized">int8 양자화 (인코더 82.9 + 디코더 28.3 = 111MB)</option>
+    <option value="_q4">q4 양자화 (54.1 + 34.2 = 88MB)</option>
+    <option value="_fp16">fp16 (163.9 + 56.1 = 220MB, WebGPU용)</option>
+    <option value="">fp32 원본 (327.5 + 112 = 440MB)</option>
+  </select>
+  <label style="margin-left:10px">실행</label>
+  <select id="device">
+    <option value="wasm">WASM (CPU)</option>
+    <option value="webgpu">WebGPU</option>
+  </select>
+  <button id="load" class="primary" style="margin-left:10px">모델 불러오기</button>
+  <div id="loadStat" style="margin-top:10px"></div>
+</div>
+
+<div class="panel">
+  <div id="drop">만화 <b>페이지</b>를 끌어다 놓으면 YOLO로 말풍선을 잘라 OCR을 돌립니다. 말풍선 <b>크롭</b>을 직접 놓아도 됩니다.</div>
+  <div id="runStat" style="margin-top:10px"></div>
+</div>
+
+<div class="panel">
+  <table id="rows"><thead><tr>
+    <th style="width:120px">크롭</th><th>인식 결과</th><th class="num" style="width:80px">ms</th><th class="num" style="width:70px">토큰</th>
+  </tr></thead><tbody></tbody></table>
+</div>
+
+<div class="panel"><b style="font-size:12px">로그</b><pre id="log"></pre></div>
+
+<script type="module">
+import * as ort from 'onnxruntime-web/webgpu';
+
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
+ort.env.wasm.numThreads = 1;
+
+const $ = id => document.getElementById(id);
+const log = (...a) => { $('log').textContent += a.join(' ') + '\n'; $('log').scrollTop = 1e9; console.log(...a); };
+const fmtMB = b => (b / 1048576).toFixed(1) + 'MB';
+
+const REPO = 'https://huggingface.co/onnx-community/manga-ocr-base-ONNX/resolve/main';
+const VOCAB_URL = 'https://huggingface.co/kha-white/manga-ocr-base/resolve/main/vocab.txt';
+// generation_config.json 값
+const START_ID = 2, EOS_ID = 3, MAX_TOKENS = 64;
+
+let encoder = null, decoder = null, vocab = null, loadedBytes = 0;
+
+async function fetchWithProgress(url, label) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${label} 받기 실패 (${res.status})`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0, lastPct = -10;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    const pct = total ? Math.floor((got / total) * 100) : 0;
+    if (pct - lastPct >= 20) { lastPct = pct; log(`  ${label} ${pct}% (${fmtMB(got)})`); }
+  }
+  loadedBytes += got;
+  const buf = new Uint8Array(got);
+  let offset = 0;
+  for (const c of chunks) { buf.set(c, offset); offset += c.length; }
+  return buf;
+}
+
+$('load').onclick = async () => {
+  $('load').disabled = true;
+  const suffix = $('dtype').value;
+  const device = $('device').value;
+  loadedBytes = 0;
+  try {
+    const t0 = performance.now();
+    log(`단어 사전 받는 중…`);
+    const vocabText = await (await fetch(VOCAB_URL)).text();
+    vocab = vocabText.split('\n').map(s => s.replace(/\r$/, ''));
+    log(`  사전 ${vocab.length}개`);
+
+    log(`인코더 받는 중… (${suffix || 'fp32'})`);
+    const encBuf = await fetchWithProgress(`${REPO}/onnx/encoder_model${suffix}.onnx`, '인코더');
+    log(`디코더 받는 중…`);
+    const decBuf = await fetchWithProgress(`${REPO}/onnx/decoder_model${suffix}.onnx`, '디코더');
+
+    const tDl = performance.now();
+    log(`세션 생성 중… (${device})`);
+    const opts = { executionProviders: [device], graphOptimizationLevel: 'all' };
+    encoder = await ort.InferenceSession.create(encBuf, opts);
+    decoder = await ort.InferenceSession.create(decBuf, opts);
+    const t1 = performance.now();
+
+    log(`인코더 입력: ${encoder.inputNames} → 출력: ${encoder.outputNames}`);
+    log(`디코더 입력: ${decoder.inputNames} → 출력: ${decoder.outputNames}`);
+    $('loadStat').innerHTML =
+      `<span class="stat">받은 용량 <b>${fmtMB(loadedBytes)}</b></span>` +
+      `<span class="stat">다운로드 <b>${((tDl - t0) / 1000).toFixed(1)}초</b></span>` +
+      `<span class="stat">세션 생성 <b>${((t1 - tDl) / 1000).toFixed(1)}초</b></span>` +
+      `<span class="stat">실행 <b>${device}</b> / <b>${suffix || 'fp32'}</b></span>`;
+    log(`준비 완료: 총 ${((t1 - t0) / 1000).toFixed(1)}초`);
+  } catch (err) {
+    log('실패: ' + (err?.message ?? err));
+    console.error(err);
+  }
+  $('load').disabled = false;
+};
+
+/** manga-ocr 전처리: 흑백 → RGB → 224×224 → (x/255 - 0.5) / 0.5 */
+function preprocess(canvas) {
+  const size = 224;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(canvas, 0, 0, size, size);
+
+  const { data } = ctx.getImageData(0, 0, size, size);
+  const out = new Float32Array(3 * size * size);
+  const plane = size * size;
+  for (let i = 0; i < plane; i++) {
+    const gray = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+    const v = gray / 127.5 - 1;
+    out[i] = v; out[plane + i] = v; out[plane * 2 + i] = v;
+  }
+  return new ort.Tensor('float32', out, [1, 3, size, size]);
+}
+
+function decodeIds(ids) {
+  let text = '';
+  for (const id of ids) {
+    const token = vocab[id] ?? '';
+    if (!token || token.startsWith('[')) continue;
+    text += token.startsWith('##') ? token.slice(2) : token;
+  }
+  return text;
+}
+
+async function ocrOne(canvas) {
+  const tPre = performance.now();
+  const pixel = preprocess(canvas);
+  const tEnc0 = performance.now();
+  const encOut = await encoder.run({ [encoder.inputNames[0]]: pixel });
+  const hidden = encOut[encoder.outputNames[0]];
+  const encoderMs = performance.now() - tEnc0;
+  const preprocessMs = tEnc0 - tPre;
+
+  const ids = [START_ID];
+  for (let step = 0; step < MAX_TOKENS; step++) {
+    const inputIds = new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]);
+    const feeds = {};
+    for (const name of decoder.inputNames) {
+      if (name.includes('input_ids')) feeds[name] = inputIds;
+      else if (name.includes('encoder_hidden')) feeds[name] = hidden;
+    }
+    const out = await decoder.run(feeds);
+    const logits = out[decoder.outputNames[0]];
+    const vocabSize = logits.dims[2];
+    const offset = (ids.length - 1) * vocabSize;
+    let best = 0, bestVal = -Infinity;
+    for (let v = 0; v < vocabSize; v++) {
+      const val = logits.data[offset + v];
+      if (val > bestVal) { bestVal = val; best = v; }
+    }
+    if (best === EOS_ID) break;
+    ids.push(best);
+  }
+  const decoderMs = performance.now() - tEnc0 - encoderMs;
+  return { text: decodeIds(ids.slice(1)), tokens: ids.length - 1, preprocessMs, encoderMs, decoderMs };
+}
+
+const loadImage = src => new Promise((res, rej) => {
+  const img = new Image();
+  img.onload = () => res(img);
+  img.onerror = () => rej(new Error('이미지 로드 실패'));
+  img.src = src;
+});
+
+async function cropBubbles(img) {
+  const yolo = await import('/src/lib/yolo.ts');
+  const t0 = performance.now();
+  const boxes = (await yolo.detectSpeechBubbles(img)).filter(b => b.classId === 3);
+  log(`YOLO: 텍스트 박스 ${boxes.length}개 (${Math.round(performance.now() - t0)}ms)`);
+  const margin = 0.08;
+  return boxes.map(b => {
+    const mx = (b.xmax - b.xmin) * margin, my = (b.ymax - b.ymin) * margin;
+    const sx = Math.max(0, b.xmin - mx), sy = Math.max(0, b.ymin - my);
+    const sw = Math.min(img.naturalWidth, b.xmax + mx) - sx;
+    const sh = Math.min(img.naturalHeight, b.ymax + my) - sy;
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
+    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c;
+  });
+}
+
+async function runOcr(canvases) {
+  if (!encoder) { log('먼저 모델을 불러오세요.'); return; }
+  const tbody = $('rows').querySelector('tbody');
+  tbody.innerHTML = '';
+  const times = [];
+  const results = [];
+  for (let i = 0; i < canvases.length; i++) {
+    const url = canvases[i].toDataURL('image/png');
+    const t0 = performance.now();
+    let text = '', tokens = 0, split = '';
+    try {
+      const r = await ocrOne(canvases[i]);
+      text = r.text; tokens = r.tokens;
+      split = `인코더 ${Math.round(r.encoderMs)} / 디코더 ${Math.round(r.decoderMs)}`;
+      results.push(r);
+    } catch (err) { text = '실패: ' + (err?.message ?? err); console.error(err); }
+    const ms = performance.now() - t0;
+    times.push(ms);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><img src="${url}"></td><td class="jp"></td><td class="num">${Math.round(ms)}</td><td class="num">${tokens}</td>`;
+    tr.children[1].textContent = text;
+    tbody.appendChild(tr);
+    log(`#${i + 1} (${Math.round(ms)}ms = ${split}, ${tokens}토큰): ${text}`);
+  }
+  if (times.length) {
+    const sorted = [...times].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const avg = times.reduce((a, b) => a + b, 0) / times.length;
+    $('runStat').innerHTML =
+      `<span class="stat">말풍선 <b>${times.length}개</b></span>` +
+      `<span class="stat">중앙값 <b>${Math.round(median)}ms</b></span>` +
+      `<span class="stat">평균 <b>${Math.round(avg)}ms</b></span>` +
+      `<span class="stat">첫 장 <b>${Math.round(times[0])}ms</b></span>` +
+      `<span class="stat">페이지 합계 <b>${(times.reduce((a, b) => a + b, 0) / 1000).toFixed(1)}초</b></span>`;
+    const sum = k => results.reduce((a, r) => a + r[k], 0) / Math.max(1, results.length);
+    $('runStat').innerHTML += `<div style="margin-top:6px;color:#64748b;font-size:12px">평균 내역 — 전처리 ${Math.round(sum('preprocessMs'))}ms · 인코더 ${Math.round(sum('encoderMs'))}ms · 디코더 ${Math.round(sum('decoderMs'))}ms (토큰 ${(results.reduce((a, r) => a + r.tokens, 0) / Math.max(1, results.length)).toFixed(1)}개)</div>`;
+    window.__lastResults = results;
+  }
+}
+
+const drop = $('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', async e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  if (!files.length) return;
+  const images = await Promise.all(files.map(f => loadImage(URL.createObjectURL(f))));
+  let canvases;
+  if (images.length === 1 && images[0].naturalHeight > 600) {
+    log(`페이지로 판단 (${images[0].naturalWidth}×${images[0].naturalHeight})`);
+    canvases = await cropBubbles(images[0]);
+  } else {
+    canvases = images.map(img => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      return c;
+    });
+  }
+  await runOcr(canvases);
+});
+
+window.__lab = { runOcr, cropBubbles, loadImage, ocrOne, preprocess, ort,
+  get encoder() { return encoder; }, get decoder() { return decoder; },
+  get ready() { return !!encoder; } };
+log('준비됨. 모델을 불러온 뒤 이미지를 끌어다 놓으세요.');
+</script>
+</body>
+</html>
