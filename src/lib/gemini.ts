@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { buildGlossaryInstruction, parseJsonResponse } from './prompt';
 import { toFriendlyError, withRetry } from './retry';
+import { recordUsage } from './usageLog';
 
 export interface TranslationResult {
   id: string;
@@ -31,14 +32,17 @@ type GenerateContentRequest = Parameters<GoogleGenAI['models']['generateContent'
 const modelNameFor = (geminiVersion: GeminiVersion) => (geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash');
 
 /** 429(요청 한도)·5xx·네트워크 오류는 지수 백오프로 재시도하고, 최종 실패는 화면에 보여줄 안내로 바꿉니다. */
-async function generateContent(apiKey: string, request: GenerateContentRequest) {
+async function generateContent(apiKey: string, request: GenerateContentRequest, label = '요청') {
   const ai = new GoogleGenAI({ apiKey });
   try {
-    return await withRetry(() => ai.models.generateContent(request), {
+    const response = await withRetry(() => ai.models.generateContent(request), {
       onRetry: ({ attempt, delayMs, error }) => {
         console.warn(`Gemini 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
     });
+    const usage = response.usageMetadata;
+    recordUsage('gemini', label, usage?.promptTokenCount ?? 0, (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0));
+    return response;
   } catch (error) {
     throw toFriendlyError(error, 'Gemini');
   }
@@ -105,7 +109,7 @@ ${glossaryInstruction}${context ?? ''}
       },
       temperature: 0.35,
     }
-  });
+  }, '페이지 전체 번역');
 
   const text = response.text;
   if (!text) throw new Error("No response from Gemini API");
@@ -134,34 +138,62 @@ Respond ONLY with the translated Korean text string, nothing else. Do not includ
     model: modelNameFor(geminiVersion),
     contents: prompt,
     config: { temperature: 0.7 }
-  });
+  }, '문장 재번역');
 
   return response.text?.trim() || "번역 실패";
 }
 
+export interface GridRequestOptions {
+  /** 원본 페이지 전체 이미지 (상황·표정 파악용). Gemini가 번역까지 할 때만 의미가 있어, OCR만 맡길 때는 생략해 토큰을 아낍니다. */
+  fullBase64Image?: string;
+  /** true면 번역 없이 원문만 읽습니다. (번역은 OpenAI가 담당 — 전체 페이지 이미지와 번역 출력 토큰을 아낌) */
+  ocrOnly?: boolean;
+  glossary?: Record<string, string>;
+  context?: string;
+}
+
+/** 말풍선 격자 이미지를 읽습니다. ocrOnly면 원문만, 아니면 번역까지 함께 돌려줍니다. */
 export async function translateGridImage(
   apiKey: string,
-  fullBase64Image: string,
   gridBase64Image: string,
   mimeType: string,
   expectedCells: number,
   geminiVersion: GeminiVersion = '3.6',
-  glossary?: Record<string, string>,
-  context?: string,
+  options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const glossaryInstruction = buildGlossaryInstruction(glossary);
+  const { fullBase64Image, ocrOnly = false, glossary, context } = options;
+  // OCR만 맡길 때는 단어장·맥락이 필요 없음 (번역을 하지 않으므로)
+  const glossaryInstruction = ocrOnly ? '' : buildGlossaryInstruction(glossary);
+  const contextInstruction = ocrOnly ? '' : (context ?? '');
 
-  const prompt = `# Role & Objective
+  const ocrPrompt = `# Role & Objective
+너는 일본 만화 원문 인식(OCR) 전문가야.
+첨부한 이미지는 만화 페이지에서 대사가 있는 말풍선만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지야.
+각 칸(Cell) 왼쪽 위에는 빨간색 글씨로 고유 번호(예: #1, #2)가 적혀 있어.
+각 칸에 적힌 일본어 원문을 정확히 읽어. **번역은 하지 마.**
+
+# 인식 규칙
+- 세로쓰기 텍스트는 오른쪽 열에서 왼쪽 열로, 각 열은 위에서 아래로 읽어 하나의 문장으로 완성해.
+- 장음 부호(ー), 촉음(っ), 손글씨 오탈자를 문맥에 맞게 보정해.
+- 한자(Kanji) 뒤에는 괄호 안에 요미가나를 적어. 예: 漢字(かんじ)
+- 반복되는 점("……")은 무시해.
+
+# System Output Constraints (절대 규칙)
+1. **JSON Only**: 반드시 JSON 배열(Array) 형식으로만 응답해.
+2. **JSON Schema**: 각 객체는 "id"(칸 번호, 숫자형)와 "original_text"(일본어 원문) 두 개의 key만 가져야 해.
+3. 1부터 ${expectedCells}까지 빠짐없이 출력해. 글자가 없는 칸은 빈 문자열("")로 둬.`;
+
+  const translatePrompt = `# Role & Objective
 너는 최고 수준의 일본 만화 번역가야.
-두 장의 이미지를 첨부했어:
+${fullBase64Image ? `두 장의 이미지를 첨부했어:
 1. 원본 만화 페이지 전체 이미지 (문맥, 상황, 인물 표정 파악용)
-2. 해당 페이지에서 대사가 있는 말풍선들만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지.
+2. 해당 페이지에서 대사가 있는 말풍선들만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지.` : `첨부한 이미지는 만화 페이지에서 대사가 있는 말풍선들만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지야.`}
 
 크롭 이미지의 각 칸(Cell) 왼쪽 위에는 빨간색 글씨로 고유 번호(예: #1, #2)가 적혀 있어.
-너의 임무는 원본 이미지를 통해 상황을 파악한 뒤, 크롭 이미지의 각 칸에 적힌 텍스트를 정확히 인식(OCR)하고 한국어로 번역하는 거야.
-${glossaryInstruction}${context ?? ''}
+너의 임무는 각 칸에 적힌 텍스트를 정확히 인식(OCR)하고 한국어로 번역하는 거야.
+${glossaryInstruction}${contextInstruction}
 # Translation Guidelines
-- 직역을 피하고, 원본 이미지의 인물 표정과 상황에 어울리는 한국어 구어체로 번역해.
+- 직역을 피하고, 인물의 표정과 상황에 어울리는 한국어 구어체로 번역해.
 - 캐릭터의 말투를 문맥에 맞게 살려줘.
 - 세로쓰기 텍스트는 오른쪽 열에서 왼쪽 열로, 각 열은 위에서 아래로 읽어 하나의 문장으로 완성해.
 - 한자(Kanji) 뒤에는 괄호 안에 요미가나를 적어.
@@ -175,38 +207,37 @@ ${glossaryInstruction}${context ?? ''}
 
 결과 JSON 배열의 길이는 정확히 ${expectedCells}개여야 해. 빈 칸이더라도 빈 문자열("")을 넣어서라도 맞춰.`;
 
+  const parts = [
+    { text: ocrOnly ? ocrPrompt : translatePrompt },
+    ...(fullBase64Image && !ocrOnly ? [{ inlineData: { data: fullBase64Image, mimeType } }] : []),
+    { inlineData: { data: gridBase64Image, mimeType: 'image/jpeg' } },
+  ];
+
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),
-    contents: [
-      { role: 'user', parts: [
-        { text: prompt },
-        { inlineData: { data: fullBase64Image, mimeType } },
-        { inlineData: { data: gridBase64Image, mimeType: 'image/jpeg' } }
-      ]}
-    ],
+    contents: [{ role: 'user', parts }],
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.ARRAY,
         items: {
           type: Type.OBJECT,
-          properties: {
-            id: { type: Type.INTEGER },
-            original_text: { type: Type.STRING },
-            translated_text: { type: Type.STRING }
-          },
-          required: ['id', 'original_text', 'translated_text']
-        }
+          properties: ocrOnly
+            ? { id: { type: Type.INTEGER }, original_text: { type: Type.STRING } }
+            : { id: { type: Type.INTEGER }, original_text: { type: Type.STRING }, translated_text: { type: Type.STRING } },
+          required: ocrOnly ? ['id', 'original_text'] : ['id', 'original_text', 'translated_text'],
+        },
       },
       temperature: 0.35,
-    }
-  });
+    },
+  }, ocrOnly ? '격자 원문 인식(OCR)' : '격자 번역');
 
   const text = response.text;
   if (!text) throw new Error("No response from Gemini API");
 
   try {
-    return parseJsonResponse<GridTranslationResult[]>(text);
+    const results = parseJsonResponse<GridTranslationResult[]>(text);
+    return ocrOnly ? results.map(r => ({ ...r, translated_text: '' })) : results;
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }
@@ -240,6 +271,6 @@ ${pairs.map(p => `- ${p.original || '(원문 없음)'} → ${p.translated}`).joi
     model: modelNameFor(geminiVersion),
     contents: prompt,
     config: { temperature: 0.2 },
-  });
+  }, '작품 노트 정리');
   return response.text?.trim() ?? '';
 }

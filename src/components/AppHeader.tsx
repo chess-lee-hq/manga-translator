@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { BookOpen, Bot, Cloud, Cpu, Download, FlaskConical, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, OpenAiVersion, Provider, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
@@ -33,6 +33,9 @@ interface AppHeaderProps {
   onGeminiVersionChange: (version: GeminiVersion) => void;
   openAiVersion: OpenAiVersion;
   onOpenAiVersionChange: (version: OpenAiVersion) => void;
+  /** [임시] OpenAI 비전 단독 모드. 품질 비교가 끝나면 이 토글은 제거합니다. */
+  openAiVisionOnly: boolean;
+  onToggleOpenAiVisionOnly: () => void;
   apiKey: string;
   onApiKeyChange: (value: string) => void;
 }
@@ -46,7 +49,7 @@ export function AppHeader(props: AppHeaderProps) {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, onOpenWorkNotes,
     onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
-    openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
+    openAiVersion, onOpenAiVersionChange, openAiVisionOnly, onToggleOpenAiVisionOnly, apiKey, onApiKeyChange,
   } = props;
   const hasImages = imageCount > 0;
 
@@ -205,6 +208,17 @@ export function AppHeader(props: AppHeaderProps) {
             <option value="terra">Terra</option>
           </select>
         </div>
+
+        {/* [임시] Gemini 없이 OpenAI가 이미지를 직접 읽는 실험 모드. 품질 비교가 끝나면 제거 예정 */}
+        {provider === 'openai' && (
+          <button
+            onClick={onToggleOpenAiVisionOnly}
+            title={'[테스트] OpenAI 비전 단독: 켜면 Gemini를 전혀 호출하지 않고 OpenAI가 말풍선 이미지를 직접 읽어 번역까지 합니다.\n끄면 원문 인식은 Gemini, 번역은 OpenAI가 맡습니다.\n※ 이미 번역된 페이지는 저장된 결과를 그대로 보여주므로, 같은 페이지로 비교하려면 "기록 삭제"로 캐시를 지우세요.'}
+            className={`${actionButton} ${openAiVisionOnly ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-500 border-gray-300'}`}
+          >
+            <FlaskConical size={14} /> <span className={WIDE_LABEL}>비전 단독</span> {openAiVisionOnly ? 'ON' : 'OFF'}
+          </button>
+        )}
 
         <div className="relative flex items-center shrink-0">
           <Key size={14} className="text-gray-400 absolute left-2 pointer-events-none" />

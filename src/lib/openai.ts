@@ -1,14 +1,15 @@
-import type { RawTranslationResult } from './gemini';
+import type { GridTranslationResult, RawTranslationResult } from './gemini';
 import { buildGlossaryInstruction, parseJsonResponse } from './prompt';
 import { toFriendlyError, withRetry } from './retry';
+import { recordUsage } from './usageLog';
 
 type OpenAiVersion = 'sol' | 'terra';
 type HttpError = Error & { status?: number; retryAfterMs?: number };
 
 /** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
-async function createChatCompletion(apiKey: string, body: Record<string, unknown>): Promise<any> {
+async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청'): Promise<any> {
   try {
-    return await withRetry(async () => {
+    const response = await withRetry(async () => {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -33,8 +34,66 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
         console.warn(`OpenAI 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
     });
+    recordUsage('openai', label, response?.usage?.prompt_tokens ?? 0, response?.usage?.completion_tokens ?? 0);
+    return response;
   } catch (error) {
     throw toFriendlyError(error, 'OpenAI');
+  }
+}
+
+/**
+ * [실험] 말풍선 격자 이미지를 OpenAI에게 직접 보여주고 원문 인식(OCR)과 번역을 한 번에 맡깁니다.
+ * Gemini를 거치지 않는 경로라서, 비교 테스트가 끝나면 채택 여부에 따라 이 함수를 정식화하거나 삭제합니다.
+ */
+export async function translateGridImageOpenAI(
+  openAiVersion: OpenAiVersion,
+  apiKey: string,
+  gridDataUrl: string,
+  expectedCells: number,
+  glossary?: Record<string, string>,
+  context?: string,
+): Promise<GridTranslationResult[]> {
+  // 원문을 아직 모르므로 단어장은 전체를 넣음
+  const glossaryInstruction = buildGlossaryInstruction(glossary);
+
+  const prompt = `You are a professional manga translator and an expert at reading Japanese comic lettering.
+The attached image is a grid: each cell is a speech bubble cropped from one manga page, stitched together.
+Each cell has a red index number (e.g. #1, #2) printed at its top-left corner.
+For every cell, read the Japanese text exactly, then translate it into highly natural, conversational Korean.
+${glossaryInstruction}${context ?? ''}
+# Reading rules
+- Vertical text runs right-to-left by column, top-to-bottom within a column; join it into one sentence.
+- Correct hand-lettering quirks (long vowel ー, small tsu っ) using context.
+- After a kanji, add its reading in parentheses. Example: 漢字(かんじ)
+- Ignore runs of dots ("……").
+
+# Translation rules
+- Avoid literal translation; match the character's tone and the mood of the scene, like a professional Korean comic.
+
+# Output constraints
+Respond ONLY with a JSON object having a single key "cells" mapping to an array of objects:
+{ "id": [the red index number as an integer], "original_text": "[Japanese source text]", "translated_text": "[natural Korean translation]" }
+The array MUST contain exactly ${expectedCells} objects, ids 1 through ${expectedCells}, in order. For a cell with no readable text use empty strings.`;
+
+  const response = await createChatCompletion(apiKey, {
+    model: `gpt-5.6-${openAiVersion}`,
+    messages: [
+      { role: 'user', content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: gridDataUrl, detail: 'high' } },
+      ] },
+    ],
+    response_format: { type: 'json_object' },
+  }, '격자 비전 인식+번역');
+
+  const content = response?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('No response from OpenAI API');
+
+  try {
+    const parsed = parseJsonResponse<{ cells?: GridTranslationResult[] }>(content);
+    return parsed.cells ?? [];
+  } catch (error: any) {
+    throw new Error('Failed to parse JSON response: ' + error.message);
   }
 }
 
@@ -78,7 +137,7 @@ Each object in the array MUST match this format:
       { role: 'user', content: JSON.stringify(textPayload) }
     ],
     response_format: { type: 'json_object' }
-  });
+  }, '원문 번역');
 
   const content = response?.choices?.[0]?.message?.content;
   if (!content) throw new Error("No response from OpenAI API");
@@ -113,7 +172,7 @@ Respond ONLY with the translated Korean text string, nothing else. Do not includ
     messages: [
       { role: 'user', content: prompt }
     ]
-  });
+  }, '문장 재번역');
 
   return response?.choices?.[0]?.message?.content?.trim() || "번역 실패";
 }

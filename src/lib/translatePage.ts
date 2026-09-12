@@ -1,7 +1,7 @@
 import type { Box2d, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import { createGridImageFromBoxes, loadImage, type GridCellInfo } from './imageUtils';
-import { retranslateTextOpenAI, translateMangaImageOpenAI } from './openai';
+import { retranslateTextOpenAI, translateGridImageOpenAI, translateMangaImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { sanitizeResults } from './results';
 import { detectSpeechBubbles } from './yolo';
@@ -14,13 +14,13 @@ function requireKeys(settings: TranslationSettings, purpose: 'page' | 'region') 
     if (!settings.googleKey) throw new Error('Google API 키를 먼저 입력해주세요.');
     return;
   }
-  // OpenAI 모드도 원문 인식(OCR)은 Gemini가 담당
-  if (!settings.googleKey) {
-    throw new Error(purpose === 'page'
-      ? 'OpenAI 모드를 사용하려면 말풍선 위치 인식을 위한 Google API 키도 반드시 입력되어야 합니다.'
-      : '새 박스 인식을 위해 Google API 키가 반드시 필요합니다.');
-  }
   if (!settings.openaiKey) throw new Error('OpenAI API 키를 먼저 입력해주세요.');
+  // 비전 단독 모드가 아니면 원문 인식(OCR)은 Gemini가 담당하므로 Google 키도 필요
+  if (!settings.openAiVisionOnly && !settings.googleKey) {
+    throw new Error(purpose === 'page'
+      ? 'OpenAI 모드는 원문 인식(OCR)을 Gemini가 담당하므로 Google API 키도 함께 필요합니다. ("OpenAI 비전 단독" 토글을 켜면 Google 키 없이 쓸 수 있습니다.)'
+      : '새 박스의 원문 인식을 위해 Google API 키가 필요합니다. ("OpenAI 비전 단독" 토글을 켜면 Google 키 없이 쓸 수 있습니다.)');
+  }
 }
 
 function toBox2d(box: BoundingBox, width: number, height: number): Box2d {
@@ -45,6 +45,8 @@ export function mapGridToResults(translations: GridTranslationResult[], cells: G
 export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
   requireKeys(settings, 'page');
   const { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, context } = settings;
+  // [실험] 켜면 Gemini 호출이 0건이 되고 OpenAI가 이미지를 직접 읽음
+  const visionOnly = provider === 'openai' && !!settings.openAiVisionOnly;
   const base64Data = base64Of(img.src);
   const imgElement = await loadImage(img.src);
   const textBoxes = sortTextByReadingOrder(await detectSpeechBubbles(imgElement));
@@ -53,6 +55,11 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
   if (textBoxes.length === 0) {
     // 말풍선을 찾지 못하면 페이지 전체 OCR로 대체
     console.warn('No text bubbles detected by YOLO, falling back to full page OCR.');
+    if (visionOnly) {
+      // 말풍선 위치를 못 찾으면 격자를 만들 수 없고, 이 모드에는 페이지 전체를 좌표까지 읽어줄 경로가 없음
+      console.warn('비전 단독 모드: 말풍선을 찾지 못해 이 페이지는 건너뜁니다.');
+      return [];
+    }
     if (provider === 'google') {
       rawResults = await translateMangaImage(googleKey, base64Data, img.mimeType, geminiVersion, glossary, context);
     } else {
@@ -62,14 +69,24 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
   } else {
     const gridResult = await createGridImageFromBoxes(imgElement, textBoxes);
     if (!gridResult) return [];
-    const gridTranslations = await translateGridImage(
-      googleKey, base64Data, base64Of(gridResult.dataUrl), img.mimeType, gridResult.cells.length, geminiVersion,
-      provider === 'google' ? glossary : undefined,
-      provider === 'google' ? context : undefined,
-    );
+    const cellCount = gridResult.cells.length;
+
+    const gridTranslations = visionOnly
+      ? await translateGridImageOpenAI(openAiVersion, openaiKey, gridResult.dataUrl, cellCount, glossary, context)
+      : await translateGridImage(googleKey, base64Of(gridResult.dataUrl), img.mimeType, cellCount, geminiVersion, {
+        // Gemini가 번역까지 맡을 때만 페이지 전체 이미지·단어장·맥락이 의미가 있음.
+        // OpenAI 모드에서는 Gemini에게 원문 읽기만 맡겨 입력·출력 토큰을 아낌.
+        fullBase64Image: provider === 'google' ? base64Data : undefined,
+        ocrOnly: provider === 'openai',
+        glossary: provider === 'google' ? glossary : undefined,
+        context: provider === 'google' ? context : undefined,
+      });
+
     rawResults = mapGridToResults(gridTranslations, gridResult.cells, imgElement.width, imgElement.height);
-    // OpenAI 모드: Gemini가 인식한 원문을 OpenAI가 다시 번역
-    if (provider === 'openai') rawResults = await translateMangaImageOpenAI(openAiVersion, openaiKey, rawResults, glossary, context);
+    // Gemini가 인식한 원문을 OpenAI가 번역 (비전 단독 모드는 이미 번역까지 끝난 상태)
+    if (provider === 'openai' && !visionOnly) {
+      rawResults = await translateMangaImageOpenAI(openAiVersion, openaiKey, rawResults, glossary, context);
+    }
   }
 
   const results = sanitizeResults(rawResults) ?? []; // 좌표가 깨진 응답 제거 + id 부여
@@ -92,11 +109,19 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
   const gridResult = await createGridImageFromBoxes(imgElement, [{ xmin, ymin, xmax, ymax, classId: 3, confidence: 1 }]);
   if (!gridResult) throw new Error('크롭 실패');
 
-  const [cell] = await translateGridImage(googleKey, base64Of(img.src), base64Of(gridResult.dataUrl), img.mimeType, 1, geminiVersion, glossary, context);
+  const visionOnly = provider === 'openai' && !!settings.openAiVisionOnly;
+  const [cell] = visionOnly
+    ? await translateGridImageOpenAI(openAiVersion, openaiKey, gridResult.dataUrl, 1, glossary, context)
+    : await translateGridImage(googleKey, base64Of(gridResult.dataUrl), img.mimeType, 1, geminiVersion, {
+      fullBase64Image: base64Of(img.src),
+      ocrOnly: provider === 'openai',
+      glossary: provider === 'google' ? glossary : undefined,
+      context: provider === 'google' ? context : undefined,
+    });
   if (!cell) return { originalText: '...', translatedText: '' };
 
   const originalText = cell.original_text || '...';
-  if (provider === 'google') return { originalText, translatedText: cell.translated_text };
+  if (provider === 'google' || visionOnly) return { originalText, translatedText: cell.translated_text };
 
   const hasText = originalText !== '...' && originalText.trim() !== '';
   return {

@@ -265,6 +265,49 @@ src/
 
 ---
 
+## 추가 수정 7 — Gemini 토큰 절감 · [임시] OpenAI 비전 단독 테스트 토글
+
+### 왜
+OpenAI 모드에서는 번역을 OpenAI가 하는데도 Gemini에게 **전체 페이지 이미지 + 격자 이미지 2장**을 보내고 **번역문까지** 받아 버리고 있었다(받은 번역문은 쓰지 않고 버림). 또한 OpenAI가 이미지를 직접 읽을 수 있으므로 Gemini 없이도 되는지 실제 품질로 비교해볼 필요가 있었다.
+
+| 변경 | 내용 | 파일 |
+|---|---|---|
+| ① Gemini 토큰 절감 | OpenAI 모드에서는 Gemini에게 **격자 이미지 1장만** 보내고 **원문 읽기(OCR)만** 요청. 전체 페이지 이미지·단어장·맥락 지시문을 빼고, 응답 스키마에서도 `translated_text`를 제거해 출력 토큰도 줄임. Gemini 모드(제공자=Gemini)는 이전과 완전히 동일 | `lib/gemini.ts`, `lib/translatePage.ts` |
+| ② [임시] 비전 단독 토글 | 헤더에 **🧪 비전 단독 ON/OFF** (제공자가 OpenAI일 때만 보임). 켜면 **Gemini 호출 0건**, OpenAI(`gpt-5.6-sol`/`terra`)가 격자 이미지를 직접 읽어 OCR+번역을 한 번에 처리. 이 모드에서는 Google API 키가 필요 없음 | `components/AppHeader.tsx`, `App.tsx`, `types.ts`, `lib/openai.ts`, `lib/translatePage.ts` |
+| 토큰 사용량 로그 | 모든 Gemini·OpenAI 호출의 입력·출력 토큰을 콘솔(`[tokens] …`)에 남기고 누적치를 `window.__mangaTokenUsage`로 확인 가능. 세 방식의 실제 소모량을 직접 비교하기 위한 장치 | `lib/usageLog.ts`(신규) |
+| 안내 문구 수정 | "말풍선 위치 인식을 위한 Google API 키" → 말풍선 **위치**는 YOLO가 찾고 Gemini는 **원문 읽기(OCR)** 담당이라는 사실에 맞게 수정. 비전 단독 토글 안내도 함께 | `lib/translatePage.ts` |
+
+### 세 가지 경로 정리
+| 설정 | Gemini | OpenAI |
+|---|---|---|
+| 제공자=Gemini | 전체 페이지+격자 2장 → OCR+번역 | 호출 없음 |
+| 제공자=OpenAI, 비전 단독 OFF | 격자 1장 → **OCR만** | 원문 텍스트 → 번역 |
+| 제공자=OpenAI, 비전 단독 **ON** | **호출 없음** | 격자 1장 → OCR+번역 |
+
+### 새 저장 키
+- `manga-translator-openai-vision-only` (`'true'`/`'false'`) — **임시 실험용**. 비교가 끝나면 이 키와 관련 코드를 함께 제거
+
+### 비교 테스트 방법
+1. 제공자를 **OpenAI**로 두고 페이지를 번역 → 콘솔에서 `[tokens]` 확인
+2. 헤더 **🧪 비전 단독**을 ON → **기록 삭제**로 그 페이지 캐시를 지워야 같은 페이지가 다시 번역됨(이미 번역된 페이지는 저장된 결과를 그대로 보여줌)
+3. 두 결과의 번역 품질·원문 인식 정확도·토큰 소모량을 비교
+
+### 되돌리기 (토글 제거 시 손댈 곳)
+- `openAiVisionOnly` / `visionOnly` / `OPENAI_VISION_ONLY_STORAGE_KEY` / `translateGridImageOpenAI` / `FlaskConical` 를 검색하면 실험 코드 전부가 나옴
+- ①만 남기려면 위 항목을 지우고 `translateGridImage`의 `ocrOnly` 경로는 유지
+- ②를 정식 채택하려면 `translateGridImageOpenAI`를 기본 경로로 올리고 `lib/gemini.ts`의 격자 함수와 Google 키 입력을 정리
+
+### 검증
+- `tsc -b` 통과, `vitest` **96개** 통과(토큰 기록 2개, Gemini 격자 요청 3개, OpenAI 비전 2개 추가), `oxlint` 경고 12개로 이전과 동일, `vite build` 통과
+- 브라우저(가짜 API 목, 말풍선 6개 페이지):
+  - OpenAI 모드 OFF → Gemini 요청에 이미지 **1장**(격자)만 담기고 프롬프트에 "번역은 하지 마", 응답 스키마 `[id, original_text]` 확인. 이어서 OpenAI에 텍스트 전용 번역 요청 1건
+  - 비전 단독 ON → **Gemini 요청 0건**, OpenAI 요청에 `image_url`(격자) 1장이 담기고 칸 번호대로 6개 말풍선에 번역이 들어감
+  - 비전 단독 ON + Google 키 없음 → 정상 번역. OFF + Google 키 없음 → "Google API 키도 함께 필요합니다 (비전 단독 토글을 켜면…)" 안내
+  - 콘솔 오류 0건, 토큰 누적치가 `window.__mangaTokenUsage`에 기록됨
+- 테스트 후 localStorage·IndexedDB 정리, QA 서버(5299) 종료
+
+---
+
 ## 이번 패치 범위 밖 (다음 후보)
 - 템플릿 잔재 정리: `src/App.css`, `src/assets/*`, 템플릿 README, `test-lint.json`, `index.html`의 `lang="en"`
 - 배포물에 WASM 27.8MB가 들어가지만 실제로는 CDN에서 받음 → 한쪽으로 통일, WebGPU·모델 양자화 검토

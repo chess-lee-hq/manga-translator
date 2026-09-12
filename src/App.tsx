@@ -38,6 +38,8 @@ const NOTES_REFRESH_PAGES = 10;
 const NOTES_SOURCE_PAIRS = 60;
 const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
+/** [임시] OpenAI 비전 단독 실험 토글. 품질 비교가 끝나면 이 키와 관련 코드를 함께 제거합니다. */
+const OPENAI_VISION_ONLY_STORAGE_KEY = 'manga-translator-openai-vision-only';
 
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
@@ -65,6 +67,7 @@ function App() {
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const [contextFirst, setContextFirst] = useState(() => localStorage.getItem(CONTEXT_FIRST_STORAGE_KEY) === 'true');
+  const [openAiVisionOnly, setOpenAiVisionOnly] = useState(() => localStorage.getItem(OPENAI_VISION_ONLY_STORAGE_KEY) === 'true');
   const notesBusyRef = useRef(false);
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +83,7 @@ function App() {
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
   );
 
-  const settings: TranslationSettings = { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary };
+  const settings: TranslationSettings = { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, openAiVisionOnly };
 
   const visibleIndices = useMemo(() => getVisibleIndices(allImages, currentPageIndex, viewMode), [allImages, currentPageIndex, viewMode]);
   const translationQueue = useMemo(
@@ -159,6 +162,15 @@ function App() {
     setContextFirst(enabled);
     try {
       localStorage.setItem(CONTEXT_FIRST_STORAGE_KEY, String(enabled));
+    } catch (err) {
+      console.warn('설정 저장 실패:', err);
+    }
+  };
+
+  const updateOpenAiVisionOnly = (enabled: boolean) => {
+    setOpenAiVisionOnly(enabled);
+    try {
+      localStorage.setItem(OPENAI_VISION_ONLY_STORAGE_KEY, String(enabled));
     } catch (err) {
       console.warn('설정 저장 실패:', err);
     }
@@ -531,6 +543,8 @@ function App() {
         onGeminiVersionChange={setGeminiVersion}
         openAiVersion={openAiVersion}
         onOpenAiVersionChange={setOpenAiVersion}
+        openAiVisionOnly={openAiVisionOnly}
+        onToggleOpenAiVisionOnly={() => updateOpenAiVisionOnly(!openAiVisionOnly)}
         apiKey={provider === 'google' ? googleKey : openaiKey}
         onApiKeyChange={handleApiKeyChange}
       />
