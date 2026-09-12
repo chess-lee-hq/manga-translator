@@ -16,7 +16,7 @@ import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
 import { useTranslationQueue } from './hooks/useTranslationQueue';
 import { resolveDisplayMode } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
-import { createMangaZip } from './lib/drive';
+import { createMangaZip, defaultBackupFilename } from './lib/drive';
 import { summarizeWorkNotes } from './lib/gemini';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
@@ -50,6 +50,8 @@ function App() {
 
   const [allImages, setAllImages] = useState<UploadedImage[]>([]);
   const [loadedFilename, setLoadedFilename] = useState<string | null>(null);
+  // 드라이브에 저장(덮어쓰기)할 파일 이름. 불러온 이름·마지막으로 저장한 이름을 기억함
+  const [driveFileName, setDriveFileName] = useState<string | null>(null);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('2page');
   const [scriptStyle, setScriptStyle] = useState<ScriptStyle>('side');
@@ -99,12 +101,14 @@ function App() {
   const applyRestoredSession = (session: RestoredSession) => {
     setAllImages(session.images);
     setLoadedFilename(session.loadedFilename);
+    setDriveFileName(session.driveFileName);
     setCurrentPageIndex(session.currentPageIndex);
   };
 
   const { isRestoring } = useSessionPersistence({
     images: allImages,
     loadedFilename,
+    driveFileName,
     currentPageIndex,
     onRestore: applyRestoredSession,
     isBusy: !!exportProgress,
@@ -178,6 +182,8 @@ function App() {
         mergeGlossary(result.glossary);
         info.push(`단어장 ${glossaryCount}개 항목을 현재 단어장에 합쳤습니다.`);
       }
+      // 드라이브에 저장할 때는 이 백업 이름을 기본값으로 써서 같은 파일을 계속 덮어쓰게 함
+      if (result.archiveFileName) setDriveFileName(result.archiveFileName);
       if (result.notes?.trim()) {
         saveNotes(result.notes.trim(), 0);
         info.push('작품 노트도 함께 불러왔습니다.');
@@ -210,9 +216,11 @@ function App() {
 
   const drive = useDriveSync({
     buildBackupZip: () => createMangaZip(allImages, translationCache, currentPageIndex, glossary, notes?.text),
-    defaultFilename: () => (loadedFilename ? `${loadedFilename}.zip` : `Manga_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`),
+    defaultFilename: () => defaultBackupFilename(driveFileName, loadedFilename),
+    onSaved: filename => setDriveFileName(filename),
     restoreBackup: async (zipBlob, filename) => {
-      const { warnings, info } = applyImport(await importBackupZip(zipBlob, stripArchiveExtension(filename)));
+      const restored = await importBackupZip(zipBlob, stripArchiveExtension(filename));
+      const { warnings, info } = applyImport({ ...restored, archiveFileName: filename });
       return [warnings.length > 0 ? '불러왔지만 일부 문제가 있습니다.' : '성공적으로 불러왔습니다!', ...warnings, ...info].join('\n');
     },
   });
@@ -469,6 +477,7 @@ function App() {
     if (!confirm('현재 작업을 닫고 첫 화면으로 돌아갈까요?\n(번역 기록과 단어장은 남아 있어 같은 파일을 다시 열면 이어집니다)')) return;
     setAllImages([]);
     setLoadedFilename(null);
+    setDriveFileName(null);
     setCurrentPageIndex(0);
     setHoveredBubble(null);
     setIsEditingBoxes(false);
@@ -503,6 +512,7 @@ function App() {
         onExportAll={handleExportAll}
         onExportJSON={handleExportJSON}
         isDriveSyncing={drive.isDriveSyncing}
+        driveTargetName={driveFileName}
         onSaveToDrive={drive.saveToDrive}
         onOpenGlossary={() => setGlossaryDraft({ original: '', translated: '' })}
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}

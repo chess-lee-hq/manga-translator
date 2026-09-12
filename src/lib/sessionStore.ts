@@ -22,6 +22,8 @@ export interface SessionMeta {
   /** 페이지 순서 (StoredPage.key) */
   order: string[];
   loadedFilename: string | null;
+  /** 구글 드라이브에 저장(덮어쓰기)할 파일 이름 */
+  driveFileName?: string | null;
   currentPageIndex: number;
   savedAt: number;
 }

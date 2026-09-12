@@ -11,12 +11,15 @@ const META_SAVE_DELAY_MS = 300;
 export interface RestoredSession {
   images: UploadedImage[];
   loadedFilename: string | null;
+  driveFileName: string | null;
   currentPageIndex: number;
 }
 
 interface Options {
   images: UploadedImage[];
   loadedFilename: string | null;
+  /** 구글 드라이브에 저장할 파일 이름 (새로고침해도 유지) */
+  driveFileName: string | null;
   currentPageIndex: number;
   onRestore: (session: RestoredSession) => void;
   /** true인 동안(예: ZIP 내보내기 중)에는 페이지 이탈 시 경고 */
@@ -27,7 +30,7 @@ interface Options {
  * 이미지와 읽던 위치를 IndexedDB에 저장해 새로고침해도 작업을 이어갑니다.
  * IndexedDB를 쓸 수 없는 환경(일부 사생활 보호 모드)에서는 예전처럼 이탈 시 경고만 합니다.
  */
-export function useSessionPersistence({ images, loadedFilename, currentPageIndex, onRestore, isBusy }: Options) {
+export function useSessionPersistence({ images, loadedFilename, driveFileName, currentPageIndex, onRestore, isBusy }: Options) {
   const [isRestoring, setIsRestoring] = useState(true);
   const [isAvailable, setIsAvailable] = useState(true);
 
@@ -74,6 +77,7 @@ export function useSessionPersistence({ images, loadedFilename, currentPageIndex
         onRestore({
           images: restored,
           loadedFilename: session.meta.loadedFilename,
+          driveFileName: session.meta.driveFileName ?? null,
           currentPageIndex: Math.min(Math.max(0, session.meta.currentPageIndex), restored.length - 1),
         });
       } catch (err) {
@@ -97,7 +101,7 @@ export function useSessionPersistence({ images, loadedFilename, currentPageIndex
     const timer = setTimeout(() => {
       fired = true;
       const pages = images.map(img => ({ key: getCacheKey(img.file), file: img.file, mimeType: img.mimeType, sortKey: img.sortKey }));
-      const meta = { loadedFilename, currentPageIndex: currentPageRef.current };
+      const meta = { loadedFilename, driveFileName, currentPageIndex: currentPageRef.current };
       enqueueSave(() => (pages.length > 0 ? saveSession(pages, meta) : clearSession())).finally(() => {
         pendingSaves.current--;
       });
@@ -106,7 +110,7 @@ export function useSessionPersistence({ images, loadedFilename, currentPageIndex
       clearTimeout(timer);
       if (!fired) pendingSaves.current--;
     };
-  }, [images, loadedFilename, isRestoring, isAvailable]);
+  }, [images, loadedFilename, driveFileName, isRestoring, isAvailable]);
 
   // 3) 읽던 위치만 바뀌면 메타 정보만 갱신
   useEffect(() => {

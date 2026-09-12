@@ -17,6 +17,16 @@ export interface MangaSaveData {
   }[];
 }
 
+/**
+ * 드라이브에 저장할 기본 파일 이름.
+ * 드라이브에서 불러온·마지막으로 저장한 이름이 있으면 그 이름을 유지해 같은 파일을 덮어쓰게 합니다.
+ */
+export function defaultBackupFilename(driveFileName: string | null | undefined, workName: string | null | undefined, now: Date = new Date()): string {
+  if (driveFileName?.trim()) return driveFileName.trim();
+  if (workName?.trim()) return `${workName.trim()}.zip`;
+  return `Manga_${now.toISOString().replace(/[:.]/g, '-')}.zip`;
+}
+
 export async function uploadToGoogleDrive(
   accessToken: string,
   zipBlob: Blob,

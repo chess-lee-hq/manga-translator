@@ -52,9 +52,11 @@ interface Options {
   defaultFilename: () => string;
   /** 백업 ZIP을 복원하고 사용자에게 보여줄 결과 메시지를 돌려줍니다. */
   restoreBackup: (zipBlob: Blob, filename: string) => Promise<string>;
+  /** 저장에 사용한 파일 이름 (다음 저장 때 같은 파일을 덮어쓰도록 기억) */
+  onSaved?: (filename: string) => void;
 }
 
-export function useDriveSync({ buildBackupZip, defaultFilename, restoreBackup }: Options) {
+export function useDriveSync({ buildBackupZip, defaultFilename, restoreBackup, onSaved }: Options) {
   const [clientId] = useState(() => localStorage.getItem('googleClientId') || DEFAULT_CLIENT_ID);
   const [token, setToken] = useState<string | null>(null);
   const [isDriveSyncing, setIsDriveSyncing] = useState(false);
@@ -87,12 +89,13 @@ export function useDriveSync({ buildBackupZip, defaultFilename, restoreBackup }:
   };
 
   const saveToDrive = () => {
-    const filename = window.prompt('구글 드라이브에 저장할 파일 이름을 입력해주세요 (확장자 .zip 포함):', defaultFilename());
+    const filename = window.prompt('구글 드라이브에 저장할 파일 이름을 입력해주세요 (확장자 .zip 포함)\n같은 이름이면 드라이브의 기존 파일을 덮어씁니다.', defaultFilename());
     if (!filename) return;
     return run('구글 드라이브 저장', async () => {
       const accessToken = await getToken();
       await uploadToGoogleDrive(accessToken, await buildBackupZip(), filename);
-      alert('구글 드라이브에 성공적으로 저장되었습니다!');
+      onSaved?.(filename);
+      alert(`구글 드라이브에 저장했습니다.\n${filename}`);
     });
   };
 

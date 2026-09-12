@@ -14,8 +14,10 @@ export interface ImportResult {
   /** 백업에 들어 있던 작품 노트 */
   notes?: string;
   lastReadPage?: number;
-  /** 작품 이름으로 표시할 압축 파일 이름 */
+  /** 작품 이름으로 표시할 압축 파일 이름 (확장자 없음) */
   loadedFilename?: string;
+  /** 백업 ZIP의 원래 파일 이름 (확장자 포함) — 드라이브 저장 기본 이름으로 사용 */
+  archiveFileName?: string;
   failedImages: number;
   jsonFailed: boolean;
 }
@@ -78,7 +80,10 @@ export async function importFiles(fileList: FileList | File[]): Promise<ImportRe
 
   if (archiveFile) {
     const zip = await JSZip.loadAsync(archiveFile);
-    if (zip.file('manga_data.json')) return importBackupZip(archiveFile, stripArchiveExtension(archiveFile.name));
+    if (zip.file('manga_data.json')) {
+      const restored = await importBackupZip(archiveFile, stripArchiveExtension(archiveFile.name));
+      return { ...restored, archiveFileName: archiveFile.name };
+    }
 
     loadedFilename = stripArchiveExtension(archiveFile.name);
     // __MACOSX 메타데이터·숨김 파일은 제외하고, 확장자는 대소문자 구분 없이 판별
