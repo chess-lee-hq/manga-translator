@@ -1,7 +1,7 @@
 import { layoutTags, resolveDisplayMode, TAG_STYLE } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
-import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, OVERLAY_STYLE, overlayFontSize } from './overlayLayout';
+import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize, resolveTextDirection, VERTICAL_TEXT, type VerticalLayout } from './overlayLayout';
 
 /** 저장 이미지 목표 높이. 원본이 이보다 작으면 최대 MAX_EXPORT_SCALE배까지 키워 글자를 선명하게 그림 */
 const EXPORT_TARGET_HEIGHT = 2400;
@@ -56,6 +56,27 @@ function drawTextLines(ctx: CanvasRenderingContext2D, lines: string[], cx: numbe
   });
 }
 
+/** 세로쓰기: 첫 열을 가장 오른쪽에 두고 글자를 한 칸씩 아래로 그림 */
+function drawVerticalColumns(ctx: CanvasRenderingContext2D, layout: VerticalLayout, cx: number, cy: number, setFont: (size: number) => void) {
+  setFont(layout.fontSize);
+  ctx.letterSpacing = '0px'; // 한 글자씩 그리므로 자간은 쓰지 않음
+  ctx.fillStyle = '#111827';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const cellHeight = layout.fontSize * VERTICAL_TEXT.cellHeight;
+  const columnWidth = layout.fontSize * VERTICAL_TEXT.columnWidth;
+  const totalWidth = layout.columns.length * columnWidth;
+
+  layout.columns.forEach((column, columnIndex) => {
+    const x = cx + totalWidth / 2 - columnWidth * (columnIndex + 0.5);
+    const columnHeight = column.length * cellHeight;
+    column.forEach((char, charIndex) => {
+      ctx.fillText(char, x, cy - columnHeight / 2 + cellHeight * (charIndex + 0.5));
+    });
+  });
+}
+
 /**
  * 이미지 위에 번역을 화면 덮어쓰기와 같은 규칙으로 그립니다. (덮기 말풍선 + 효과음용 작은 딱지)
  * 원본이 작으면 고해상도로 키워 그리므로 화면(레티나)보다 흐려 보이지 않습니다.
@@ -95,15 +116,22 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     if (!(boxWidth > 0 && boxHeight > 0)) continue;
 
     const text = result.translated_text ?? '';
-    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, maxFont);
-    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, !result.disable_keep_all, t => measure(t, fontSize), cssPx);
-
     const cx = ((xmin + xmax) / 2 / 1000) * width;
     const cy = ((ymin + ymax) / 2 / 1000) * height;
-    drawBubbleBox(
-      ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height,
-      OVERLAY_STYLE.radiusPx * cssPx, OVERLAY_STYLE.shadowBlurPx * cssPx * outputScale, OVERLAY_STYLE.shadowOffsetYPx * cssPx * outputScale,
-    );
+    const shadowBlur = OVERLAY_STYLE.shadowBlurPx * cssPx * outputScale;
+    const shadowOffsetY = OVERLAY_STYLE.shadowOffsetYPx * cssPx * outputScale;
+
+    // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
+    if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {
+      const layout = layoutVerticalText(text, boxWidth, boxHeight, minFont, maxFont, cssPx);
+      drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
+      drawVerticalColumns(ctx, layout, cx, cy, setFont);
+      continue;
+    }
+
+    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, maxFont);
+    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, !result.disable_keep_all, t => measure(t, fontSize), cssPx);
+    drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);
   }
 

@@ -14,8 +14,14 @@ function loadCacheFromStorage(): TranslationCache {
     const key = localStorage.key(i);
     if (!key?.startsWith(CACHE_PREFIX)) continue;
     try {
-      const sanitized = sanitizeResults(JSON.parse(localStorage.getItem(key) || '[]'));
-      if (sanitized) cache[key] = sanitized;
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      const sanitized = sanitizeResults(raw);
+      if (!sanitized) continue;
+      cache[key] = sanitized;
+      // 빈 번역·깨진 항목이 걸러졌으면 저장소도 정리해 둠
+      if (Array.isArray(raw) && sanitized.length !== raw.length) {
+        localStorage.setItem(key, JSON.stringify(sanitized));
+      }
     } catch {
       console.warn('손상된 번역 캐시를 건너뜁니다:', key);
     }

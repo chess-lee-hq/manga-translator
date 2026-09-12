@@ -147,6 +147,104 @@ export function layoutOverlayText(
   return { lines, width, height };
 }
 
+/** 세로쓰기 규칙. 화면과 이미지 저장이 같은 값을 씁니다. */
+export const VERTICAL_TEXT = {
+  /** 글자 한 칸의 높이 = 글자 크기 × 이 값 */
+  cellHeight: 1.05,
+  /** 한 열의 너비 = 글자 크기 × 이 값 */
+  columnWidth: 1.1,
+  /** 가로로 썼을 때 한 줄에 이 글자 수도 못 들어가면 세로쓰기 (흰 영역을 넘치는 경우) */
+  minCharsPerLine: 3,
+  /** 한 글자뿐이면 세로·가로가 같으므로 가로로 둠 */
+  minChars: 2,
+} as const;
+
+/**
+ * 글자 방향 결정. 사용자가 직접 고른 값이 있으면 그것을 씁니다.
+ * 자동 판별은 "세로로 길고 좁아서 가로로는 한 줄에 몇 글자도 못 들어가는 박스"만 세로쓰기로 봅니다.
+ * (말풍선 없이 세로 한 줄로 쓰인 원문 자리)
+ */
+export function resolveTextDirection(
+  result: Pick<TranslationResult, 'translated_text' | 'text_direction'>,
+  boxWidth: number,
+  boxHeight: number,
+  minFontSize: number,
+  cssPx: number,
+): 'horizontal' | 'vertical' {
+  if (result.text_direction === 'horizontal' || result.text_direction === 'vertical') return result.text_direction;
+  const chars = Array.from((result.translated_text ?? '').trim()).length;
+  if (chars < VERTICAL_TEXT.minChars) return 'horizontal';
+  if (boxWidth >= boxHeight || minFontSize <= 0) return 'horizontal';
+  const usableWidth = boxWidth - OVERLAY_STYLE.paddingXPx * cssPx * 2;
+  return usableWidth / minFontSize < VERTICAL_TEXT.minCharsPerLine ? 'vertical' : 'horizontal';
+}
+
+export interface VerticalLayout {
+  fontSize: number;
+  /** 글자를 담은 열 목록. 첫 열이 가장 오른쪽 (일본 만화 세로쓰기 방향) */
+  columns: string[][];
+  /** 흰 상자 크기 (여백 포함, 최소한 원래 박스 크기) */
+  width: number;
+  height: number;
+}
+
+/**
+ * 세로쓰기 배치. 박스 높이에 맞춰 한 열에 들어갈 글자 수를 정하고, 넘치면 왼쪽으로 열을 늘립니다.
+ * 박스 안에 들어가는 가장 큰 글자 크기를 고르고, 최소 크기로도 넘치면 흰 상자를 키웁니다.
+ */
+export function layoutVerticalText(
+  text: string,
+  boxWidth: number,
+  boxHeight: number,
+  minFontSize: number,
+  maxFontSize: number,
+  cssPx: number,
+): VerticalLayout {
+  const padX = OVERLAY_STYLE.paddingXPx * cssPx;
+  const padY = OVERLAY_STYLE.paddingYPx * cssPx;
+  const step = Math.max(0.5, (maxFontSize - minFontSize) / 20);
+
+  const build = (fontSize: number) => {
+    const cellHeight = fontSize * VERTICAL_TEXT.cellHeight;
+    const columnWidth = fontSize * VERTICAL_TEXT.columnWidth;
+    const maxRows = Math.max(1, Math.floor((boxHeight - padY * 2) / cellHeight));
+
+    const columns: string[][] = [];
+    for (const paragraph of text.split('\n')) {
+      let column: string[] = [];
+      for (const char of Array.from(paragraph)) {
+        if (column.length >= maxRows) {
+          columns.push(column);
+          column = [];
+        }
+        column.push(char);
+      }
+      columns.push(column);
+    }
+
+    const rows = Math.max(1, ...columns.map(column => column.length));
+    return {
+      fontSize,
+      columns,
+      contentWidth: columns.length * columnWidth + padX * 2,
+      contentHeight: rows * cellHeight + padY * 2,
+    };
+  };
+
+  const toLayout = (built: ReturnType<typeof build>): VerticalLayout => ({
+    fontSize: built.fontSize,
+    columns: built.columns,
+    width: Math.max(built.contentWidth, boxWidth),
+    height: Math.max(built.contentHeight, boxHeight),
+  });
+
+  for (let fontSize = maxFontSize; fontSize >= minFontSize; fontSize -= step) {
+    const built = build(fontSize);
+    if (built.contentWidth <= boxWidth && built.contentHeight <= boxHeight) return toLayout(built);
+  }
+  return toLayout(build(minFontSize));
+}
+
 /**
  * 덮어쓰기 글꼴(굵기·자간 포함)로 글자 폭을 재는 도구. ctx를 주면 그 캔버스의 글꼴 설정을 바꿔가며 씁니다.
  */

@@ -291,6 +291,11 @@ function App() {
     );
   };
 
+  /** 가로쓰기 ↔ 세로쓰기 직접 지정 (자동 판별보다 우선) */
+  const handleSetTextDirection = (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, text_direction: direction } : r)));
+  };
+
   const handleReorder = (imgIndex: number, fromIndex: number, toIndex: number) => {
     updatePageResults(keyOf(imgIndex), results => {
       const next = [...results];
@@ -581,6 +586,7 @@ function App() {
                 onBoxChange={handleBoxChange}
                 onToggleKeepAll={handleToggleKeepAll}
                 onToggleDisplayMode={handleToggleDisplayMode}
+                onSetTextDirection={handleSetTextDirection}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}
                 footer={

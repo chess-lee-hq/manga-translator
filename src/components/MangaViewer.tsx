@@ -2,7 +2,8 @@ import { Download } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { layoutTags, resolveDisplayMode, TAG_STYLE } from '../lib/bubbleDisplay';
-import { createTextMeasurer, estimateFontRatios, getDisplayBox, OVERLAY_STYLE, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { VerticalBubbleText } from './VerticalBubbleText';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
 
@@ -20,6 +21,7 @@ interface MangaViewerProps {
   onBoxChange: (imgIndex: number, id: string, box: Box2d) => void;
   onToggleKeepAll: (imgIndex: number, id: string) => void;
   onToggleDisplayMode: (imgIndex: number, id: string) => void;
+  onSetTextDirection: (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
   footer: ReactNode;
@@ -44,7 +46,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
-  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onCreateBox, onDownloadPage, footer,
+  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -238,7 +240,17 @@ export function MangaViewer({
                           // 글자 규칙은 이미지 저장(lib/overlayLayout.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
                           const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
 
-                          const textContent = (
+                          // 홀쭉한 영역(말풍선 없는 세로 한 줄 글자)은 가로로 쓰면 흰 영역을 넘치므로 세로쓰기
+                          const boxPixelWidth = (boxWidth / 1000) * pageWidth;
+                          const boxPixelHeight = (boxHeight / 1000) * pageHeight;
+                          const minFont = OVERLAY_STYLE.minFontPx * scale;
+                          const maxFont = OVERLAY_STYLE.maxFontPx * scale;
+                          const textDirection = resolveTextDirection(result, boxPixelWidth, boxPixelHeight, minFont, 1);
+                          const verticalLayout = textDirection === 'vertical'
+                            ? layoutVerticalText(result.translated_text, boxPixelWidth, boxPixelHeight, minFont, maxFont, 1)
+                            : null;
+
+                          const textContent = verticalLayout ? <VerticalBubbleText layout={verticalLayout} /> : (
                             <span
                               className="bg-white text-gray-900 flex flex-col items-center justify-center"
                               style={{
@@ -273,6 +285,8 @@ export function MangaViewer({
                                 onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
                                 displayMode="cover"
                                 onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                textDirection={textDirection}
+                                onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
                               >
                                 {textContent}
                               </BoxEditor>

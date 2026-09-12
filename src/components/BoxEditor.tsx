@@ -7,10 +7,12 @@ interface BoxEditorProps {
   onToggleKeepAll?: () => void;
   displayMode?: 'cover' | 'tag';
   onToggleDisplayMode?: () => void;
+  textDirection?: 'horizontal' | 'vertical';
+  onToggleTextDirection?: () => void;
   children: React.ReactNode;
 }
 
-export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode, children }: BoxEditorProps) {
+export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode, textDirection, onToggleTextDirection, children }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
   useEffect(() => { boxRef.current = box; }, [box]);
@@ -85,6 +87,18 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
           title="표시 방식 전환: 덮기(원문을 흰 말풍선으로 덮음) ↔ 작게(원문은 그대로 두고 바깥에 작은 딱지)"
         >
           {displayMode === 'tag' ? '작게' : '덮기'}
+        </button>
+      )}
+      {onToggleTextDirection && (
+        <button
+          className="absolute -bottom-3 -left-3 px-1.5 py-0.5 bg-sky-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onToggleTextDirection();
+          }}
+          title="글자 방향 전환: 가로쓰기 ↔ 세로쓰기 (홀쭉한 영역은 자동으로 세로쓰기)"
+        >
+          {textDirection === 'vertical' ? '세로' : '가로'}
         </button>
       )}
       {onToggleKeepAll && (

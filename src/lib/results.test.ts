@@ -20,3 +20,26 @@ describe('sanitizeResults', () => {
     expect(cleaned![1]).toMatchObject({ id: 'keep', original_text: '', translated_text: '다' });
   });
 });
+
+describe('sanitizeResults — 빈 번역 자동 정리', () => {
+  it('번역문이 비었거나 공백뿐인 항목은 버린다 (그림을 글자로 잘못 인식한 빈 자리)', () => {
+    const cleaned = sanitizeResults([
+      { id: 'keep', original_text: 'あ', translated_text: '가', box_2d: [1, 2, 3, 4] },
+      { id: 'empty', original_text: 'い', translated_text: '', box_2d: [1, 2, 3, 4] },
+      { id: 'blank', original_text: 'う', translated_text: '   ', box_2d: [1, 2, 3, 4] },
+    ]);
+    expect(cleaned?.map(r => r.id)).toEqual(['keep']);
+  });
+
+  it('표시 설정은 알려진 값만 남긴다', () => {
+    const [result] = sanitizeResults([
+      { id: 'a', translated_text: '가', box_2d: [1, 2, 3, 4], display_mode: 'tag', text_direction: 'vertical' },
+    ])!;
+    expect(result).toMatchObject({ display_mode: 'tag', text_direction: 'vertical' });
+    const [odd] = sanitizeResults([
+      { id: 'b', translated_text: '가', box_2d: [1, 2, 3, 4], display_mode: 'weird', text_direction: 'diagonal' },
+    ])!;
+    expect(odd.display_mode).toBeUndefined();
+    expect(odd.text_direction).toBeUndefined();
+  });
+});
