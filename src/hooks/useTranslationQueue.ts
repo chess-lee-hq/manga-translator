@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { translatePage } from '../lib/translatePage';
+import { translatePage, translatePageBatch } from '../lib/translatePage';
 import { buildContextInstruction, collectRecentPairs } from '../lib/translationContext';
 import type { PageError, TranslationCache, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { useDebouncedValue } from './useDebouncedValue';
 import { getCacheKey } from './useTranslationCache';
 
 const AUTO_TRANSLATE_STORAGE_KEY = 'manga-translator-auto-translate';
-/** 동시에 번역을 요청하는 페이지 수 */
+/** 동시에 보내는 요청 수 */
 const TRANSLATION_CONCURRENCY = 3;
+/**
+ * 미리 번역해 두는 페이지는 이만큼씩 묶어 요청 한 번으로 처리합니다.
+ * 프롬프트·단어장·맥락이 요청당 한 번만 들어가므로 페이지당 토큰이 크게 줄어듭니다.
+ * 지금 보고 있는 페이지는 묶지 않고 한 장씩 바로 요청해 기다리는 시간을 늘리지 않습니다.
+ */
+const PRELOAD_BATCH_SIZE = 3;
 /** API 키 입력이 멈춘 뒤 이 시간이 지나야 번역을 시작 */
 const API_KEY_DEBOUNCE_MS = 800;
 
@@ -15,6 +21,8 @@ interface Options {
   images: UploadedImage[];
   /** 번역할 페이지 순서 (보이는 페이지가 앞) */
   queue: number[];
+  /** 지금 화면에 보이는 페이지 (이 페이지들은 묶지 않고 먼저 번역) */
+  visibleIndices: number[];
   settings: TranslationSettings;
   translationCache: TranslationCache;
   onPageTranslated: (key: string, results: TranslationResult[]) => void;
@@ -24,7 +32,7 @@ interface Options {
   contextFirst?: boolean;
 }
 
-export function useTranslationQueue({ images, queue, settings, translationCache, onPageTranslated, notes, contextFirst }: Options) {
+export function useTranslationQueue({ images, queue, visibleIndices, settings, translationCache, onPageTranslated, notes, contextFirst }: Options) {
   // 진행 상태는 페이지 번호가 아니라 캐시 키(파일) 기준 → 이미지 추가·재정렬 중에도 중복 호출·누락 없음
   const inFlightRef = useRef<Set<string>>(new Set());
   const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(() => new Set());
@@ -51,7 +59,7 @@ export function useTranslationQueue({ images, queue, settings, translationCache,
    * 지정한 페이지들을 번역합니다. 호출 시점에 파일(캐시 키)로 고정하므로 도중에 이미지가 추가·재정렬돼도 안전합니다.
    * 동시에 TRANSLATION_CONCURRENCY장씩 처리하고, 끝난 페이지부터 바로 화면에 반영합니다.
    */
-  const translatePages = async (indices: number[]) => {
+  const translatePages = async (indices: number[], batchSize = 1) => {
     const jobs = indices
       .filter(idx => images[idx])
       .map(idx => ({ idx, img: images[idx], key: getCacheKey(images[idx].file) }))
@@ -75,27 +83,64 @@ export function useTranslationQueue({ images, queue, settings, translationCache,
       return buildContextInstruction(notes, collectRecentPairs(images, cache, pageIndex));
     };
 
+    const finish = (job: typeof jobs[number], results: TranslationResult[]) => {
+      runResults.set(job.key, results);
+      onPageTranslated(job.key, results);
+    };
+    const fail = (job: typeof jobs[number], err: any) => {
+      console.error(`Page ${job.idx + 1} 번역 실패:`, err);
+      setPageErrors(prev => ({
+        ...prev,
+        [job.key]: { message: err?.message || '번역 중 오류가 발생했습니다.', credential: attemptCredential },
+      }));
+    };
+    const release = (group: typeof jobs) => {
+      group.forEach(job => inFlightRef.current.delete(job.key));
+      setTranslatingKeys(new Set(inFlightRef.current));
+    };
+
+    const translateOne = async (job: typeof jobs[number]) => {
+      try {
+        finish(job, await translatePage(job.img, { ...attemptSettings, context: contextFor(job.idx) }));
+      } catch (err) {
+        fail(job, err);
+      }
+    };
+
+    /** 묶음 요청이 실패하면 그 묶음만 한 장씩 다시 시도해, 한 번의 오류로 여러 장을 잃지 않게 합니다. */
+    const translateGroup = async (group: typeof jobs) => {
+      try {
+        const byPage = await translatePageBatch(group.map(job => ({ id: job.key, img: job.img })), {
+          ...attemptSettings,
+          context: contextFor(group[0].idx),
+        });
+        group.forEach(job => finish(job, byPage.get(job.key) ?? []));
+      } catch (err) {
+        console.warn(`${group.length}장 묶음 번역 실패 → 한 장씩 다시 시도합니다:`, (err as Error)?.message ?? err);
+        for (const job of group) await translateOne(job);
+      }
+    };
+
+    // 묶음은 OpenAI 전용. Gemini 보조 모드와 '순서대로 번역'에서는 한 장씩
+    const canBatch = attemptSettings.provider === 'openai' && !contextFirst && batchSize > 1;
+    const groups: (typeof jobs)[] = [];
+    for (let i = 0; i < jobs.length; i += canBatch ? batchSize : 1) {
+      groups.push(jobs.slice(i, i + (canBatch ? batchSize : 1)));
+    }
+
     let cursor = 0;
     const worker = async () => {
-      while (cursor < jobs.length) {
-        const job = jobs[cursor++];
+      while (cursor < groups.length) {
+        const group = groups[cursor++];
         try {
-          const results = await translatePage(job.img, { ...attemptSettings, context: contextFor(job.idx) });
-          runResults.set(job.key, results);
-          onPageTranslated(job.key, results);
-        } catch (err: any) {
-          console.error(`Page ${job.idx + 1} 번역 실패:`, err);
-          setPageErrors(prev => ({
-            ...prev,
-            [job.key]: { message: err?.message || '번역 중 오류가 발생했습니다.', credential: attemptCredential },
-          }));
+          if (group.length === 1) await translateOne(group[0]);
+          else await translateGroup(group);
         } finally {
-          inFlightRef.current.delete(job.key);
-          setTranslatingKeys(new Set(inFlightRef.current));
+          release(group);
         }
       }
     };
-    const concurrency = Math.min(contextFirst ? 1 : TRANSLATION_CONCURRENCY, jobs.length);
+    const concurrency = Math.min(contextFirst ? 1 : TRANSLATION_CONCURRENCY, groups.length);
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
   };
 
@@ -121,7 +166,16 @@ export function useTranslationQueue({ images, queue, settings, translationCache,
       return !translationCache[key] && !inFlightRef.current.has(key) && !(failure && failure.credential === credential);
     });
 
-    if (missingIndices.length > 0) translatePages(missingIndices);
+    if (missingIndices.length === 0) return;
+
+    // 보고 있는 페이지를 먼저 한 장씩(빠른 응답) → 그 뒤 미리 받아둘 페이지를 묶음으로(토큰 절약)
+    const visible = new Set(visibleIndices);
+    const immediate = missingIndices.filter(i => visible.has(i));
+    const preload = missingIndices.filter(i => !visible.has(i));
+    (async () => {
+      if (immediate.length > 0) await translatePages(immediate);
+      if (preload.length > 0) await translatePages(preload, PRELOAD_BATCH_SIZE);
+    })();
   }, [queue.join(','), images, credential, isCredentialSettled, autoTranslate, retryTrigger]);
 
   return {

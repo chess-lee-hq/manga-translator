@@ -1,6 +1,6 @@
 import type { Box2d, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
-import { createGridImageFromBoxes, loadImage, type GridCellInfo } from './imageUtils';
+import { createGridImage, createGridImageFromBoxes, loadImage, type GridCellInfo, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { sanitizeResults } from './results';
@@ -40,6 +40,34 @@ export function mapGridToResults(translations: GridTranslationResult[], cells: G
   return results;
 }
 
+/** 여러 페이지를 묶은 격자의 응답을 페이지별로 나눠 담습니다. */
+export function mapGridToPages(
+  translations: GridTranslationResult[],
+  cells: GridCellInfo[],
+  sizeOf: (pageId: string) => { width: number; height: number },
+): Map<string, RawTranslationResult[]> {
+  const used = new Set<number>();
+  const byPage = new Map<string, RawTranslationResult[]>();
+  for (const t of translations) {
+    if (used.has(t.id)) continue;
+    const cell = cells.find(c => c.id === t.id);
+    if (!cell) continue;
+    used.add(t.id);
+    const { width, height } = sizeOf(cell.pageId);
+    const list = byPage.get(cell.pageId) ?? [];
+    list.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height) });
+    byPage.set(cell.pageId, list);
+  }
+  return byPage;
+}
+
+/** 펼침면은 오른쪽 페이지(가로 중심 ≥ 500) 텍스트를 먼저 읽도록 재정렬 */
+function orderForSpread(results: TranslationResult[], isSpread: boolean): TranslationResult[] {
+  if (!isSpread || results.length === 0) return results;
+  const centerX = (r: TranslationResult) => (r.box_2d[1] + r.box_2d[3]) / 2;
+  return [...results.filter(r => centerX(r) >= 500), ...results.filter(r => centerX(r) < 500)];
+}
+
 /**
  * 한 페이지 번역: 말풍선 검출(YOLO) → 읽는 순서 정렬 → 말풍선 격자 이미지 → 번역 엔진 → 원래 좌표로 복원
  *
@@ -77,13 +105,52 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
   }
 
   const results = sanitizeResults(rawResults) ?? []; // 좌표가 깨진 응답 제거 + id 부여
+  return orderForSpread(results, !!img.isSpread);
+}
 
-  // 양면 펼침면은 오른쪽 페이지(가로 중심 ≥ 500) 텍스트를 먼저 읽도록 재정렬
-  if (img.isSpread && results.length > 0) {
-    const centerX = (r: TranslationResult) => (r.box_2d[1] + r.box_2d[3]) / 2;
-    return [...results.filter(r => centerX(r) >= 500), ...results.filter(r => centerX(r) < 500)];
+/** 여러 페이지를 한 번의 요청으로 번역할 때 쓰는 입력 */
+export interface BatchPage {
+  /** 호출한 쪽에서 페이지를 구분하는 값 (보통 캐시 키) */
+  id: string;
+  img: UploadedImage;
+}
+
+/**
+ * 여러 페이지의 말풍선을 격자 한 장에 묶어 **요청 한 번**으로 번역합니다.
+ * 프롬프트·단어장·맥락이 요청당 한 번만 들어가므로, 페이지 수만큼 나눠 보낼 때보다 토큰이 크게 줄어듭니다.
+ * (OpenAI 전용. Gemini 보조 모드는 페이지 전체 이미지를 함께 보내는 구조라 묶지 않습니다.)
+ */
+export async function translatePageBatch(pages: BatchPage[], settings: TranslationSettings): Promise<Map<string, TranslationResult[]>> {
+  requireKeys(settings);
+  const { openaiKey, openAiVersion, glossary, context } = settings;
+
+  const prepared = await Promise.all(pages.map(async page => {
+    const image = await loadImage(page.img.src);
+    const boxes = sortTextByReadingOrder(await detectSpeechBubbles(image));
+    return { page, image, boxes };
+  }));
+
+  const sources: GridSource[] = prepared.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes }));
+  const sizeById = new Map(prepared.map(p => [p.page.id, { width: p.image.width, height: p.image.height }]));
+  const spreadById = new Map(prepared.map(p => [p.page.id, !!p.page.img.isSpread]));
+
+  // 대사를 하나도 못 찾은 페이지도 "번역 완료(0건)"로 남겨 다시 요청하지 않도록 빈 배열로 채워둠
+  const byPage = new Map<string, TranslationResult[]>(pages.map(page => [page.id, []]));
+
+  const grid = await createGridImage(sources);
+  if (!grid) return byPage;
+
+  const translations = await translateGridImageOpenAI(
+    openAiVersion, openaiKey, grid.dataUrl, grid.cells.length, glossary, context,
+    sources.map(s => s.boxes.length),
+  );
+
+  const raw = mapGridToPages(translations, grid.cells, id => sizeById.get(id) ?? { width: 1, height: 1 });
+  for (const [pageId, rawResults] of raw) {
+    const results = sanitizeResults(rawResults) ?? [];
+    byPage.set(pageId, orderForSpread(results, !!spreadById.get(pageId)));
   }
-  return results;
+  return byPage;
 }
 
 /** 사용자가 직접 그린 영역 하나를 인식·번역합니다. */

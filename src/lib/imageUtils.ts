@@ -4,6 +4,15 @@ import type { BoundingBox } from './yolo';
 export interface GridCellInfo {
   id: number;
   box: BoundingBox;
+  /** 이 칸이 어느 페이지에서 잘려 왔는지 (여러 페이지를 한 격자에 묶을 때 되돌리기 위함) */
+  pageId: string;
+}
+
+/** 격자에 넣을 페이지 하나 */
+export interface GridSource {
+  pageId: string;
+  image: HTMLImageElement;
+  boxes: BoundingBox[];
 }
 
 export interface GridResult {
@@ -17,18 +26,16 @@ const CELL_SIZE = 300;
 const CELL_PADDING = 20;
 
 /**
- * 말풍선들을 잘라 바둑판 이미지 한 장으로 붙입니다. (칸마다 빨간 번호를 적어 LLM이 순서대로 답하게 함)
- * 박스는 호출 전에 readingOrder로 정렬되어 있습니다.
+ * 여러 페이지의 말풍선을 잘라 바둑판 이미지 한 장으로 붙입니다.
+ * (칸마다 빨간 번호를 적어 모델이 순서대로 답하게 함)
+ * 박스는 호출 전에 readingOrder로 정렬되어 있고, 페이지 순서대로 이어 붙입니다.
  * 열 수를 지정하지 않으면 칸 수에 맞춰 비전 토큰이 가장 적게 드는 배치를 자동으로 고릅니다.
  */
-export async function createGridImageFromBoxes(
-  image: HTMLImageElement,
-  boxes: BoundingBox[],
-  gridWidth?: number,
-): Promise<GridResult | null> {
-  if (boxes.length === 0) return null;
+export async function createGridImage(sources: GridSource[], gridWidth?: number): Promise<GridResult | null> {
+  const entries = sources.flatMap(source => source.boxes.map(box => ({ box, source })));
+  if (entries.length === 0) return null;
 
-  const cells: GridCellInfo[] = boxes.map((box, index) => ({ id: index + 1, box }));
+  const cells: GridCellInfo[] = entries.map((entry, index) => ({ id: index + 1, box: entry.box, pageId: entry.source.pageId }));
   const columns = gridWidth ?? chooseGridColumns(cells.length, CELL_SIZE);
   const rows = Math.ceil(cells.length / columns);
 
@@ -43,11 +50,12 @@ export async function createGridImageFromBoxes(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const imageWidth = image.naturalWidth || image.width;
-  const imageHeight = image.naturalHeight || image.height;
+  entries.forEach((entry, i) => {
+    const { box } = entry;
+    const image = entry.source.image;
+    const imageWidth = image.naturalWidth || image.width;
+    const imageHeight = image.naturalHeight || image.height;
 
-  cells.forEach((cell, i) => {
-    const { box } = cell;
     const marginX = (box.xmax - box.xmin) * CROP_MARGIN_RATIO;
     const marginY = (box.ymax - box.ymin) * CROP_MARGIN_RATIO;
     const sx = Math.max(0, box.xmin - marginX);
@@ -67,10 +75,19 @@ export async function createGridImageFromBoxes(
 
     ctx.fillStyle = 'red';
     ctx.font = 'bold 24px Arial';
-    ctx.fillText(`#${cell.id}`, cellX + 10, cellY + 30);
+    ctx.fillText(`#${cells[i].id}`, cellX + 10, cellY + 30);
   });
 
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.8), cells };
+}
+
+/** 한 페이지만 격자로 만듭니다. */
+export async function createGridImageFromBoxes(
+  image: HTMLImageElement,
+  boxes: BoundingBox[],
+  gridWidth?: number,
+): Promise<GridResult | null> {
+  return createGridImage([{ pageId: 'page', image, boxes }], gridWidth);
 }
 
 export async function loadImage(src: string): Promise<HTMLImageElement> {

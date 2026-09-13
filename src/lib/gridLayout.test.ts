@@ -43,3 +43,20 @@ describe('chooseGridColumns', () => {
     }
   });
 });
+
+describe('묶음 처리 토큰 절감 (추정식 기준)', () => {
+  const PROMPT_TOKENS = 1000; // 지침 + 단어장 + 맥락 (요청당 1회)
+  const costOf = (cellCount: number) => {
+    const columns = chooseGridColumns(cellCount, 300);
+    const rows = Math.ceil(cellCount / columns);
+    return estimateVisionTokens(columns * 300, rows * 300) + PROMPT_TOKENS;
+  };
+
+  it('6칸 페이지 3장은 따로 보내는 것보다 한 번에 묶는 편이 싸다', () => {
+    const separate = costOf(6) * 3;
+    const batched = costOf(18);
+    expect(batched).toBeLessThan(separate);
+    // 대략 절반 이하로 떨어져야 묶는 의미가 있음
+    expect(batched).toBeLessThan(separate * 0.6);
+  });
+});

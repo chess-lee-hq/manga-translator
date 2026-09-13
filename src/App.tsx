@@ -99,6 +99,7 @@ function App() {
   const queue = useTranslationQueue({
     images: allImages,
     queue: translationQueue,
+    visibleIndices,
     settings,
     translationCache,
     onPageTranslated: setPageResults,

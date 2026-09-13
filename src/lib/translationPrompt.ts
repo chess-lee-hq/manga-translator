@@ -37,6 +37,8 @@ export function buildSharedContext({ glossary, context, sourceText }: PromptCont
 export interface GridPromptOptions extends PromptContextOptions {
   /** 격자 이미지의 칸 수 */
   expectedCells: number;
+  /** 여러 페이지를 한 격자에 묶었을 때 페이지별 칸 수 (예: [6, 5] = 1~6번은 첫 페이지, 7~11번은 다음 페이지) */
+  pageCellCounts?: number[];
   /** 격자 외에 원본 페이지 전체 이미지도 함께 보내는 경우 (Gemini 보조 모드) */
   withFullPage?: boolean;
   /**
@@ -47,7 +49,7 @@ export interface GridPromptOptions extends PromptContextOptions {
 }
 
 /** 말풍선 격자 이미지를 읽고 번역하도록 요청하는 프롬프트 */
-export function buildGridPrompt({ expectedCells, withFullPage = false, output, ...contextOptions }: GridPromptOptions): string {
+export function buildGridPrompt({ expectedCells, pageCellCounts, withFullPage = false, output, ...contextOptions }: GridPromptOptions): string {
   const images = withFullPage
     ? `두 장의 이미지를 첨부했어:
 1. 원본 만화 페이지 전체 이미지 (문맥·상황·인물 표정 파악용)
@@ -58,11 +60,25 @@ export function buildGridPrompt({ expectedCells, withFullPage = false, output, .
     ? `반드시 JSON 배열(Array)로만 응답해. 배열의 각 객체는 아래 3개 key를 가져야 해.`
     : `반드시 "cells" 하나만 key로 가지는 JSON 객체로 응답하고, 그 값은 배열이어야 해. 배열의 각 객체는 아래 3개 key를 가져야 해.`;
 
+  // 여러 페이지를 묶어 보낼 때, 어디서 페이지가 넘어가는지 알려주면 장면 전환을 이해하고 말투를 이어감
+  let pageGuide = '';
+  if (pageCellCounts && pageCellCounts.length > 1) {
+    let start = 1;
+    const ranges = pageCellCounts.map((count, i) => {
+      const end = start + count - 1;
+      const label = count === 0 ? '(대사 없음)' : `${start}~${end}번`;
+      start = end + 1;
+      return `${i + 1}번째 페이지: ${label}`;
+    });
+    pageGuide = `\n이 격자에는 연속된 ${pageCellCounts.length}개 페이지의 대사가 읽는 순서대로 들어 있어. (${ranges.join(' / ')})\n같은 장면이 이어지니 말투와 호칭을 페이지가 넘어가도 일관되게 유지해.\n`;
+  }
+
   return `# 역할
 너는 최고 수준의 일본 만화 번역가야. 원문을 정확히 읽고(OCR) 한국어로 번역해.
 
 ${images}
 크롭 이미지의 각 칸(Cell) 왼쪽 위에는 빨간색 글씨로 고유 번호(예: #1, #2)가 적혀 있어.
+${pageGuide}
 
 ${READING_RULES}
 
