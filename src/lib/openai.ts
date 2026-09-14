@@ -1,6 +1,7 @@
 import type { GridTranslationResult, RawTranslationResult } from './gemini';
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
+import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildWorkNotesPrompt } from './translationPrompt';
 import { recordUsage } from './usageLog';
@@ -133,13 +134,15 @@ export async function summarizeWorkNotesOpenAI(
   pairs: { original: string; translated: string }[],
   previousNotes?: string,
   correctionSection?: string,
-): Promise<string> {
-  if (pairs.length === 0) return previousNotes?.trim() ?? '';
+  existingGlossary: string[] = [],
+): Promise<WorkNotesResult> {
+  if (pairs.length === 0) return { notes: previousNotes?.trim() ?? '', glossary: [] };
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [{ role: 'user', content: buildWorkNotesPrompt(pairs, previousNotes, correctionSection) }],
-  }, '작품 노트 정리');
+    messages: [{ role: 'user', content: buildWorkNotesPrompt(pairs, previousNotes, correctionSection, existingGlossary) }],
+    response_format: { type: 'json_object' },
+  }, '작품 노트 정리 (+단어장 후보)');
 
-  return response?.choices?.[0]?.message?.content?.trim() ?? '';
+  return parseWorkNotesResponse(response?.choices?.[0]?.message?.content ?? '');
 }

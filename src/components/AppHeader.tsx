@@ -22,6 +22,8 @@ interface AppHeaderProps {
   driveTargetName: string | null;
   onSaveToDrive: () => void;
   onOpenGlossary: () => void;
+  /** 확인을 기다리는 단어장 후보 수 */
+  glossaryCandidateCount: number;
   onOpenWorkNotes: () => void;
   onClearCache: () => void;
   onCloseSession: () => void;
@@ -44,7 +46,7 @@ const actionButton = 'flex items-center gap-1 px-2 py-1 rounded text-xs font-med
 export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
-    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, onOpenWorkNotes,
+    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
     onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
     openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
   } = props;
@@ -149,8 +151,17 @@ export function AppHeader(props: AppHeaderProps) {
             <button onClick={onSaveToDrive} disabled={isDriveSyncing} title={driveTargetName ? `구글 드라이브에 저장 — "${driveTargetName}" 덮어쓰기` : '구글 드라이브에 저장'} className={`${actionButton} bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100`}>
               {isDriveSyncing ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} <span className={WIDE_LABEL}>드라이브</span>
             </button>
-            <button onClick={onOpenGlossary} title="단어장" className={`${actionButton} bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100`}>
+            <button
+              onClick={onOpenGlossary}
+              title={glossaryCandidateCount > 0 ? `단어장 — 번역 기록에서 찾은 추천 용어 ${glossaryCandidateCount}개가 확인을 기다립니다` : '단어장'}
+              className={`${actionButton} relative bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100`}
+            >
               <BookOpen size={14} /> <span className={WIDE_LABEL}>단어장</span>
+              {glossaryCandidateCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-purple-600 text-white text-[10px] leading-4 text-center font-bold">
+                  {glossaryCandidateCount}
+                </span>
+              )}
             </button>
             <button onClick={onOpenWorkNotes} title="작품 노트: 인물 말투·호칭을 기억해 다음 번역에 반영" className={`${actionButton} bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100`}>
               <NotebookPen size={14} /> <span className={WIDE_LABEL}>작품 노트</span>

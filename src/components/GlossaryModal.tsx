@@ -1,5 +1,6 @@
-import { BookOpen, Trash2, X } from 'lucide-react';
+import { BookOpen, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
+import type { GlossaryCandidate } from '../lib/glossaryCandidates';
 import type { Glossary } from '../types';
 
 export interface GlossaryDraft {
@@ -13,11 +14,18 @@ interface GlossaryModalProps {
   documentName: string | null;
   onMerge: (entries: Glossary) => void;
   onRemove: (original: string) => void;
+  /** 번역 기록에서 찾은 추천 용어 */
+  candidates: GlossaryCandidate[];
+  onAcceptCandidate: (original: string, translated: string) => void;
+  onDismissCandidate: (original: string) => void;
   onClose: () => void;
 }
 
-export function GlossaryModal({ glossary, initialDraft, documentName, onMerge, onRemove, onClose }: GlossaryModalProps) {
+export function GlossaryModal({ glossary, initialDraft, documentName, onMerge, onRemove, candidates, onAcceptCandidate, onDismissCandidate, onClose }: GlossaryModalProps) {
   const [form, setForm] = useState<GlossaryDraft>(initialDraft);
+  // 추천 용어는 추가하기 전에 번역을 고칠 수 있게 입력값을 따로 들고 있음
+  const [candidateEdits, setCandidateEdits] = useState<Record<string, string>>({});
+  const translationOf = (c: GlossaryCandidate) => candidateEdits[c.original] ?? c.translated;
   const canAdd = !!form.original.trim() && !!form.translated.trim();
 
   const addEntry = () => {
@@ -66,6 +74,50 @@ export function GlossaryModal({ glossary, initialDraft, documentName, onMerge, o
             추가
           </button>
         </div>
+
+        {candidates.length > 0 && (
+          <div className="mb-4 border border-purple-200 bg-purple-50/50 rounded-lg">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-purple-100">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-purple-800">
+                <Sparkles size={14} /> 추천 용어 {candidates.length}개
+                <span className="text-xs font-normal text-purple-600/80">— 번역 기록에 2번 이상 나온 고유명사</span>
+              </div>
+              <button
+                onClick={() => candidates.forEach(c => { const t = translationOf(c).trim(); if (t) onAcceptCandidate(c.original, t); })}
+                className="text-xs font-medium text-purple-700 hover:text-purple-900"
+              >
+                모두 추가
+              </button>
+            </div>
+            <ul className="max-h-48 overflow-y-auto divide-y divide-purple-100">
+              {candidates.map(c => (
+                <li key={c.original} className="flex items-center gap-2 px-3 py-2 text-sm">
+                  <span className="font-medium text-gray-800 shrink-0 max-w-[40%] truncate" title={c.original}>{c.original}</span>
+                  <span className="text-gray-400">→</span>
+                  <input
+                    value={translationOf(c)}
+                    onChange={e => setCandidateEdits(prev => ({ ...prev, [c.original]: e.target.value }))}
+                    className="flex-1 min-w-0 px-2 py-1 border border-purple-200 rounded bg-white text-purple-700 font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  />
+                  <button
+                    onClick={() => { const t = translationOf(c).trim(); if (t) onAcceptCandidate(c.original, t); }}
+                    title="단어장에 추가"
+                    className="p-1.5 text-purple-600 hover:bg-purple-100 rounded"
+                  >
+                    <Plus size={16} />
+                  </button>
+                  <button
+                    onClick={() => onDismissCandidate(c.original)}
+                    title="무시 (다시 추천하지 않음)"
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  >
+                    <X size={16} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto min-h-[200px]">
           {Object.keys(glossary).length === 0 ? (

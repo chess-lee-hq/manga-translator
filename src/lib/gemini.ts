@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { parseJsonResponse } from './prompt';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildWorkNotesPrompt } from './translationPrompt';
+import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { recordUsage } from './usageLog';
 
@@ -181,15 +182,34 @@ export async function summarizeWorkNotes(
   pairs: { original: string; translated: string }[],
   previousNotes?: string,
   correctionSection?: string,
-): Promise<string> {
-  if (pairs.length === 0) return previousNotes?.trim() ?? '';
+  existingGlossary: string[] = [],
+): Promise<WorkNotesResult> {
+  if (pairs.length === 0) return { notes: previousNotes?.trim() ?? '', glossary: [] };
 
-  const prompt = buildWorkNotesPrompt(pairs, previousNotes, correctionSection);
+  const prompt = buildWorkNotesPrompt(pairs, previousNotes, correctionSection, existingGlossary);
 
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),
     contents: prompt,
-    config: { temperature: 0.2 },
-  }, '작품 노트 정리');
-  return response.text?.trim() ?? '';
+    config: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          notes: { type: Type.STRING },
+          glossary: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: { original: { type: Type.STRING }, translated: { type: Type.STRING } },
+              required: ['original', 'translated'],
+            },
+          },
+        },
+        required: ['notes', 'glossary'],
+      },
+    },
+  }, '작품 노트 정리 (+단어장 후보)');
+  return parseWorkNotesResponse(response.text ?? '');
 }

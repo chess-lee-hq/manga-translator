@@ -10,6 +10,7 @@ import { ScriptPanel } from './components/ScriptPanel';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
 import { useGlossary } from './hooks/useGlossary';
+import { useGlossaryCandidates } from './hooks/useGlossaryCandidates';
 import { useCorrections } from './hooks/useCorrections';
 import { useWorkNotes } from './hooks/useWorkNotes';
 import { useSessionPersistence, type RestoredSession } from './hooks/useSessionPersistence';
@@ -27,6 +28,7 @@ import { importBackupZip, importFiles, mergeImages, type ImportResult } from './
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { retranslateText, translateRegion } from './lib/translatePage';
 import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
+import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
 import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, Provider, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
@@ -86,6 +88,9 @@ function App() {
   const { notes, saveNotes } = useWorkNotes(workName);
   // 대본에서 직접 고친 번역 — 다음 번역에 교정 예시로 반영
   const { corrections, recordCorrection, removeCorrection, clearCorrections, mergeImported: mergeImportedCorrections } = useCorrections(workName);
+  // 작품 노트를 정리할 때 함께 받은 단어장 후보 (단어장에 이미 들어간 건 화면에서 숨김)
+  const { candidates: storedCandidates, dismissed: dismissedCandidates, addCandidates, removeCandidate, dismissCandidate } = useGlossaryCandidates(workName);
+  const glossaryCandidates = storedCandidates.filter(c => !(c.original in glossary));
   const { translationCache, updatePageResults, setPageResults, mergeTranslations, removePages, clearAll } = useTranslationCache(
     allImages,
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
@@ -133,7 +138,7 @@ function App() {
 
   const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
 
-  /** 지금까지 번역된 대사로 작품 노트를 다시 정리합니다. (고른 엔진에 요청 1회) */
+  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (고른 엔진에 요청 1회) */
   const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (notesBusyRef.current || !activeKey || allImages.length === 0) return;
     const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
@@ -142,10 +147,15 @@ function App() {
     notesBusyRef.current = true;
     setIsGeneratingNotes(true);
     try {
-      const text = provider === 'openai'
-        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections))
-        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, buildCorrectionSection(corrections));
-      if (text) saveNotes(text, translatedPageCount);
+      const known = Object.keys(glossary);
+      const result = provider === 'openai'
+        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections), known)
+        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, buildCorrectionSection(corrections), known);
+      if (result.notes) saveNotes(result.notes, translatedPageCount);
+
+      const found = filterCandidates(result.glossary, pairs.map(p => p.original), glossary, dismissedCandidates);
+      if (found.length > 0) addCandidates(found, glossary);
+      console.info(`[glossary] 모델 제안 ${result.glossary.length}개 중 후보 ${found.length}개 (대사에 2번 이상 나오고 단어장에 없는 것만)`);
     } catch (err: any) {
       console.warn('작품 노트 갱신 실패:', err);
       // 자동 갱신은 번역 품질을 돕는 부가 기능이라 실패해도 화면을 방해하지 않음
@@ -579,6 +589,7 @@ function App() {
         driveTargetName={driveFileName}
         onSaveToDrive={drive.saveToDrive}
         onOpenGlossary={() => setGlossaryDraft({ original: '', translated: '' })}
+        glossaryCandidateCount={glossaryCandidates.length}
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
         onClearCache={handleClearCache}
         onCloseSession={handleCloseSession}
@@ -700,6 +711,9 @@ function App() {
           documentName={loadedFilename}
           onMerge={mergeGlossary}
           onRemove={removeGlossaryEntry}
+          candidates={glossaryCandidates}
+          onAcceptCandidate={(original, translated) => { mergeGlossary({ [original]: translated }); removeCandidate(original); }}
+          onDismissCandidate={dismissCandidate}
           onClose={() => setGlossaryDraft(null)}
         />
       )}

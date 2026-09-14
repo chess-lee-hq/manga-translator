@@ -86,20 +86,29 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
-  it('작품 노트를 OpenAI로 정리한다', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(okResponse('- 주인공: 반말'));
+  it('작품 노트와 단어장 후보를 요청 한 번으로 받는다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"notes":"- 주인공: 반말","glossary":[{"original":"雷神流","translated":"뇌신류"}]}'));
     vi.stubGlobal('fetch', fetchMock);
 
-    const notes = await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트');
+    const result = await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
 
-    expect(notes).toBe('- 주인공: 반말');
-    expect(sentPrompt(fetchMock)).toContain('기존 노트');
+    expect(result).toEqual({ notes: '- 주인공: 반말', glossary: [{ original: '雷神流', translated: '뇌신류' }] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBody(fetchMock).response_format).toEqual({ type: 'json_object' });
+    const prompt = sentPrompt(fetchMock);
+    expect(prompt).toContain('기존 노트');
+    expect(prompt).toContain('이미 단어장에 있는 원문은 제외: リョウ');
+  });
+
+  it('모델이 JSON 형식을 어기면 응답 전체를 노트로 쓴다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse('- 주인공: 반말')));
+    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }])).toEqual({ notes: '- 주인공: 반말', glossary: [] });
   });
 
   it('대사가 없으면 요청하지 않고 기존 노트를 유지한다', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [], '- 기존 노트')).toBe('- 기존 노트');
+    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [], '- 기존 노트')).toEqual({ notes: '- 기존 노트', glossary: [] });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
