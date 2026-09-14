@@ -6,6 +6,8 @@ export interface GridCellInfo {
   box: BoundingBox;
   /** 이 칸이 어느 페이지에서 잘려 왔는지 (여러 페이지를 한 격자에 묶을 때 되돌리기 위함) */
   pageId: string;
+  /** 추정한 화자 키 (`페이지ID|컷:인물`, 모르면 null) */
+  speaker?: string | null;
 }
 
 /** 격자에 넣을 페이지 하나 */
@@ -13,6 +15,8 @@ export interface GridSource {
   pageId: string;
   image: HTMLImageElement;
   boxes: BoundingBox[];
+  /** boxes와 같은 순서의 화자 키 (없으면 화자 힌트 없음) */
+  speakers?: (string | null)[];
 }
 
 export interface GridResult {
@@ -32,10 +36,10 @@ const CELL_PADDING = 20;
  * 열 수를 지정하지 않으면 칸 수에 맞춰 비전 토큰이 가장 적게 드는 배치를 자동으로 고릅니다.
  */
 export async function createGridImage(sources: GridSource[], gridWidth?: number): Promise<GridResult | null> {
-  const entries = sources.flatMap(source => source.boxes.map(box => ({ box, source })));
+  const entries = sources.flatMap(source => source.boxes.map((box, boxIndex) => ({ box, source, speaker: source.speakers?.[boxIndex] ?? null })));
   if (entries.length === 0) return null;
 
-  const cells: GridCellInfo[] = entries.map((entry, index) => ({ id: index + 1, box: entry.box, pageId: entry.source.pageId }));
+  const cells: GridCellInfo[] = entries.map((entry, index) => ({ id: index + 1, box: entry.box, pageId: entry.source.pageId, speaker: entry.speaker }));
   const columns = gridWidth ?? chooseGridColumns(cells.length, CELL_SIZE);
   const rows = Math.ceil(cells.length / columns);
 

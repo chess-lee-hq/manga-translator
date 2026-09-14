@@ -3,6 +3,7 @@ import { retranslateTextGemini, translateGridImage, translateMangaImage, type Gr
 import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
+import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { sanitizeResults } from './results';
 import { RETRY_INSTRUCTION } from './translationPrompt';
 import { applyQualityRetry, stripTypeTags, type QualityReport } from './translationQuality';
@@ -70,6 +71,22 @@ function orderForSpread(results: TranslationResult[], isSpread: boolean): Transl
   return [...results.filter(r => centerX(r) >= 500), ...results.filter(r => centerX(r) < 500)];
 }
 
+/** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
+async function detectPage(image: HTMLImageElement, pageId: string) {
+  const detections = await detectSpeechBubbles(image);
+  const boxes = sortTextByReadingOrder(detections);
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const speakers = assignSpeakers(boxes, detections, width, height).map(s => (s ? `${pageId}|${s}` : null));
+  const known = speakers.filter(Boolean).length;
+  if (boxes.length > 0) {
+    const faces = detections.filter(d => d.classId === 1).length;
+    const bodies = detections.filter(d => d.classId === 0).length;
+    console.debug(`[speaker] 말풍선 ${boxes.length}개 중 ${known}개 화자 추정 (얼굴 ${faces} · 몸 ${bodies})`);
+  }
+  return { boxes, speakers };
+}
+
 /** 격자 한 장을 번역 엔진에 보냅니다. retry면 품질 검사에서 걸린 칸만 모은 재요청 */
 type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined, retry: boolean) => Promise<GridTranslationResult[]>;
 
@@ -79,13 +96,15 @@ function gridRequesterFor(settings: TranslationSettings, fullPage?: UploadedImag
   return (grid, pageCellCounts, retry) => {
     const retryContext = retry ? `${context ?? ''}${RETRY_INSTRUCTION}` : context;
     const label = retry ? '격자 재요청 (품질 검사)' : undefined;
+    const speakerHint = buildSpeakerHint(grid.cells);
     return provider === 'openai'
-      ? translateGridImageOpenAI(openAiVersion, openaiKey, grid.dataUrl, grid.cells.length, glossary, retryContext, { pageCellCounts, label })
+      ? translateGridImageOpenAI(openAiVersion, openaiKey, grid.dataUrl, grid.cells.length, glossary, retryContext, { pageCellCounts, label, speakerHint })
       : translateGridImage(googleKey, base64Of(grid.dataUrl), fullPage?.mimeType ?? 'image/jpeg', grid.cells.length, geminiVersion, {
         fullBase64Image: fullPage ? base64Of(fullPage.src) : undefined,
         glossary,
         context: retryContext,
         label,
+        speakerHint,
       });
   };
 }
@@ -112,7 +131,10 @@ async function translateGridWithQualityCheck(sources: GridSource[], request: Gri
   const { translations, report } = await applyQualityRetry(first, grid.cells, async failed => {
     // 칸 번호 순서 = 페이지 순서 → 페이지 안 박스 순서이므로, 페이지별로 모으면 재요청 격자의 번호가 failed 순서와 같아짐
     const failedSources = sources
-      .map(source => ({ ...source, boxes: failed.filter(c => c.pageId === source.pageId).map(c => c.box) }))
+      .map(source => {
+        const cells = failed.filter(c => c.pageId === source.pageId);
+        return { ...source, boxes: cells.map(c => c.box), speakers: cells.map(c => c.speaker ?? null) };
+      })
       .filter(source => source.boxes.length > 0);
     const retryGrid = await createGridImage(failedSources);
     return retryGrid ? request(retryGrid, countsOf(failedSources), true) : [];
@@ -132,7 +154,7 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
   requireKeys(settings);
   const { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, context } = settings;
   const imgElement = await loadImage(img.src);
-  const textBoxes = sortTextByReadingOrder(await detectSpeechBubbles(imgElement));
+  const { boxes: textBoxes, speakers } = await detectPage(imgElement, 'page');
 
   let rawResults: RawTranslationResult[];
   if (textBoxes.length === 0) {
@@ -144,7 +166,7 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
     ).map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
   } else {
     const checked = await translateGridWithQualityCheck(
-      [{ pageId: 'page', image: imgElement, boxes: textBoxes }],
+      [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers }],
       gridRequesterFor(settings, img),
     );
     if (!checked) return [];
@@ -172,11 +194,11 @@ export async function translatePageBatch(pages: BatchPage[], settings: Translati
 
   const prepared = await Promise.all(pages.map(async page => {
     const image = await loadImage(page.img.src);
-    const boxes = sortTextByReadingOrder(await detectSpeechBubbles(image));
-    return { page, image, boxes };
+    const { boxes, speakers } = await detectPage(image, page.id);
+    return { page, image, boxes, speakers };
   }));
 
-  const sources: GridSource[] = prepared.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes }));
+  const sources: GridSource[] = prepared.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes, speakers: p.speakers }));
   const sizeById = new Map(prepared.map(p => [p.page.id, { width: p.image.width, height: p.image.height }]));
   const spreadById = new Map(prepared.map(p => [p.page.id, !!p.page.img.isSpread]));
 

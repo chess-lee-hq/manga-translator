@@ -39,6 +39,8 @@ export interface GridPromptOptions extends PromptContextOptions {
   expectedCells: number;
   /** 여러 페이지를 한 격자에 묶었을 때 페이지별 칸 수 (예: [6, 5] = 1~6번은 첫 페이지, 7~11번은 다음 페이지) */
   pageCellCounts?: number[];
+  /** 얼굴 위치로 추정한 화자 힌트 (speakerHints.buildSpeakerHint) */
+  speakerHint?: string;
   /** 격자 외에 원본 페이지 전체 이미지도 함께 보내는 경우 (Gemini 보조 모드) */
   withFullPage?: boolean;
   /**
@@ -49,7 +51,7 @@ export interface GridPromptOptions extends PromptContextOptions {
 }
 
 /** 말풍선 격자 이미지를 읽고 번역하도록 요청하는 프롬프트 */
-export function buildGridPrompt({ expectedCells, pageCellCounts, withFullPage = false, output, ...contextOptions }: GridPromptOptions): string {
+export function buildGridPrompt({ expectedCells, pageCellCounts, speakerHint = '', withFullPage = false, output, ...contextOptions }: GridPromptOptions): string {
   const images = withFullPage
     ? `두 장의 이미지를 첨부했어:
 1. 원본 만화 페이지 전체 이미지 (문맥·상황·인물 표정 파악용)
@@ -78,7 +80,7 @@ export function buildGridPrompt({ expectedCells, pageCellCounts, withFullPage = 
 
 ${images}
 크롭 이미지의 각 칸(Cell) 왼쪽 위에는 빨간색 글씨로 고유 번호(예: #1, #2)가 적혀 있어.
-${pageGuide}
+${pageGuide}${speakerHint}
 
 ${READING_RULES}
 

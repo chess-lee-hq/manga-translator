@@ -79,10 +79,10 @@ export async function translateGridImageOpenAI(
   expectedCells: number,
   glossary?: Record<string, string>,
   context?: string,
-  options: { pageCellCounts?: number[]; label?: string } = {},
+  options: { pageCellCounts?: number[]; label?: string; speakerHint?: string } = {},
 ): Promise<GridTranslationResult[]> {
-  const { pageCellCounts, label } = options;
-  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, output: 'cells', glossary, context });
+  const { pageCellCounts, label, speakerHint } = options;
+  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, speakerHint, output: 'cells', glossary, context });
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
