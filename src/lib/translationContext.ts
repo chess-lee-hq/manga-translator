@@ -1,5 +1,6 @@
 import type { TranslationCache, UploadedImage } from '../types';
 import { buildCacheKey } from './cacheKey';
+import { buildCorrectionSection, type Correction } from './corrections';
 import { stripFurigana } from './prompt';
 
 export interface DialoguePair {
@@ -39,10 +40,12 @@ export function collectRecentPairs(
 }
 
 /** 번역 프롬프트에 붙일 맥락 지시문 (작품 노트 + 직전 대사). 넣을 내용이 없으면 빈 문자열 */
-export function buildContextInstruction(notes: string | undefined, pairs: DialoguePair[]): string {
+export function buildContextInstruction(notes: string | undefined, pairs: DialoguePair[], corrections: Correction[] = []): string {
   const sections: string[] = [];
   const trimmedNotes = notes?.trim();
   if (trimmedNotes) sections.push(`## 작품 노트 (인물·말투·호칭)\n${trimmedNotes}`);
+  const correctionSection = buildCorrectionSection(corrections);
+  if (correctionSection) sections.push(correctionSection);
   if (pairs.length > 0) {
     const lines = pairs.map(p => `- ${p.original || '(원문 없음)'} → ${p.translated}`).join('\n');
     sections.push(`## 직전까지의 번역 (원문 → 번역)\n${lines}`);

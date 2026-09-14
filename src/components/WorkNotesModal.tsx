@@ -1,5 +1,6 @@
-import { Loader2, NotebookPen, RefreshCw, X } from 'lucide-react';
+import { Loader2, NotebookPen, PenLine, RefreshCw, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
+import type { Correction } from '../lib/corrections';
 import type { WorkNotes } from '../lib/workNotes';
 
 interface WorkNotesModalProps {
@@ -15,12 +16,16 @@ interface WorkNotesModalProps {
   onRegenerate: () => void;
   onToggleAutoUpdate: () => void;
   onToggleContextFirst: () => void;
+  /** 대본에서 직접 고친 번역 (최신이 앞) */
+  corrections: Correction[];
+  onRemoveCorrection: (original: string) => void;
+  onClearCorrections: () => void;
   onClose: () => void;
 }
 
 export function WorkNotesModal({
   workName, notes, recentPairCount, isRegenerating, canRegenerate, autoUpdate, contextFirst,
-  onSave, onRegenerate, onToggleAutoUpdate, onToggleContextFirst, onClose,
+  onSave, onRegenerate, onToggleAutoUpdate, onToggleContextFirst, corrections, onRemoveCorrection, onClearCorrections, onClose,
 }: WorkNotesModalProps) {
   const [text, setText] = useState(notes?.text ?? '');
   const [syncedAt, setSyncedAt] = useState(notes?.updatedAt ?? '');
@@ -33,7 +38,7 @@ export function WorkNotesModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-all">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 animate-in fade-in zoom-in duration-200 max-h-[85vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 animate-in fade-in zoom-in duration-200 max-h-[85vh] flex flex-col overflow-y-auto">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3 text-teal-600">
             <NotebookPen size={24} />
@@ -52,15 +57,60 @@ export function WorkNotesModal({
         <textarea
           value={text}
           onChange={e => setText(e.target.value)}
-          rows={12}
+          rows={9}
           placeholder={'예시)\n- 주인공(료): 거친 반말, 어미 "~다고", 상대를 "너"라고 부름\n- 스승: 정중한 존댓말, 주인공을 "료 군"이라고 부름\n- 고유명사: 雷神流 → 뇌신류'}
-          className="flex-1 min-h-[200px] w-full p-3 text-sm text-gray-800 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none font-mono leading-relaxed"
+          className="min-h-[160px] w-full p-3 text-sm text-gray-800 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none font-mono leading-relaxed"
         />
+
+        <div className="mt-4 border border-gray-200 rounded-lg flex flex-col min-h-0">
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 rounded-t-lg">
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <PenLine size={14} className="text-teal-600" />
+              내가 고친 번역 <span className="text-teal-700">{corrections.length}개</span>
+              <span className="text-xs font-normal text-gray-500">— 최근 8개가 다음 번역에 예시로 들어갑니다</span>
+            </div>
+            {corrections.length > 0 && (
+              <button
+                onClick={() => { if (window.confirm('이 작품에서 고친 번역 기록을 모두 지울까요? (번역 결과는 그대로 남습니다)')) onClearCorrections(); }}
+                className="text-xs text-gray-500 hover:text-red-600"
+              >
+                모두 지우기
+              </button>
+            )}
+          </div>
+          {corrections.length === 0 ? (
+            <p className="px-3 py-3 text-xs text-gray-400">
+              오른쪽 대본에서 번역을 직접 고치면 여기에 쌓이고, 같은 실수를 반복하지 않도록 다음 번역에 반영됩니다.
+            </p>
+          ) : (
+            <ul className="max-h-40 overflow-y-auto divide-y divide-gray-100">
+              {corrections.map(c => (
+                <li key={c.original} className="flex items-start gap-2 px-3 py-2 text-xs group">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-gray-500 truncate" title={c.original}>{c.original}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5">
+                      <span className="text-gray-400 line-through">{c.before}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-teal-700 font-medium">{c.after}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onRemoveCorrection(c.original)}
+                    title="이 교정은 다음 번역에 반영하지 않기"
+                    className="p-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <div className="mt-3 flex flex-col gap-2 text-xs text-gray-600">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={autoUpdate} onChange={onToggleAutoUpdate} className="accent-teal-600" />
-            번역이 쌓이면 노트를 자동으로 갱신 (처음 3장, 이후 10장마다 · Gemini 요청 1회)
+            번역이 쌓이면 노트를 자동으로 갱신 (처음 3장, 이후 10장마다 · 번역 엔진 요청 1회)
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={contextFirst} onChange={onToggleContextFirst} className="accent-teal-600" />

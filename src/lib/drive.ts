@@ -1,6 +1,7 @@
 import { buildCacheKey } from "./cacheKey";
 import { sanitizeResults } from "./results";
 import JSZip from 'jszip';
+import type { Correction } from './corrections';
 import type { TranslationResult } from './gemini';
 
 export interface MangaSaveData {
@@ -10,6 +11,8 @@ export interface MangaSaveData {
   glossary?: Record<string, string>;
   /** 작품 노트 (인물·말투 요약) */
   notes?: string;
+  /** 사용자가 직접 고친 번역 기록 */
+  corrections?: Correction[];
   images: {
     filename: string;
     mimeType: string;
@@ -155,6 +158,7 @@ export async function createMangaZip(
   lastReadPage: number = 0,
   glossary?: Record<string, string>,
   notes?: string,
+  corrections?: Correction[],
 ): Promise<Blob> {
   const zip = new JSZip();
   const manifest: MangaSaveData = {
@@ -163,6 +167,7 @@ export async function createMangaZip(
     lastReadPage,
     glossary,
     notes,
+    corrections: corrections?.length ? corrections : undefined,
     images: []
   };
 
@@ -198,6 +203,7 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
   lastReadPage: number,
   glossary?: Record<string, string>,
   notes?: string,
+  corrections?: Correction[],
 }> {
   const zip = await JSZip.loadAsync(zipBlob);
   const dataFile = zip.file("manga_data.json");
@@ -238,5 +244,5 @@ export async function extractMangaZip(zipBlob: Blob): Promise<{
     }
   }
 
-  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0, glossary: manifest.glossary, notes: manifest.notes };
+  return { images: loadedImages, translations: loadedTranslations, lastReadPage: manifest.lastReadPage || 0, glossary: manifest.glossary, notes: manifest.notes, corrections: Array.isArray(manifest.corrections) ? manifest.corrections : undefined };
 }

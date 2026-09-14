@@ -142,7 +142,7 @@ ${originalText}
 }
 
 /** 작품 노트(말투·호칭 기억)를 정리할 때 쓰는 프롬프트 */
-export function buildWorkNotesPrompt(pairs: { original: string; translated: string }[], previousNotes?: string): string {
+export function buildWorkNotesPrompt(pairs: { original: string; translated: string }[], previousNotes?: string, correctionSection = ''): string {
   return `너는 만화 번역 감수자야. 아래는 같은 작품에서 지금까지 번역한 대사들이야.
 다음 페이지를 번역할 때 말투와 표기를 일관되게 유지할 수 있도록 "작품 노트"를 한국어로 정리해.
 
@@ -151,7 +151,7 @@ export function buildWorkNotesPrompt(pairs: { original: string; translated: stri
 - 항목: 등장인물별 말투(반말/존댓말, 거친지 정중한지, 특징적인 어미), 인물 간 호칭, 반복되는 고유명사의 한국어 표기, 작품 전반의 톤.
 - 대사에서 확인되는 내용만 적어. 추측은 적지 마.
 - 설명이나 머리말 없이 노트 본문만 출력해.
-${previousNotes?.trim() ? `\n# 기존 노트 (새 대사를 반영해 갱신해)\n${previousNotes.trim()}\n` : ''}
+${previousNotes?.trim() ? `\n# 기존 노트 (새 대사를 반영해 갱신해)\n${previousNotes.trim()}\n` : ''}${correctionSection ? `\n# ${correctionSection.replace(/^## /, '')}\n(사용자가 고친 방향에서 말투·호칭·표기 규칙을 읽어내 노트에 반영해)\n` : ''}
 # 지금까지의 대사 (원문 → 번역)
 ${pairs.map(p => `- ${p.original || '(원문 없음)'} → ${p.translated}`).join('\n')}`;
 }

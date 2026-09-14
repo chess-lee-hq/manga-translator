@@ -132,12 +132,13 @@ export async function summarizeWorkNotesOpenAI(
   apiKey: string,
   pairs: { original: string; translated: string }[],
   previousNotes?: string,
+  correctionSection?: string,
 ): Promise<string> {
   if (pairs.length === 0) return previousNotes?.trim() ?? '';
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [{ role: 'user', content: buildWorkNotesPrompt(pairs, previousNotes) }],
+    messages: [{ role: 'user', content: buildWorkNotesPrompt(pairs, previousNotes, correctionSection) }],
   }, '작품 노트 정리');
 
   return response?.choices?.[0]?.message?.content?.trim() ?? '';

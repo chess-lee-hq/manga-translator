@@ -180,10 +180,11 @@ export async function summarizeWorkNotes(
   geminiVersion: GeminiVersion,
   pairs: { original: string; translated: string }[],
   previousNotes?: string,
+  correctionSection?: string,
 ): Promise<string> {
   if (pairs.length === 0) return previousNotes?.trim() ?? '';
 
-  const prompt = buildWorkNotesPrompt(pairs, previousNotes);
+  const prompt = buildWorkNotesPrompt(pairs, previousNotes, correctionSection);
 
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),

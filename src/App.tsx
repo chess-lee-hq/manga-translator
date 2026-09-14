@@ -10,6 +10,7 @@ import { ScriptPanel } from './components/ScriptPanel';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
 import { useGlossary } from './hooks/useGlossary';
+import { useCorrections } from './hooks/useCorrections';
 import { useWorkNotes } from './hooks/useWorkNotes';
 import { useSessionPersistence, type RestoredSession } from './hooks/useSessionPersistence';
 import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
@@ -25,7 +26,9 @@ import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { retranslateText, translateRegion } from './lib/translatePage';
-import { collectRecentPairs } from './lib/translationContext';
+import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
+import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
+import { saveWorkNotes } from './lib/workNotes';
 import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, Provider, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
@@ -81,6 +84,8 @@ function App() {
   // 작품 노트는 작품(불러온 파일 이름)별로 저장
   const workName = loadedFilename ?? allImages[0]?.file.name ?? 'default';
   const { notes, saveNotes } = useWorkNotes(workName);
+  // 대본에서 직접 고친 번역 — 다음 번역에 교정 예시로 반영
+  const { corrections, recordCorrection, removeCorrection, clearCorrections, mergeImported: mergeImportedCorrections } = useCorrections(workName);
   const { translationCache, updatePageResults, setPageResults, mergeTranslations, removePages, clearAll } = useTranslationCache(
     allImages,
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
@@ -104,6 +109,7 @@ function App() {
     translationCache,
     onPageTranslated: setPageResults,
     notes: notes?.text,
+    corrections,
     contextFirst,
   });
 
@@ -137,8 +143,8 @@ function App() {
     setIsGeneratingNotes(true);
     try {
       const text = provider === 'openai'
-        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text)
-        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text);
+        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections))
+        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, buildCorrectionSection(corrections));
       if (text) saveNotes(text, translatedPageCount);
     } catch (err: any) {
       console.warn('작품 노트 갱신 실패:', err);
@@ -195,9 +201,17 @@ function App() {
       }
       // 드라이브에 저장할 때는 이 백업 이름을 기본값으로 써서 같은 파일을 계속 덮어쓰게 함
       if (result.archiveFileName) setDriveFileName(result.archiveFileName);
+      // 복원 후의 작품 이름으로 저장해야 함 (지금 훅의 workName은 아직 복원 전 작품)
+      const targetWork = result.loadedFilename ?? result.images[0]?.file.name ?? 'default';
       if (result.notes?.trim()) {
-        saveNotes(result.notes.trim(), 0);
+        if (targetWork === workName) saveNotes(result.notes.trim(), 0);
+        else saveWorkNotes(targetWork, { text: result.notes.trim(), pageCount: 0, updatedAt: new Date().toISOString() });
         info.push('작품 노트도 함께 불러왔습니다.');
+      }
+      if (result.corrections?.length) {
+        if (targetWork === workName) mergeImportedCorrections(result.corrections);
+        else saveCorrections(targetWork, mergeCorrections(loadCorrections(targetWork), result.corrections));
+        info.push(`내가 고친 번역 ${result.corrections.length}개를 불러왔습니다.`);
       }
     } else {
       if (result.loadedFilename) setLoadedFilename(result.loadedFilename);
@@ -226,7 +240,7 @@ function App() {
   };
 
   const drive = useDriveSync({
-    buildBackupZip: () => createMangaZip(allImages, translationCache, currentPageIndex, glossary, notes?.text),
+    buildBackupZip: () => createMangaZip(allImages, translationCache, currentPageIndex, glossary, notes?.text, corrections),
     defaultFilename: () => defaultBackupFilename(driveFileName, loadedFilename),
     onSaved: filename => setDriveFileName(filename),
     restoreBackup: async (zipBlob, filename) => {
@@ -317,8 +331,16 @@ function App() {
   };
 
   const handleSaveEdit = (key: string, id: string, text: string) => {
+    const edited = translationCache[key]?.find(r => r.id === id);
+    if (edited) recordCorrection(edited.original_text, edited.translated_text, text);
     updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: text } : r)));
   };
+
+  /** 재번역·새 영역 번역에도 자동 번역과 같은 맥락(작품 노트·앞 대사·내 교정)을 넣음 */
+  const settingsWithContext = (imgIndex: number): TranslationSettings => ({
+    ...settings,
+    context: buildContextInstruction(notes?.text, collectRecentPairs(allImages, translationCache, imgIndex), corrections),
+  });
 
   const handleCreateBox = async (imgIndex: number, box: Box2d) => {
     const img = allImages[imgIndex];
@@ -334,7 +356,7 @@ function App() {
     setBubblePending(id, true);
 
     try {
-      const { originalText, translatedText } = await translateRegion(img, box, settings);
+      const { originalText, translatedText } = await translateRegion(img, box, settingsWithContext(imgIndex));
       updatePageResults(key, results =>
         results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText } : r)),
       );
@@ -354,7 +376,7 @@ function App() {
     const key = keyOf(imgIndex);
     setBubblePending(id, true);
     try {
-      const translated = await retranslateText(originalText, settings);
+      const translated = await retranslateText(originalText, settingsWithContext(imgIndex));
       updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: translated } : r)));
     } catch (err: any) {
       alert('재번역 실패: ' + err.message);
@@ -695,6 +717,9 @@ function App() {
           onRegenerate={() => regenerateWorkNotes()}
           onToggleAutoUpdate={() => updateAutoNotes(!autoNotes)}
           onToggleContextFirst={() => updateContextFirst(!contextFirst)}
+          corrections={corrections}
+          onRemoveCorrection={removeCorrection}
+          onClearCorrections={clearCorrections}
           onClose={() => setIsWorkNotesOpen(false)}
         />
       )}
