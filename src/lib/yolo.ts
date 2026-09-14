@@ -3,7 +3,9 @@ import type { DetectRequest, DetectResponse } from './yolo.worker';
 
 export type { BoundingBox };
 
-const getModelUrl = () => new URL(`${import.meta.env.BASE_URL}manga109_yolo_s.onnx`, document.baseURI).href;
+// 가중치를 float16으로 저장한 모델(43MB → 21.5MB). 실행 시 float32로 되돌려 계산하므로 검출 결과는 원본과 같음
+// 변환 방법: scripts/convert_yolo_fp16_weights.py
+const getModelUrl = () => new URL(`${import.meta.env.BASE_URL}manga109_yolo_s_fp16w.onnx`, document.baseURI).href;
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
