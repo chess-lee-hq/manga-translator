@@ -81,15 +81,6 @@ export async function createGridImage(sources: GridSource[], gridWidth?: number)
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.8), cells };
 }
 
-/** 한 페이지만 격자로 만듭니다. */
-export async function createGridImageFromBoxes(
-  image: HTMLImageElement,
-  boxes: BoundingBox[],
-  gridWidth?: number,
-): Promise<GridResult | null> {
-  return createGridImage([{ pageId: 'page', image, boxes }], gridWidth);
-}
-
 export async function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();

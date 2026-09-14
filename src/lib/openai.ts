@@ -78,15 +78,16 @@ export async function translateGridImageOpenAI(
   expectedCells: number,
   glossary?: Record<string, string>,
   context?: string,
-  pageCellCounts?: number[],
+  options: { pageCellCounts?: number[]; label?: string } = {},
 ): Promise<GridTranslationResult[]> {
+  const { pageCellCounts, label } = options;
   const prompt = buildGridPrompt({ expectedCells, pageCellCounts, output: 'cells', glossary, context });
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
     messages: [imageMessage(prompt, gridDataUrl)],
     response_format: { type: 'json_object' },
-  }, pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역');
+  }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'));
 
   return parseCells<GridTranslationResult>(response?.choices?.[0]?.message?.content);
 }

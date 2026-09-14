@@ -111,6 +111,8 @@ export interface GridRequestOptions {
   fullBase64Image?: string;
   glossary?: Record<string, string>;
   context?: string;
+  /** 토큰 사용량 로그에 표시할 이름 */
+  label?: string;
 }
 
 /** [보조] 말풍선 격자 이미지를 Gemini로 읽고 번역합니다. */
@@ -122,7 +124,7 @@ export async function translateGridImage(
   geminiVersion: GeminiVersion = '3.6',
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { fullBase64Image, glossary, context } = options;
+  const { fullBase64Image, glossary, context, label } = options;
 
   const prompt = buildGridPrompt({
     expectedCells,
@@ -157,7 +159,7 @@ export async function translateGridImage(
       },
       temperature: 0.35,
     },
-  }, '격자 번역');
+  }, label ?? '격자 번역');
 
   const text = response.text;
   if (!text) throw new Error("No response from Gemini API");
