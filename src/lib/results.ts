@@ -5,6 +5,10 @@ function isValidBox(box: unknown): box is [number, number, number, number] {
 }
 
 const DISPLAY_MODES = ['cover', 'tag'] as const;
+
+function isValidTagPos(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 && value.every(n => typeof n === 'number' && Number.isFinite(n));
+}
 const TEXT_DIRECTIONS = ['horizontal', 'vertical'] as const;
 
 /**
@@ -27,5 +31,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       translated_text: r.translated_text as string,
       display_mode: DISPLAY_MODES.includes(r.display_mode as never) ? r.display_mode : undefined,
       text_direction: TEXT_DIRECTIONS.includes(r.text_direction as never) ? r.text_direction : undefined,
+      tag_pos: isValidTagPos(r.tag_pos) ? r.tag_pos : undefined,
     }));
 }

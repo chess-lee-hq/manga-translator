@@ -42,4 +42,19 @@ describe('sanitizeResults — 빈 번역 자동 정리', () => {
     expect(odd.display_mode).toBeUndefined();
     expect(odd.text_direction).toBeUndefined();
   });
+
+  it('작은 딱지 수동 위치(tag_pos)는 숫자 2개짜리만 남긴다', () => {
+    const [ok] = sanitizeResults([
+      { id: 'a', translated_text: '가', box_2d: [1, 2, 3, 4], tag_pos: [100, 200] },
+    ])!;
+    expect(ok.tag_pos).toEqual([100, 200]);
+    const [missing, bad, wrongLength] = sanitizeResults([
+      { id: 'b', translated_text: '가', box_2d: [1, 2, 3, 4] },
+      { id: 'c', translated_text: '가', box_2d: [1, 2, 3, 4], tag_pos: [100, 'x'] },
+      { id: 'd', translated_text: '가', box_2d: [1, 2, 3, 4], tag_pos: [100, 200, 300] },
+    ])!;
+    expect(missing.tag_pos).toBeUndefined();
+    expect(bad.tag_pos).toBeUndefined();
+    expect(wrongLength.tag_pos).toBeUndefined();
+  });
 });

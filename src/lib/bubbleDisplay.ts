@@ -118,35 +118,42 @@ export function layoutTags(
     const width = Math.max(...lines.map(measureLine)) + padX * 2;
     const height = lines.length * fontSize * OVERLAY_STYLE.lineHeight + padY * 2;
 
-    const anchor = areas[i];
-    const right = anchor.x + anchor.width + gap;
-    const left = anchor.x - gap - width;
-    const below = anchor.y + anchor.height + gap;
-    const above = anchor.y - gap - height;
-    const middleX = anchor.x + anchor.width / 2 - width / 2;
-    const middleY = anchor.y + anchor.height / 2 - height / 2;
-    const candidates: [number, number][] = [
-      [right, middleY], [left, middleY], [middleX, below], [middleX, above],
-      [right, below], [left, below], [right, above], [left, above],
-    ];
+    let best: Rect;
+    if (result.tag_pos) {
+      // 사용자가 직접 옮긴 자리 (0~1000 정규화 좌표) — 자동 배치를 건너뜀
+      const [yminNorm, xminNorm] = result.tag_pos;
+      best = clampToPage({ x: (xminNorm / 1000) * pageWidth, y: (yminNorm / 1000) * pageHeight, width, height }, pageWidth, pageHeight);
+    } else {
+      const anchor = areas[i];
+      const right = anchor.x + anchor.width + gap;
+      const left = anchor.x - gap - width;
+      const below = anchor.y + anchor.height + gap;
+      const above = anchor.y - gap - height;
+      const middleX = anchor.x + anchor.width / 2 - width / 2;
+      const middleY = anchor.y + anchor.height / 2 - height / 2;
+      const candidates: [number, number][] = [
+        [right, middleY], [left, middleY], [middleX, below], [middleX, above],
+        [right, below], [left, below], [right, above], [left, above],
+      ];
 
-    let best = clampToPage({ x: candidates[0][0], y: candidates[0][1], width, height }, pageWidth, pageHeight);
-    let bestScore = Infinity;
-    for (const [x, y] of candidates) {
-      const rect = clampToPage({ x, y, width, height }, pageWidth, pageHeight);
-      // 원문 효과음을 가리는 것이 가장 나쁘고, 그다음 이미 놓인 딱지, 다른 말풍선 순
-      let score = overlapArea(rect, anchor) * 4;
-      areas.forEach((other, j) => {
-        if (j !== i) score += overlapArea(rect, other);
-      });
-      placed.forEach(other => {
-        score += overlapArea(rect, other) * 2;
-      });
-      // 페이지 끝에 걸려 밀려난 거리만큼 약한 벌점
-      score += (Math.abs(rect.x - x) + Math.abs(rect.y - y)) * fontSize * 0.5;
-      if (score < bestScore - 1e-6) {
-        best = rect;
-        bestScore = score;
+      best = clampToPage({ x: candidates[0][0], y: candidates[0][1], width, height }, pageWidth, pageHeight);
+      let bestScore = Infinity;
+      for (const [x, y] of candidates) {
+        const rect = clampToPage({ x, y, width, height }, pageWidth, pageHeight);
+        // 원문 효과음을 가리는 것이 가장 나쁘고, 그다음 이미 놓인 딱지, 다른 말풍선 순
+        let score = overlapArea(rect, anchor) * 4;
+        areas.forEach((other, j) => {
+          if (j !== i) score += overlapArea(rect, other);
+        });
+        placed.forEach(other => {
+          score += overlapArea(rect, other) * 2;
+        });
+        // 페이지 끝에 걸려 밀려난 거리만큼 약한 벌점
+        score += (Math.abs(rect.x - x) + Math.abs(rect.y - y)) * fontSize * 0.5;
+        if (score < bestScore - 1e-6) {
+          best = rect;
+          bestScore = score;
+        }
       }
     }
 

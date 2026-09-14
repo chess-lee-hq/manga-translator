@@ -1,3 +1,4 @@
+import { Trash2, Undo2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface BoxEditorProps {
@@ -9,10 +10,18 @@ interface BoxEditorProps {
   onToggleDisplayMode?: () => void;
   textDirection?: 'horizontal' | 'vertical';
   onToggleTextDirection?: () => void;
+  onDelete?: () => void;
+  /** false면 크기 조절 손잡이 없이 이동만 가능 (작은 딱지 위치 지정용) */
+  resizable?: boolean;
+  /** 있으면 자동 배치로 되돌리는 작은 버튼을 보여줌 (크기 조절 손잡이 자리를 대신 씀) */
+  onResetPosition?: () => void;
   children: React.ReactNode;
 }
 
-export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode, textDirection, onToggleTextDirection, children }: BoxEditorProps) {
+export function BoxEditor({
+  initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode,
+  textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition, children,
+}: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
   useEffect(() => { boxRef.current = box; }, [box]);
@@ -69,6 +78,9 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
   const height = `${((box[2] - box[0]) / 1000) * 100}%`;
   const width = `${((box[3] - box[1]) / 1000) * 100}%`;
 
+  // 세로쓰기에서는 묶음/풀림(음절 단위 줄바꿈)이 아무 효과가 없으므로(세로쓰기는 항상 한 글자씩 쌓음) 숨김
+  const showKeepAll = !!onToggleKeepAll && textDirection !== 'vertical';
+
   return (
     <div
       ref={wrapperRef}
@@ -101,24 +113,49 @@ export function BoxEditor({ initialBox, onChange, isKeepAll = true, onToggleKeep
           {textDirection === 'vertical' ? '세로' : '가로'}
         </button>
       )}
-      {onToggleKeepAll && (
+      {showKeepAll && (
         <button
           className="absolute -top-3 -right-3 px-1.5 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
           onPointerDown={(e) => {
             e.stopPropagation();
-            onToggleKeepAll();
+            onToggleKeepAll!();
           }}
           title="단어 묶음(Keep-all) 해제 토글"
         >
           {isKeepAll ? '묶음' : '풀림'}
         </button>
       )}
-      <div 
-        className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full cursor-se-resize shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center justify-center"
-        onPointerDown={(e) => handlePointerDown(e, 'resize')}
-      >
-        <div className="w-1.5 h-1.5 bg-white rounded-full pointer-events-none" />
-      </div>
+      {onDelete && (
+        <button
+          className="absolute -top-3 left-1/2 -translate-x-1/2 p-1 bg-red-600 text-white rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          title="이 번역 삭제하기"
+        >
+          <Trash2 size={11} />
+        </button>
+      )}
+      {resizable ? (
+        <div
+          className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full cursor-se-resize shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center justify-center"
+          onPointerDown={(e) => handlePointerDown(e, 'resize')}
+        >
+          <div className="w-1.5 h-1.5 bg-white rounded-full pointer-events-none" />
+        </div>
+      ) : onResetPosition && (
+        <button
+          className="absolute -bottom-3 -right-3 p-1 bg-gray-700 text-white rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onResetPosition();
+          }}
+          title="위치를 자동 배치로 되돌리기"
+        >
+          <Undo2 size={11} />
+        </button>
+      )}
     </div>
   );
 }

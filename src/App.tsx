@@ -331,6 +331,11 @@ function App() {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, text_direction: direction } : r)));
   };
 
+  /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
+  const handleSetTagPosition = (imgIndex: number, id: string, pos: [number, number] | null) => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)));
+  };
+
   const handleReorder = (imgIndex: number, fromIndex: number, toIndex: number) => {
     updatePageResults(keyOf(imgIndex), results => {
       const next = [...results];
@@ -657,6 +662,8 @@ function App() {
                 onToggleKeepAll={handleToggleKeepAll}
                 onToggleDisplayMode={handleToggleDisplayMode}
                 onSetTextDirection={handleSetTextDirection}
+                onSetTagPosition={handleSetTagPosition}
+                onDelete={handleDeleteBubble}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}
                 footer={

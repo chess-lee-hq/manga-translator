@@ -22,6 +22,9 @@ interface MangaViewerProps {
   onToggleKeepAll: (imgIndex: number, id: string) => void;
   onToggleDisplayMode: (imgIndex: number, id: string) => void;
   onSetTextDirection: (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => void;
+  /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
+  onSetTagPosition: (imgIndex: number, id: string, pos: [number, number] | null) => void;
+  onDelete: (imgIndex: number, id: string) => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
   footer: ReactNode;
@@ -46,7 +49,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
-  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection, onCreateBox, onDownloadPage, footer,
+  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection, onSetTagPosition, onDelete, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -197,6 +200,21 @@ export function MangaViewer({
                           if (resolveDisplayMode(result) === 'tag') {
                             // 효과음 등: 원문은 그대로 보이게 두고, 원문 영역 바깥에 작은 딱지
                             const tag = tagLayouts[result.id];
+                            const tagInner = tag && (
+                              <>
+                                {tag.lines.map((line, i) => (
+                                  <div key={i} style={{ whiteSpace: 'pre' }}>{line}</div>
+                                ))}
+                              </>
+                            );
+                            const tagStyle = tag && {
+                              fontSize: tag.fontSize,
+                              fontWeight: OVERLAY_STYLE.fontWeight,
+                              lineHeight: OVERLAY_STYLE.lineHeight,
+                              letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
+                              borderRadius: TAG_STYLE.radiusPx * scale,
+                              boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx * scale}px ${OVERLAY_STYLE.shadowBlurPx * scale}px rgba(0, 0, 0, 0.15)`,
+                            };
                             return (
                               <Fragment key={result.id}>
                                 {isEditingBoxes && (
@@ -207,11 +225,31 @@ export function MangaViewer({
                                     onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
                                     displayMode="tag"
                                     onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                    onDelete={() => onDelete(imgIndex, result.id)}
                                   >
                                     <span className="text-[10px] font-bold text-indigo-700 bg-white/80 px-1 rounded pointer-events-none">원문 영역</span>
                                   </BoxEditor>
                                 )}
-                                {tag && (
+                                {tag && (isEditingBoxes ? (
+                                  <BoxEditor
+                                    initialBox={[
+                                      (tag.rect.y / pageHeight) * 1000,
+                                      (tag.rect.x / pageWidth) * 1000,
+                                      ((tag.rect.y + tag.rect.height) / pageHeight) * 1000,
+                                      ((tag.rect.x + tag.rect.width) / pageWidth) * 1000,
+                                    ]}
+                                    onChange={(newBox: Box2d) => onSetTagPosition(imgIndex, result.id, [newBox[0], newBox[1]])}
+                                    resizable={false}
+                                    onResetPosition={result.tag_pos ? () => onSetTagPosition(imgIndex, result.id, null) : undefined}
+                                  >
+                                    <div
+                                      className="bg-white text-gray-900 flex flex-col items-center justify-center w-full h-full pointer-events-none"
+                                      style={tagStyle}
+                                    >
+                                      {tagInner}
+                                    </div>
+                                  </BoxEditor>
+                                ) : (
                                   <div
                                     className="absolute bg-white text-gray-900 flex flex-col items-center justify-center pointer-events-none"
                                     style={{
@@ -220,19 +258,12 @@ export function MangaViewer({
                                       width: tag.rect.width,
                                       height: tag.rect.height,
                                       zIndex: 25,
-                                      fontSize: tag.fontSize,
-                                      fontWeight: OVERLAY_STYLE.fontWeight,
-                                      lineHeight: OVERLAY_STYLE.lineHeight,
-                                      letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
-                                      borderRadius: TAG_STYLE.radiusPx * scale,
-                                      boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx * scale}px ${OVERLAY_STYLE.shadowBlurPx * scale}px rgba(0, 0, 0, 0.15)`,
+                                      ...tagStyle,
                                     }}
                                   >
-                                    {tag.lines.map((line, i) => (
-                                      <div key={i} style={{ whiteSpace: 'pre' }}>{line}</div>
-                                    ))}
+                                    {tagInner}
                                   </div>
-                                )}
+                                ))}
                               </Fragment>
                             );
                           }
@@ -287,6 +318,7 @@ export function MangaViewer({
                                 onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
+                                onDelete={() => onDelete(imgIndex, result.id)}
                               >
                                 {textContent}
                               </BoxEditor>

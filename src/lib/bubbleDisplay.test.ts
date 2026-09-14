@@ -75,4 +75,27 @@ describe('layoutTags', () => {
     expect(tags.a.rect.x).toBeCloseTo(1012);
     expect(tags.a.rect.width).toBeCloseTo(96);
   });
+
+  it('tag_pos가 있으면 자동 배치를 건너뛰고 그 자리를 쓴다', () => {
+    const withPos = { ...sfxAt('a', [400, 400, 500, 500]), tag_pos: [100, 200] as [number, number] };
+    const tags = layoutTags([withPos], 1000, 1000, 1, measure);
+    expect(tags.a.rect.x).toBeCloseTo(200); // 200/1000 * 1000
+    expect(tags.a.rect.y).toBeCloseTo(100); // 100/1000 * 1000
+  });
+
+  it('tag_pos로 페이지 밖을 가리켜도 안쪽으로 당겨진다', () => {
+    const withPos = { ...sfxAt('a', [400, 400, 500, 500]), tag_pos: [-50, 990] as [number, number] };
+    const tags = layoutTags([withPos], 1000, 1000, 1, measure);
+    expect(tags.a.rect.x).toBeLessThanOrEqual(1000 - tags.a.rect.width);
+    expect(tags.a.rect.y).toBeGreaterThanOrEqual(0);
+  });
+
+  it('tag_pos로 고정한 딱지도 뒤에 자동 배치되는 딱지가 피해간다', () => {
+    // a는 다른 원문(작은 상자)에서 왔지만, b가 자동으로 가려던 자리(436.8, 506)에 직접 옮겨둠
+    const pinned = { ...sfxAt('a', [10, 10, 60, 60]), display_mode: 'tag' as const, tag_pos: [436.8, 506] as [number, number] };
+    const tags = layoutTags([pinned, sfxAt('b', [400, 400, 500, 500])], 1000, 1000, 1, measure);
+    expect(tags.a.rect.x).toBeCloseTo(506);
+    expect(tags.a.rect.y).toBeCloseTo(436.8);
+    expect(tags.b.rect.x).toBeCloseTo(346); // 오른쪽이 a로 막혀 왼쪽으로 옮김
+  });
 });
