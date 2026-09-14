@@ -57,4 +57,17 @@ describe('sanitizeResults — 빈 번역 자동 정리', () => {
     expect(bad.tag_pos).toBeUndefined();
     expect(wrongLength.tag_pos).toBeUndefined();
   });
+
+  it('딱지 크기 배율(tag_scale)은 허용 범위 안으로 잘라 저장한다', () => {
+    const [normal, tooBig, tooSmall, notNumber] = sanitizeResults([
+      { id: 'a', translated_text: '가', box_2d: [1, 2, 3, 4], tag_scale: 1.5 },
+      { id: 'b', translated_text: '가', box_2d: [1, 2, 3, 4], tag_scale: 99 },
+      { id: 'c', translated_text: '가', box_2d: [1, 2, 3, 4], tag_scale: 0.01 },
+      { id: 'd', translated_text: '가', box_2d: [1, 2, 3, 4], tag_scale: 'big' },
+    ])!;
+    expect(normal.tag_scale).toBe(1.5);
+    expect(tooBig.tag_scale).toBe(3);
+    expect(tooSmall.tag_scale).toBe(0.5);
+    expect(notNumber.tag_scale).toBeUndefined();
+  });
 });

@@ -19,6 +19,8 @@ export interface TranslationResult {
   text_direction?: 'horizontal' | 'vertical';
   /** 작은 딱지(tag)를 사용자가 직접 옮긴 위치 [ymin, xmin] (0~1000). 없으면 자동 배치 */
   tag_pos?: [number, number];
+  /** 작은 딱지 크기 배율. 없으면 기본 크기(1) */
+  tag_scale?: number;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

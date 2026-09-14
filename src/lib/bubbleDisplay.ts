@@ -28,6 +28,10 @@ export const TAG_STYLE = {
   gapPx: 6,
 } as const;
 
+/** 딱지 크기 배율(tag_scale)의 허용 범위 */
+export const TAG_SCALE_MIN = 0.5;
+export const TAG_SCALE_MAX = 3;
+
 const IGNORED_CHARS = /[\s!?！？.,、。…~〜ー－\-·・'"“”‘’()（）[\]「」『』]/g;
 const glyphCount = (text: string) => Array.from(text.replace(IGNORED_CHARS, '')).length;
 
@@ -61,6 +65,8 @@ export interface TagLayout {
   rect: Rect;
   lines: string[];
   fontSize: number;
+  /** 적용된 크기 배율 (result.tag_scale, 없으면 1) — 모서리·그림자도 이 비율로 맞춰야 자연스러움 */
+  scale: number;
 }
 
 export function boxToRect([ymin, xmin, ymax, xmax]: Box, pageWidth: number, pageHeight: number): Rect {
@@ -103,18 +109,21 @@ export function layoutTags(
   // 덮는 말풍선은 흰 상자 자리, 딱지 대상은 원문 글자 자리를 피해야 할 영역으로 봄
   const areas = results.map((r, i) => boxToRect(modes[i] === 'tag' ? r.box_2d : getDisplayBox(r), pageWidth, pageHeight));
 
-  const fontSize = TAG_STYLE.fontPx * unit;
-  const padX = TAG_STYLE.paddingXPx * unit;
-  const padY = TAG_STYLE.paddingYPx * unit;
-  const gap = TAG_STYLE.gapPx * unit;
   const placed: Rect[] = [];
   const layouts: Record<string, TagLayout> = {};
 
   results.forEach((result, i) => {
     if (modes[i] !== 'tag') return;
 
+    // 사용자가 드래그로 키우거나 줄인 배율 (기본 1배)
+    const tagScale = Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, result.tag_scale ?? 1));
+    const fontSize = TAG_STYLE.fontPx * unit * tagScale;
+    const padX = TAG_STYLE.paddingXPx * unit * tagScale;
+    const padY = TAG_STYLE.paddingYPx * unit * tagScale;
+    const gap = TAG_STYLE.gapPx * unit * tagScale;
+
     const measureLine = (text: string) => measure(text, fontSize);
-    const lines = wrapText(result.translated_text.trim(), TAG_STYLE.maxTextWidthPx * unit, measureLine, !result.disable_keep_all);
+    const lines = wrapText(result.translated_text.trim(), TAG_STYLE.maxTextWidthPx * unit * tagScale, measureLine, !result.disable_keep_all);
     const width = Math.max(...lines.map(measureLine)) + padX * 2;
     const height = lines.length * fontSize * OVERLAY_STYLE.lineHeight + padY * 2;
 
@@ -158,7 +167,7 @@ export function layoutTags(
     }
 
     placed.push(best);
-    layouts[result.id] = { rect: best, lines, fontSize };
+    layouts[result.id] = { rect: best, lines, fontSize, scale: tagScale };
   });
 
   return layouts;

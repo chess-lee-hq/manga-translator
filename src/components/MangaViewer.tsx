@@ -24,6 +24,10 @@ interface MangaViewerProps {
   onSetTextDirection: (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => void;
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   onSetTagPosition: (imgIndex: number, id: string, pos: [number, number] | null) => void;
+  /** 작은 딱지 크기 배율을 직접 조절 */
+  onSetTagScale: (imgIndex: number, id: string, scale: number) => void;
+  /** 딱지 위치·크기를 모두 자동으로 되돌림 */
+  onResetTag: (imgIndex: number, id: string) => void;
   onDelete: (imgIndex: number, id: string) => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
@@ -49,7 +53,8 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
-  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection, onSetTagPosition, onDelete, onCreateBox, onDownloadPage, footer,
+  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection,
+  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -212,9 +217,19 @@ export function MangaViewer({
                               fontWeight: OVERLAY_STYLE.fontWeight,
                               lineHeight: OVERLAY_STYLE.lineHeight,
                               letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
-                              borderRadius: TAG_STYLE.radiusPx * scale,
-                              boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx * scale}px ${OVERLAY_STYLE.shadowBlurPx * scale}px rgba(0, 0, 0, 0.15)`,
+                              borderRadius: TAG_STYLE.radiusPx * scale * tag.scale,
+                              boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx * scale * tag.scale}px ${OVERLAY_STYLE.shadowBlurPx * scale * tag.scale}px rgba(0, 0, 0, 0.15)`,
                             };
+                            // 딱지 드래그 편집용 박스(0~1000). 너비·높이 변화로 "이동"과 "크기 조절"을 구분함
+                            const tagPosBox: Box2d | null = tag ? [
+                              (tag.rect.y / pageHeight) * 1000,
+                              (tag.rect.x / pageWidth) * 1000,
+                              ((tag.rect.y + tag.rect.height) / pageHeight) * 1000,
+                              ((tag.rect.x + tag.rect.width) / pageWidth) * 1000,
+                            ] : null;
+                            const initTagWidth = tagPosBox ? tagPosBox[3] - tagPosBox[1] : 0;
+                            const initTagHeight = tagPosBox ? tagPosBox[2] - tagPosBox[0] : 0;
+
                             return (
                               <Fragment key={result.id}>
                                 {isEditingBoxes && (
@@ -230,17 +245,19 @@ export function MangaViewer({
                                     <span className="text-[10px] font-bold text-indigo-700 bg-white/80 px-1 rounded pointer-events-none">원문 영역</span>
                                   </BoxEditor>
                                 )}
-                                {tag && (isEditingBoxes ? (
+                                {tag && tagPosBox && (isEditingBoxes ? (
                                   <BoxEditor
-                                    initialBox={[
-                                      (tag.rect.y / pageHeight) * 1000,
-                                      (tag.rect.x / pageWidth) * 1000,
-                                      ((tag.rect.y + tag.rect.height) / pageHeight) * 1000,
-                                      ((tag.rect.x + tag.rect.width) / pageWidth) * 1000,
-                                    ]}
-                                    onChange={(newBox: Box2d) => onSetTagPosition(imgIndex, result.id, [newBox[0], newBox[1]])}
-                                    resizable={false}
-                                    onResetPosition={result.tag_pos ? () => onSetTagPosition(imgIndex, result.id, null) : undefined}
+                                    initialBox={tagPosBox}
+                                    onChange={(newBox: Box2d) => {
+                                      const widthRatio = (newBox[3] - newBox[1]) / initTagWidth;
+                                      const heightRatio = (newBox[2] - newBox[0]) / initTagHeight;
+                                      // 코너를 끌어 크기가 뚜렷이 바뀌었으면 배율로 반영 (2% 미만 오차는 이동으로만 취급)
+                                      if (Math.abs(widthRatio - 1) > 0.02 || Math.abs(heightRatio - 1) > 0.02) {
+                                        onSetTagScale(imgIndex, result.id, tag.scale * Math.max(widthRatio, heightRatio));
+                                      }
+                                      onSetTagPosition(imgIndex, result.id, [newBox[0], newBox[1]]);
+                                    }}
+                                    onResetPosition={(result.tag_pos || result.tag_scale) ? () => onResetTag(imgIndex, result.id) : undefined}
                                   >
                                     <div
                                       className="bg-white text-gray-900 flex flex-col items-center justify-center w-full h-full pointer-events-none"

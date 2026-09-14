@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLikelySfx, layoutTags, resolveDisplayMode } from './bubbleDisplay';
+import { isLikelySfx, layoutTags, resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 
 const bubble = (over: Partial<TranslationResult>): TranslationResult => ({
@@ -97,5 +97,23 @@ describe('layoutTags', () => {
     expect(tags.a.rect.x).toBeCloseTo(506);
     expect(tags.a.rect.y).toBeCloseTo(436.8);
     expect(tags.b.rect.x).toBeCloseTo(346); // 오른쪽이 a로 막혀 왼쪽으로 옮김
+  });
+
+  it('tag_scale로 딱지 크기를 키우거나 줄인다', () => {
+    const base = layoutTags([sfxAt('a', [400, 400, 500, 500])], 1000, 1000, 1, measure);
+    const big = layoutTags([{ ...sfxAt('a', [400, 400, 500, 500]), tag_scale: 2 }], 1000, 1000, 1, measure);
+    const small = layoutTags([{ ...sfxAt('a', [400, 400, 500, 500]), tag_scale: 0.5 }], 1000, 1000, 1, measure);
+    expect(big.a.fontSize).toBeCloseTo(base.a.fontSize * 2);
+    expect(big.a.rect.width).toBeCloseTo(base.a.rect.width * 2);
+    expect(small.a.fontSize).toBeCloseTo(base.a.fontSize * 0.5);
+    expect(big.a.scale).toBe(2);
+    expect(base.a.scale).toBe(1);
+  });
+
+  it('tag_scale은 허용 범위 밖이면 안쪽으로 잘린다', () => {
+    const tooBig = layoutTags([{ ...sfxAt('a', [400, 400, 500, 500]), tag_scale: 99 }], 1000, 1000, 1, measure);
+    const tooSmall = layoutTags([{ ...sfxAt('a', [400, 400, 500, 500]), tag_scale: 0.01 }], 1000, 1000, 1, measure);
+    expect(tooBig.a.scale).toBe(TAG_SCALE_MAX);
+    expect(tooSmall.a.scale).toBe(TAG_SCALE_MIN);
   });
 });

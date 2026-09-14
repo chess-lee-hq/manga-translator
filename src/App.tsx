@@ -16,7 +16,7 @@ import { useWorkNotes } from './hooks/useWorkNotes';
 import { useSessionPersistence, type RestoredSession } from './hooks/useSessionPersistence';
 import { getCacheKey, useTranslationCache } from './hooks/useTranslationCache';
 import { useTranslationQueue } from './hooks/useTranslationQueue';
-import { resolveDisplayMode } from './lib/bubbleDisplay';
+import { resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
 import { summarizeWorkNotes } from './lib/gemini';
@@ -334,6 +334,17 @@ function App() {
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   const handleSetTagPosition = (imgIndex: number, id: string, pos: [number, number] | null) => {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)));
+  };
+
+  /** 작은 딱지 크기를 직접 조절. null이면 기본 크기로 되돌림 */
+  const handleSetTagScale = (imgIndex: number, id: string, scale: number | null) => {
+    const clamped = scale === null ? undefined : Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, scale));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_scale: clamped } : r)));
+  };
+
+  /** 딱지 위치·크기를 모두 자동으로 되돌림 */
+  const handleResetTag = (imgIndex: number, id: string) => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: undefined, tag_scale: undefined } : r)));
   };
 
   const handleReorder = (imgIndex: number, fromIndex: number, toIndex: number) => {
@@ -663,6 +674,8 @@ function App() {
                 onToggleDisplayMode={handleToggleDisplayMode}
                 onSetTextDirection={handleSetTextDirection}
                 onSetTagPosition={handleSetTagPosition}
+                onSetTagScale={handleSetTagScale}
+                onResetTag={handleResetTag}
                 onDelete={handleDeleteBubble}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}

@@ -1,4 +1,4 @@
-import { Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, Link2, Square, Tag, Trash2, Undo2, Unlink2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface BoxEditorProps {
@@ -11,11 +11,27 @@ interface BoxEditorProps {
   textDirection?: 'horizontal' | 'vertical';
   onToggleTextDirection?: () => void;
   onDelete?: () => void;
-  /** false면 크기 조절 손잡이 없이 이동만 가능 (작은 딱지 위치 지정용) */
+  /** false면 크기 조절 손잡이 없이 이동만 가능 (지금은 항상 true — 딱지도 크기 조절을 지원) */
   resizable?: boolean;
-  /** 있으면 자동 배치로 되돌리는 작은 버튼을 보여줌 (크기 조절 손잡이 자리를 대신 씀) */
+  /** 있으면 툴바에 자동 배치로 되돌리는 버튼을 보여줌 */
   onResetPosition?: () => void;
   children: React.ReactNode;
+}
+
+/** 툴바에 들어가는 작은 아이콘 버튼 (다크 배경 위에서 hover 시 밝아짐) */
+function ToolbarButton({ onClick, title, danger, children }: { onClick: () => void; title: string; danger?: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      className={`p-1 rounded-full transition-colors cursor-pointer ${danger ? 'hover:bg-red-500/80' : 'hover:bg-white/25'}`}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title={title}
+    >
+      {children}
+    </button>
+  );
 }
 
 export function BoxEditor({
@@ -80,6 +96,7 @@ export function BoxEditor({
 
   // 세로쓰기에서는 묶음/풀림(음절 단위 줄바꿈)이 아무 효과가 없으므로(세로쓰기는 항상 한 글자씩 쌓음) 숨김
   const showKeepAll = !!onToggleKeepAll && textDirection !== 'vertical';
+  const hasToolbar = !!onToggleDisplayMode || !!onToggleTextDirection || showKeepAll || !!onResetPosition || !!onDelete;
 
   return (
     <div
@@ -89,72 +106,51 @@ export function BoxEditor({
       onPointerDown={(e) => handlePointerDown(e, 'move')}
     >
       {children}
-      {onToggleDisplayMode && (
-        <button
-          className="absolute -top-3 -left-3 px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onToggleDisplayMode();
-          }}
-          title="표시 방식 전환: 덮기(원문을 흰 말풍선으로 덮음) ↔ 작게(원문은 그대로 두고 바깥에 작은 딱지)"
+
+      {/* 기능 버튼을 한 줄로 모은 작은 툴바. 코너마다 따로 흩어놓지 않아 작은 말풍선에서도 덜 어수선함 */}
+      {hasToolbar && (
+        <div
+          className="absolute -top-3.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 bg-gray-900/90 text-white rounded-full shadow-md px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-50 whitespace-nowrap"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          {displayMode === 'tag' ? '작게' : '덮기'}
-        </button>
+          {onToggleDisplayMode && (
+            <ToolbarButton onClick={onToggleDisplayMode} title="표시 방식 전환: 덮기(원문을 흰 말풍선으로 덮음) ↔ 작게(원문은 그대로 두고 바깥에 작은 딱지)">
+              {displayMode === 'tag' ? <Tag size={12} /> : <Square size={12} />}
+            </ToolbarButton>
+          )}
+          {onToggleTextDirection && (
+            <ToolbarButton onClick={onToggleTextDirection} title="글자 방향 전환: 가로쓰기 ↔ 세로쓰기 (홀쭉한 영역은 자동으로 세로쓰기)">
+              {textDirection === 'vertical' ? <ArrowUpDown size={12} /> : <ArrowLeftRight size={12} />}
+            </ToolbarButton>
+          )}
+          {showKeepAll && (
+            <ToolbarButton onClick={onToggleKeepAll!} title={isKeepAll ? '단어 묶음(Keep-all) 적용 중 — 눌러서 해제' : '단어 묶음 해제됨 — 눌러서 적용'}>
+              {isKeepAll ? <Link2 size={12} /> : <Unlink2 size={12} />}
+            </ToolbarButton>
+          )}
+          {onResetPosition && (
+            <ToolbarButton onClick={onResetPosition} title="위치·크기를 자동 배치로 되돌리기">
+              <Undo2 size={12} />
+            </ToolbarButton>
+          )}
+          {onDelete && (
+            <>
+              {(onToggleDisplayMode || onToggleTextDirection || showKeepAll || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
+              <ToolbarButton onClick={onDelete} title="이 번역 삭제하기" danger>
+                <Trash2 size={12} />
+              </ToolbarButton>
+            </>
+          )}
+        </div>
       )}
-      {onToggleTextDirection && (
-        <button
-          className="absolute -bottom-3 -left-3 px-1.5 py-0.5 bg-sky-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onToggleTextDirection();
-          }}
-          title="글자 방향 전환: 가로쓰기 ↔ 세로쓰기 (홀쭉한 영역은 자동으로 세로쓰기)"
-        >
-          {textDirection === 'vertical' ? '세로' : '가로'}
-        </button>
-      )}
-      {showKeepAll && (
-        <button
-          className="absolute -top-3 -right-3 px-1.5 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onToggleKeepAll!();
-          }}
-          title="단어 묶음(Keep-all) 해제 토글"
-        >
-          {isKeepAll ? '묶음' : '풀림'}
-        </button>
-      )}
-      {onDelete && (
-        <button
-          className="absolute -top-3 left-1/2 -translate-x-1/2 p-1 bg-red-600 text-white rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          title="이 번역 삭제하기"
-        >
-          <Trash2 size={11} />
-        </button>
-      )}
-      {resizable ? (
+
+      {resizable && (
         <div
           className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full cursor-se-resize shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 flex items-center justify-center"
           onPointerDown={(e) => handlePointerDown(e, 'resize')}
         >
           <div className="w-1.5 h-1.5 bg-white rounded-full pointer-events-none" />
         </div>
-      ) : onResetPosition && (
-        <button
-          className="absolute -bottom-3 -right-3 p-1 bg-gray-700 text-white rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            onResetPosition();
-          }}
-          title="위치를 자동 배치로 되돌리기"
-        >
-          <Undo2 size={11} />
-        </button>
       )}
     </div>
   );

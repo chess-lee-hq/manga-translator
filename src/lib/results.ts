@@ -1,3 +1,4 @@
+import { TAG_SCALE_MAX, TAG_SCALE_MIN } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 
 function isValidBox(box: unknown): box is [number, number, number, number] {
@@ -32,5 +33,8 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       display_mode: DISPLAY_MODES.includes(r.display_mode as never) ? r.display_mode : undefined,
       text_direction: TEXT_DIRECTIONS.includes(r.text_direction as never) ? r.text_direction : undefined,
       tag_pos: isValidTagPos(r.tag_pos) ? r.tag_pos : undefined,
+      tag_scale: typeof r.tag_scale === 'number' && Number.isFinite(r.tag_scale)
+        ? Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, r.tag_scale))
+        : undefined,
     }));
 }

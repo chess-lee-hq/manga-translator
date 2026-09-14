@@ -144,7 +144,9 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     const { x, y, width: w, height: h } = tag.rect;
     drawBubbleBox(
       ctx, x, y, w, h,
-      TAG_STYLE.radiusPx * tagUnit, OVERLAY_STYLE.shadowBlurPx * tagUnit * outputScale, OVERLAY_STYLE.shadowOffsetYPx * tagUnit * outputScale,
+      TAG_STYLE.radiusPx * tagUnit * tag.scale,
+      OVERLAY_STYLE.shadowBlurPx * tagUnit * tag.scale * outputScale,
+      OVERLAY_STYLE.shadowOffsetYPx * tagUnit * tag.scale * outputScale,
     );
     drawTextLines(ctx, tag.lines, x + w / 2, y + h / 2, tag.fontSize, setFont);
   }
