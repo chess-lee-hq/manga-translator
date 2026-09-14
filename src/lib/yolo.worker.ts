@@ -1,8 +1,10 @@
-import * as ort from 'onnxruntime-web';
+// CPU(WASM) 전용 빌드: WebGPU 포함판은 WASM이 26.5MB, CPU 전용은 13.3MB라 첫 로딩이 절반으로 줄어듦
+import * as ort from 'onnxruntime-web/wasm';
 import { mergeDetections, postprocess, type BoundingBox } from './yoloPostprocess';
 
-// jsDelivr CDN에서 WASM을 받아 Vite 개발 서버의 MIME/import 문제를 피합니다. (기존 설정 유지)
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
+// jsDelivr CDN에서 WASM을 받아 Vite 개발 서버의 MIME/import 문제를 피합니다.
+// 버전은 설치된 패키지에서 읽어, package.json만 올리고 CDN 주소를 깜빡해 JS·WASM 버전이 어긋나는 일을 막음
+ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web}/dist/`;
 ort.env.wasm.numThreads = 1;
 
 export interface DetectRequest {
