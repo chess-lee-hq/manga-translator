@@ -13,7 +13,6 @@ export interface UploadedImage {
   isSpread: boolean;
 }
 
-export type Provider = 'google' | 'openai';
 export type GeminiVersion = '3.6' | '3.7';
 export type OpenAiVersion = 'sol' | 'terra';
 export type ViewMode = '1page' | '2page';
@@ -24,11 +23,11 @@ export type TranslationCache = Record<string, TranslationResult[]>;
 export type Glossary = Record<string, string>;
 
 export interface TranslationSettings {
-  provider: Provider;
-  googleKey: string;
   openaiKey: string;
-  geminiVersion: GeminiVersion;
   openAiVersion: OpenAiVersion;
+  /** 선택: 있으면 품질 검사에 걸린 칸의 재요청을 Gemini로 보내 다른 눈으로 다시 읽음 */
+  googleKey: string;
+  geminiVersion: GeminiVersion;
   glossary: Glossary;
   /** 앞 페이지 번역·작품 노트로 만든 맥락 지시문 (프롬프트에 그대로 삽입) */
   context?: string;

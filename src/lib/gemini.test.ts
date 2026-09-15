@@ -15,19 +15,22 @@ const lastRequest = () => generateContent.mock.calls.at(-1)![0];
 const imageParts = () => lastRequest().contents[0].parts.filter((p: any) => p.inlineData);
 const promptText = () => lastRequest().contents[0].parts[0].text as string;
 
-describe('translateGridImage (보조 엔진)', () => {
+describe('translateGridImage (재인식 보조 엔진)', () => {
   beforeEach(() => {
     generateContent.mockReset();
     generateContent.mockResolvedValue({ text: '[{"id":1,"original_text":"あ","translated_text":"가"}]' });
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
-  it('페이지 전체 이미지를 주면 두 장, 주지 않으면 격자 한 장만 보낸다', async () => {
-    await translateGridImage('key', 'GRID', 'image/jpeg', 1, '3.6', { fullBase64Image: 'FULL' });
-    expect(imageParts().map((p: any) => p.inlineData.data)).toEqual(['FULL', 'GRID']);
+  it('격자 한 장만, 넘겨받은 이미지 형식 그대로 보낸다 (고해상도 재요청은 PNG)', async () => {
+    await translateGridImage('key', 'GRID', 'image/png', 1, '3.6');
+    expect(imageParts().map((p: any) => p.inlineData)).toEqual([{ data: 'GRID', mimeType: 'image/png' }]);
+  });
 
-    await translateGridImage('key', 'GRID', 'image/jpeg', 1, '3.6');
-    expect(imageParts().map((p: any) => p.inlineData.data)).toEqual(['GRID']);
+  it('여러 페이지에서 모은 칸이면 페이지 경계를 프롬프트에 알린다', async () => {
+    await translateGridImage('key', 'GRID', 'image/png', 3, '3.6', { pageCellCounts: [2, 1] });
+    expect(promptText()).toContain('1번째 페이지: 1~2번');
+    expect(promptText()).toContain('2번째 페이지: 3~3번');
   });
 
   it('단어장과 앞 페이지 맥락을 프롬프트에 함께 싣는다 (엔진이 달라도 동일한 지침)', async () => {

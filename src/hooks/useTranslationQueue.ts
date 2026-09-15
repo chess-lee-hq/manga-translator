@@ -41,9 +41,10 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
   const [autoTranslate, setAutoTranslateState] = useState(() => localStorage.getItem(AUTO_TRANSLATE_STORAGE_KEY) !== 'false');
   const [retryTrigger, setRetryTrigger] = useState(0);
 
-  const currentKey = settings.provider === 'google' ? settings.googleKey : settings.openaiKey;
+  const currentKey = settings.openaiKey;
   // API 키를 한 글자씩 입력하는 도중에는 번역을 시작하지 않도록, 입력이 멈춘 뒤의 값만 사용
-  const liveCredential = `${settings.provider}|${settings.googleKey}|${settings.openaiKey}`;
+  // (Gemini 키는 재요청에만 쓰는 선택 사항이라 번역 시작 조건에 넣지 않음)
+  const liveCredential = settings.openaiKey;
   const credential = useDebouncedValue(liveCredential, API_KEY_DEBOUNCE_MS);
   const isCredentialSettled = credential === liveCredential;
 
@@ -123,7 +124,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
     };
 
     // 묶음은 OpenAI 전용. Gemini 보조 모드에서는 한 장씩
-    const canBatch = attemptSettings.provider === 'openai' && batchSize > 1;
+    const canBatch = batchSize > 1;
     const groups: (typeof jobs)[] = [];
     for (let i = 0; i < jobs.length; i += canBatch ? batchSize : 1) {
       groups.push(jobs.slice(i, i + (canBatch ? batchSize : 1)));

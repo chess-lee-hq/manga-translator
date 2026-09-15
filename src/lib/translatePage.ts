@@ -1,5 +1,5 @@
 import type { Box2d, TranslationResult, TranslationSettings, UploadedImage } from '../types';
-import { retranslateTextGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
+import { translateGridImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
@@ -11,18 +11,14 @@ import { detectSpeechBubbles } from './yolo';
 import type { BoundingBox } from './yoloPostprocess';
 
 const base64Of = (dataUrl: string) => dataUrl.split(',')[1];
+const mimeOf = (dataUrl: string) => dataUrl.slice(5, dataUrl.indexOf(';'));
 
 /**
- * 제공자별로 필요한 키만 확인합니다.
- * 두 엔진 모두 말풍선 위치는 YOLO(브라우저 내부)가 찾고, 원문 인식·번역만 API가 담당하므로
- * 고른 엔진의 키 하나만 있으면 됩니다.
+ * 말풍선 위치는 YOLO(브라우저 내부)가 찾고, 원문 인식·번역은 OpenAI가 담당하므로 OpenAI 키만 있으면 됩니다.
+ * Gemini 키는 선택 사항으로, 있으면 품질 검사에 걸린 칸을 다시 읽는 데만 씁니다.
  */
 function requireKeys(settings: TranslationSettings) {
-  if (settings.provider === 'openai') {
-    if (!settings.openaiKey) throw new Error('OpenAI API 키를 먼저 입력해주세요.');
-    return;
-  }
-  if (!settings.googleKey) throw new Error('Gemini API 키를 먼저 입력해주세요.');
+  if (!settings.openaiKey) throw new Error('OpenAI API 키를 먼저 입력해주세요.');
 }
 
 function toBox2d(box: BoundingBox, width: number, height: number): Box2d {
@@ -87,25 +83,57 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
   return { boxes, speakers };
 }
 
-/** 격자 한 장을 번역 엔진에 보냅니다. retry면 품질 검사에서 걸린 칸만 모은 재요청 */
-type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined, retry: boolean) => Promise<GridTranslationResult[]>;
+/** 격자 한 장을 번역 엔진에 보냅니다. */
+type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined) => Promise<GridTranslationResult[]>;
 
-/** 고른 엔진으로 격자를 보내는 함수를 만듭니다. (재요청 안내·토큰 로그 이름 포함) */
-function gridRequesterFor(settings: TranslationSettings, fullPage?: UploadedImage): GridRequest {
-  const { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, context } = settings;
-  return (grid, pageCellCounts, retry) => {
-    const retryContext = retry ? `${context ?? ''}${RETRY_INSTRUCTION}` : context;
-    const label = retry ? '격자 재요청 (품질 검사)' : undefined;
-    const speakerHint = buildSpeakerHint(grid.cells);
-    return provider === 'openai'
-      ? translateGridImageOpenAI(openAiVersion, openaiKey, grid.dataUrl, grid.cells.length, glossary, retryContext, { pageCellCounts, label, speakerHint })
-      : translateGridImage(googleKey, base64Of(grid.dataUrl), fullPage?.mimeType ?? 'image/jpeg', grid.cells.length, geminiVersion, {
-        fullBase64Image: fullPage ? base64Of(fullPage.src) : undefined,
+/** 첫 요청: 고른 OpenAI 모델(기본 Terra)로 보냅니다. */
+function firstRequesterFor(settings: TranslationSettings): GridRequest {
+  const { openaiKey, openAiVersion, glossary, context } = settings;
+  return (grid, pageCellCounts) =>
+    translateGridImageOpenAI(openAiVersion, openaiKey, grid.dataUrl, grid.cells.length, glossary, context, {
+      pageCellCounts,
+      speakerHint: buildSpeakerHint(grid.cells),
+    });
+}
+
+/**
+ * 재요청은 칸을 2배 해상도로 키워 다시 그립니다. (작은 글씨·한자 획이 뭉개져 틀리게 읽는 경우 대비)
+ * OpenAI는 이미지의 짧은 변을 768px로 줄여 읽으므로, 600px 칸을 한 줄로 세워 짧은 변이 600px을 넘지 않게 하고
+ * 긴 변도 2048px 안에 들도록 한 장에 최대 3칸씩 나눠 보냅니다.
+ */
+export const RETRY_CELL_SIZE = 600;
+export const RETRY_CELLS_PER_IMAGE = 3;
+
+/**
+ * 재요청 엔진: 같은 모델이 같은 글자를 또 잘못 읽지 않도록 **다른 눈**으로 읽힙니다.
+ * Gemini 키가 있으면 Gemini, 없거나 Gemini 요청이 실패하면 OpenAI Sol(더 강한 모델)로 보냅니다.
+ */
+export function retryRequesterFor(settings: TranslationSettings): GridRequest {
+  const { openaiKey, googleKey, geminiVersion, glossary } = settings;
+  const context = `${settings.context ?? ''}${RETRY_INSTRUCTION}`;
+
+  const viaSol: GridRequest = (grid, pageCellCounts) =>
+    translateGridImageOpenAI('sol', openaiKey, grid.dataUrl, grid.cells.length, glossary, context, {
+      pageCellCounts,
+      label: '격자 재요청 (고해상도 · Sol)',
+      speakerHint: buildSpeakerHint(grid.cells),
+    });
+
+  if (!googleKey) return viaSol;
+
+  return async (grid, pageCellCounts) => {
+    try {
+      return await translateGridImage(googleKey, base64Of(grid.dataUrl), mimeOf(grid.dataUrl), grid.cells.length, geminiVersion, {
+        pageCellCounts,
         glossary,
-        context: retryContext,
-        label,
-        speakerHint,
+        context,
+        label: '격자 재요청 (고해상도 · Gemini)',
+        speakerHint: buildSpeakerHint(grid.cells),
       });
+    } catch (error) {
+      console.warn('Gemini 재요청 실패 — OpenAI Sol로 다시 시도합니다:', (error as Error)?.message ?? error);
+      return viaSol(grid, pageCellCounts);
+    }
   };
 }
 
@@ -118,27 +146,59 @@ function logQualityReport(report: QualityReport) {
   console.info(`[quality] ${report.checked}칸 중 ${found}칸 문제(${detail}) → ${outcome}`);
 }
 
+/** 칸 목록(칸 번호 순)을 원래 페이지별로 다시 묶습니다. 페이지 순서 → 페이지 안 박스 순서가 유지됩니다. */
+function regroupBySource(sources: GridSource[], cells: GridCellInfo[]): GridSource[] {
+  return sources
+    .map(source => {
+      const picked = cells.filter(c => c.pageId === source.pageId);
+      return { ...source, boxes: picked.map(c => c.box), speakers: picked.map(c => c.speaker ?? null) };
+    })
+    .filter(source => source.boxes.length > 0);
+}
+
+const countsOf = (list: GridSource[]) => (list.length > 1 ? list.map(s => s.boxes.length) : undefined);
+
+/**
+ * 문제 칸들을 고해상도 격자 여러 장(장당 최대 3칸)으로 나눠 동시에 보내고,
+ * 응답의 칸 번호를 문제 칸 전체 기준(1번부터)으로 이어 붙입니다.
+ */
+async function requestHighResRetry(sources: GridSource[], failed: GridCellInfo[], request: GridRequest): Promise<GridTranslationResult[]> {
+  const chunks: GridCellInfo[][] = [];
+  for (let i = 0; i < failed.length; i += RETRY_CELLS_PER_IMAGE) chunks.push(failed.slice(i, i + RETRY_CELLS_PER_IMAGE));
+
+  const responses = await Promise.all(chunks.map(async chunk => {
+    const chunkSources = regroupBySource(sources, chunk);
+    const grid = await createGridImage(chunkSources, { columns: 1, cellSize: RETRY_CELL_SIZE, format: 'png' });
+    return grid ? request(grid, countsOf(chunkSources)) : [];
+  }));
+  return mergeChunkResponses(responses, chunks.map(chunk => chunk.length));
+}
+
+/** 나눠 보낸 격자들의 응답(각각 1번부터)을 하나로 이어 번호를 다시 매깁니다. 범위를 벗어난 번호는 버립니다. */
+export function mergeChunkResponses(responses: GridTranslationResult[][], sizes: number[]): GridTranslationResult[] {
+  let offset = 0;
+  return responses.flatMap((translations, index) => {
+    const size = sizes[index];
+    const mapped = translations
+      .filter(t => Number.isInteger(t.id) && t.id >= 1 && t.id <= size)
+      .map(t => ({ ...t, id: t.id + offset }));
+    offset += size;
+    return mapped;
+  });
+}
+
 /**
  * 말풍선들을 격자로 묶어 번역하고, 기계적으로 판정되는 실패 칸(빈 번역·일본어 남음·응답 누락)만
- * 작은 격자로 다시 만들어 **한 번 더** 요청해 더 나은 결과로 합칩니다.
+ * **2배 해상도 · 다른 엔진**으로 한 번 더 요청해 더 나은 결과로 합칩니다.
  */
-async function translateGridWithQualityCheck(sources: GridSource[], request: GridRequest) {
+async function translateGridWithQualityCheck(sources: GridSource[], settings: TranslationSettings) {
   const grid = await createGridImage(sources);
   if (!grid) return null;
-  const countsOf = (list: GridSource[]) => (list.length > 1 ? list.map(s => s.boxes.length) : undefined);
 
-  const first = await request(grid, countsOf(sources), false);
-  const { translations, report } = await applyQualityRetry(first, grid.cells, async failed => {
-    // 칸 번호 순서 = 페이지 순서 → 페이지 안 박스 순서이므로, 페이지별로 모으면 재요청 격자의 번호가 failed 순서와 같아짐
-    const failedSources = sources
-      .map(source => {
-        const cells = failed.filter(c => c.pageId === source.pageId);
-        return { ...source, boxes: cells.map(c => c.box), speakers: cells.map(c => c.speaker ?? null) };
-      })
-      .filter(source => source.boxes.length > 0);
-    const retryGrid = await createGridImage(failedSources);
-    return retryGrid ? request(retryGrid, countsOf(failedSources), true) : [];
-  });
+  const first = await firstRequesterFor(settings)(grid, countsOf(sources));
+  const { translations, report } = await applyQualityRetry(first, grid.cells, failed =>
+    requestHighResRetry(sources, failed, retryRequesterFor(settings)),
+  );
   logQualityReport(report);
   return { grid, translations };
 }
@@ -146,13 +206,11 @@ async function translateGridWithQualityCheck(sources: GridSource[], request: Gri
 /**
  * 한 페이지 번역: 말풍선 검출(YOLO) → 읽는 순서 정렬 → 말풍선 격자 이미지 → 번역 엔진 → 원래 좌표로 복원
  *
- * - OpenAI(주력): 격자 이미지 한 장으로 원문 인식·번역을 한 번에 처리
- * - Gemini(보조): 같은 일을 Gemini가 처리. 페이지 전체 이미지를 함께 보내 상황을 참고함
- * 어느 쪽이든 번역 지침·단어장·앞 페이지 맥락은 동일하게 적용됩니다.
+ * 격자 이미지 한 장으로 원문 인식·번역을 한 번에 처리하고, 실패한 칸만 고해상도로 다시 읽습니다.
  */
 export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
   requireKeys(settings);
-  const { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary, context } = settings;
+  const { openaiKey, openAiVersion, glossary, context } = settings;
   const imgElement = await loadImage(img.src);
   const { boxes: textBoxes, speakers } = await detectPage(imgElement, 'page');
 
@@ -160,14 +218,11 @@ export async function translatePage(img: UploadedImage, settings: TranslationSet
   if (textBoxes.length === 0) {
     // 말풍선을 찾지 못하면 페이지 전체를 읽는 대체 경로 (좌표까지 모델이 추정하므로 정확도는 떨어짐)
     console.warn('말풍선을 찾지 못해 페이지 전체 인식으로 대체합니다.');
-    rawResults = (provider === 'openai'
-      ? await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, glossary, context)
-      : await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, glossary, context)
-    ).map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
+    rawResults = (await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, glossary, context)).map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
   } else {
     const checked = await translateGridWithQualityCheck(
       [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers }],
-      gridRequesterFor(settings, img),
+      settings,
     );
     if (!checked) return [];
     rawResults = mapGridToResults(checked.translations, checked.grid.cells, imgElement.width, imgElement.height);
@@ -187,7 +242,6 @@ export interface BatchPage {
 /**
  * 여러 페이지의 말풍선을 격자 한 장에 묶어 **요청 한 번**으로 번역합니다.
  * 프롬프트·단어장·맥락이 요청당 한 번만 들어가므로, 페이지 수만큼 나눠 보낼 때보다 토큰이 크게 줄어듭니다.
- * (OpenAI 전용. Gemini 보조 모드는 페이지 전체 이미지를 함께 보내는 구조라 묶지 않습니다.)
  */
 export async function translatePageBatch(pages: BatchPage[], settings: TranslationSettings): Promise<Map<string, TranslationResult[]>> {
   requireKeys(settings);
@@ -205,7 +259,7 @@ export async function translatePageBatch(pages: BatchPage[], settings: Translati
   // 대사를 하나도 못 찾은 페이지도 "번역 완료(0건)"로 남겨 다시 요청하지 않도록 빈 배열로 채워둠
   const byPage = new Map<string, TranslationResult[]>(pages.map(page => [page.id, []]));
 
-  const checked = await translateGridWithQualityCheck(sources, gridRequesterFor(settings));
+  const checked = await translateGridWithQualityCheck(sources, settings);
   if (!checked) return byPage;
 
   const raw = mapGridToPages(checked.translations, checked.grid.cells, id => sizeById.get(id) ?? { width: 1, height: 1 });
@@ -224,7 +278,7 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
 
   const checked = await translateGridWithQualityCheck(
     [{ pageId: 'region', image: imgElement, boxes: [{ xmin, ymin, xmax, ymax, classId: 3, confidence: 1 }] }],
-    gridRequesterFor(settings, img),
+    settings,
   );
   if (!checked) throw new Error('크롭 실패');
   const [cell] = checked.translations;
@@ -235,10 +289,6 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
 
 /** 원문 한 문장만 다시 번역합니다. */
 export async function retranslateText(originalText: string, settings: TranslationSettings): Promise<string> {
-  if (settings.provider === 'google') {
-    if (!settings.googleKey) throw new Error('Gemini API 키가 필요합니다.');
-    return retranslateTextGemini(settings.googleKey, originalText, settings.geminiVersion, settings.glossary, settings.context);
-  }
-  if (!settings.openaiKey) throw new Error('OpenAI API 키가 필요합니다.');
+  requireKeys(settings);
   return retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, settings.glossary, settings.context);
 }

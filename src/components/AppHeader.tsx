@@ -1,5 +1,5 @@
 import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
-import type { GeminiVersion, OpenAiVersion, Provider, ScriptStyle, ViewMode } from '../types';
+import type { GeminiVersion, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
   loadedFilename: string | null;
@@ -28,14 +28,15 @@ interface AppHeaderProps {
   onCloseSession: () => void;
   autoTranslate: boolean;
   onToggleAutoTranslate: () => void;
-  provider: Provider;
-  onProviderChange: (provider: Provider) => void;
-  geminiVersion: GeminiVersion;
-  onGeminiVersionChange: (version: GeminiVersion) => void;
   openAiVersion: OpenAiVersion;
   onOpenAiVersionChange: (version: OpenAiVersion) => void;
-  apiKey: string;
-  onApiKeyChange: (value: string) => void;
+  openaiKey: string;
+  onOpenaiKeyChange: (value: string) => void;
+  /** 선택 사항: 품질 검사에 걸린 칸을 다시 읽는 보조 엔진 */
+  geminiVersion: GeminiVersion;
+  onGeminiVersionChange: (version: GeminiVersion) => void;
+  googleKey: string;
+  onGoogleKeyChange: (value: string) => void;
 }
 
 /** 화면이 넓을 때만 버튼 글자를 보여줍니다. 좁으면 아이콘만 남기고 마우스를 올리면 이름이 보입니다. */
@@ -46,8 +47,8 @@ export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
-    openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
+    onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate,
+    openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
 
@@ -185,57 +186,65 @@ export function AppHeader(props: AppHeaderProps) {
           {autoTranslate ? <Zap size={12} /> : <ZapOff size={12} />} <span className={WIDE_LABEL}>자동 번역</span> {autoTranslate ? 'ON' : 'OFF'}
         </button>
 
-        {/* 주력: OpenAI(이미지에서 원문 인식·번역을 한 번에) / 보조: Gemini */}
-        <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 shadow-inner shrink-0 items-center">
-          <button
-            onClick={() => onProviderChange('openai')}
-            title="OpenAI 5.6 (주력): 말풍선 이미지를 직접 읽어 원문 인식·번역을 한 번에 처리합니다. OpenAI 키만 있으면 됩니다."
-            className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'openai' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500'}`}
-          >
+        {/* 번역 엔진: OpenAI (말풍선 이미지에서 원문 인식·번역을 한 번에) */}
+        <div className="flex items-center shrink-0 border border-gray-200 rounded-md bg-white focus-within:ring-1 focus-within:ring-green-500">
+          <span className="flex items-center gap-1 pl-2 pr-1 text-xs font-medium text-green-600 whitespace-nowrap" title="OpenAI 5.6: 말풍선 이미지를 직접 읽어 원문 인식·번역을 한 번에 처리합니다.">
             <Bot size={12} /> <span className={WIDE_LABEL}>OpenAI 5.6</span>
-          </button>
+          </span>
           <select
             value={openAiVersion}
-            onChange={(e) => { onOpenAiVersionChange(e.target.value as OpenAiVersion); onProviderChange('openai'); }}
+            onChange={(e) => onOpenAiVersionChange(e.target.value as OpenAiVersion)}
             title="Terra: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
-            className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'openai' ? 'bg-white shadow-sm text-green-600 border-green-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
+            className="text-xs py-1 pr-1 bg-transparent text-green-700 outline-none cursor-pointer"
           >
             <option value="terra">Terra</option>
             <option value="sol">Sol</option>
           </select>
+          <div className="relative flex items-center border-l border-gray-200">
+            <Key size={12} className="text-gray-400 absolute left-2 pointer-events-none" />
+            <input
+              type="password"
+              placeholder="OpenAI Key"
+              title="OpenAI API 키 (필수)"
+              value={openaiKey}
+              onChange={(e) => onOpenaiKeyChange(e.target.value)}
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-lpignore="true"
+              spellCheck="false"
+              className="rounded-r-md pl-6 pr-2 py-1 text-xs w-24 focus:w-44 transition-all outline-none"
+            />
+          </div>
+        </div>
 
-          <div className="w-px h-3 bg-gray-300 mx-1"></div>
-
-          <button
-            onClick={() => onProviderChange('google')}
-            title="Gemini (보조): 같은 작업을 Gemini로 번역합니다. Gemini 키가 필요합니다."
-            className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-l transition-all font-medium whitespace-nowrap ${provider === 'google' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}
-          >
-            <Cpu size={12} /> <span className={WIDE_LABEL}>Gemini</span>
-          </button>
+        {/* 보조: Gemini — 키를 넣으면 품질 검사에 걸린 칸만 Gemini가 고해상도로 다시 읽음 (없으면 OpenAI Sol이 대신) */}
+        <div
+          className={`flex items-center shrink-0 border rounded-md focus-within:ring-1 focus-within:ring-blue-500 ${googleKey ? 'border-blue-200 bg-blue-50/50' : 'border-dashed border-gray-300 bg-transparent'}`}
+          title="선택 사항 · 다시 읽기 보조: 번역이 비었거나 일본어가 남은 칸만 2배 해상도로 Gemini가 다시 읽습니다. 키가 없으면 OpenAI Sol이 대신 다시 읽습니다."
+        >
+          <span className={`flex items-center gap-1 pl-2 pr-1 text-xs font-medium whitespace-nowrap ${googleKey ? 'text-blue-600' : 'text-gray-400'}`}>
+            <Cpu size={12} /> <span className={WIDE_LABEL}>재인식</span>
+          </span>
           <select
             value={geminiVersion}
-            onChange={(e) => { onGeminiVersionChange(e.target.value as GeminiVersion); onProviderChange('google'); }}
-            className={`text-xs py-1 pr-1 pl-0.5 rounded-r outline-none cursor-pointer border-l ${provider === 'google' ? 'bg-white shadow-sm text-blue-600 border-blue-100' : 'bg-transparent text-gray-500 border-gray-300'}`}
+            onChange={(e) => onGeminiVersionChange(e.target.value as GeminiVersion)}
+            title="다시 읽기에 쓸 Gemini 모델"
+            className={`text-xs py-1 pr-1 bg-transparent outline-none cursor-pointer ${googleKey ? 'text-blue-700' : 'text-gray-400'}`}
           >
             <option value="3.6">3.6 Flash</option>
             <option value="3.7">3.7 Flash</option>
           </select>
-        </div>
-
-        <div className="relative flex items-center shrink-0">
-          <Key size={14} className="text-gray-400 absolute left-2 pointer-events-none" />
           <input
             type="password"
-            placeholder={provider === 'google' ? 'Gemini Key' : 'OpenAI Key'}
-            title={provider === 'google' ? 'Gemini API 키' : 'OpenAI API 키'}
-            value={apiKey}
-            onChange={(e) => onApiKeyChange(e.target.value)}
+            placeholder="Gemini (선택)"
+            title="Gemini API 키 (선택)"
+            value={googleKey}
+            onChange={(e) => onGoogleKeyChange(e.target.value)}
             autoComplete="new-password"
             data-1p-ignore="true"
             data-lpignore="true"
             spellCheck="false"
-            className={`border rounded-md pl-7 pr-2 py-1 text-xs w-28 focus:w-48 transition-all focus:outline-none focus:ring-1 ${provider === 'google' ? 'focus:ring-blue-500' : 'focus:ring-green-500'}`}
+            className="border-l border-gray-200 rounded-r-md px-2 py-1 text-xs w-24 focus:w-44 transition-all outline-none bg-transparent"
           />
         </div>
       </div>

@@ -1,8 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { sortMangaBoxesByTier } from './readingOrder';
 import { parseJsonResponse } from './prompt';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildWorkNotesPrompt } from './translationPrompt';
-import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
+import { buildGridPrompt } from './translationPrompt';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { recordUsage } from './usageLog';
 
@@ -54,65 +52,9 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
   }
 }
 
-export async function translateMangaImage(apiKey: string, base64Image: string, mimeType: string, geminiVersion: GeminiVersion = '3.6', glossary?: Record<string, string>, context?: string): Promise<RawTranslationResult[]> {
-  const prompt = buildFullPagePrompt({ output: 'array', glossary, context });
-
-  const response = await generateContent(apiKey, {
-    model: modelNameFor(geminiVersion),
-    contents: [
-      { role: 'user', parts: [
-        { text: prompt },
-        { inlineData: { data: base64Image, mimeType } }
-      ]}
-    ],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            original_text: { type: Type.STRING },
-            translated_text: { type: Type.STRING },
-            box_2d: {
-              type: Type.ARRAY,
-              items: { type: Type.INTEGER }
-            }
-          },
-          required: ['original_text', 'translated_text', 'box_2d']
-        }
-      },
-      temperature: 0.35,
-    }
-  }, '페이지 전체 번역');
-
-  const text = response.text;
-  if (!text) throw new Error("No response from Gemini API");
-
-  try {
-    const translationResults = parseJsonResponse<RawTranslationResult[]>(text);
-    // 프론트엔드에서 한 번 더 완벽한 일본 만화 읽는 순서로 정렬합니다.
-    return sortMangaBoxesByTier(translationResults, t => t.box_2d);
-  } catch (error: any) {
-    throw new Error("Failed to parse JSON response: " + error.message);
-  }
-}
-
-export async function retranslateTextGemini(apiKey: string, originalText: string, geminiVersion: GeminiVersion = '3.6', glossary?: Record<string, string>, context?: string): Promise<string> {
-  const prompt = buildRetranslatePrompt(originalText, { glossary, context });
-
-  const response = await generateContent(apiKey, {
-    model: modelNameFor(geminiVersion),
-    contents: prompt,
-    config: { temperature: 0.7 }
-  }, '문장 재번역');
-
-  return response.text?.trim() || "번역 실패";
-}
-
 export interface GridRequestOptions {
-  /** 원본 페이지 전체 이미지 (상황·표정 파악용). Gemini 보조 모드에서만 함께 보냅니다. */
-  fullBase64Image?: string;
+  /** 여러 페이지에서 모은 칸일 때 페이지별 칸 수 */
+  pageCellCounts?: number[];
   glossary?: Record<string, string>;
   context?: string;
   /** 토큰 사용량 로그에 표시할 이름 */
@@ -121,7 +63,10 @@ export interface GridRequestOptions {
   speakerHint?: string;
 }
 
-/** [보조] 말풍선 격자 이미지를 Gemini로 읽고 번역합니다. */
+/**
+ * [보조] 품질 검사에 걸린 칸을 모은 격자를 Gemini로 다시 읽고 번역합니다.
+ * 주력(OpenAI)과 다른 모델이 읽으므로, 같은 모델이 같은 글자를 반복해서 잘못 읽는 경우를 피할 수 있습니다.
+ */
 export async function translateGridImage(
   apiKey: string,
   gridBase64Image: string,
@@ -130,12 +75,12 @@ export async function translateGridImage(
   geminiVersion: GeminiVersion = '3.6',
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { fullBase64Image, glossary, context, label, speakerHint } = options;
+  const { pageCellCounts, glossary, context, label, speakerHint } = options;
 
   const prompt = buildGridPrompt({
     expectedCells,
+    pageCellCounts,
     speakerHint,
-    withFullPage: !!fullBase64Image,
     output: 'array',
     glossary,
     context,
@@ -143,8 +88,7 @@ export async function translateGridImage(
 
   const parts = [
     { text: prompt },
-    ...(fullBase64Image ? [{ inlineData: { data: fullBase64Image, mimeType } }] : []),
-    { inlineData: { data: gridBase64Image, mimeType: 'image/jpeg' } },
+    { inlineData: { data: gridBase64Image, mimeType } },
   ];
 
   const response = await generateContent(apiKey, {
@@ -176,46 +120,4 @@ export async function translateGridImage(
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }
-}
-
-/**
- * 지금까지의 번역을 바탕으로 "작품 노트"(인물별 말투·호칭·고유명사 표기)를 만듭니다.
- * 이후 페이지의 번역 프롬프트에 넣어 말투와 표기를 일관되게 유지하는 데 씁니다.
- */
-export async function summarizeWorkNotes(
-  apiKey: string,
-  geminiVersion: GeminiVersion,
-  pairs: { original: string; translated: string }[],
-  previousNotes?: string,
-  correctionSection?: string,
-  existingGlossary: string[] = [],
-): Promise<WorkNotesResult> {
-  if (pairs.length === 0) return { notes: previousNotes?.trim() ?? '', glossary: [] };
-
-  const prompt = buildWorkNotesPrompt(pairs, previousNotes, correctionSection, existingGlossary);
-
-  const response = await generateContent(apiKey, {
-    model: modelNameFor(geminiVersion),
-    contents: prompt,
-    config: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          notes: { type: Type.STRING },
-          glossary: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: { original: { type: Type.STRING }, translated: { type: Type.STRING } },
-              required: ['original', 'translated'],
-            },
-          },
-        },
-        required: ['notes', 'glossary'],
-      },
-    },
-  }, '작품 노트 정리 (+단어장 후보)');
-  return parseWorkNotesResponse(response.text ?? '');
 }

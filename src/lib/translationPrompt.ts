@@ -42,8 +42,6 @@ export interface GridPromptOptions extends PromptContextOptions {
   pageCellCounts?: number[];
   /** 얼굴 위치로 추정한 화자 힌트 (speakerHints.buildSpeakerHint) */
   speakerHint?: string;
-  /** 격자 외에 원본 페이지 전체 이미지도 함께 보내는 경우 (Gemini 보조 모드) */
-  withFullPage?: boolean;
   /**
    * 응답 형식. Gemini는 responseSchema로 배열을 강제할 수 있고,
    * OpenAI는 json_object만 강제되므로 "cells" 키로 감싸 받습니다.
@@ -52,12 +50,8 @@ export interface GridPromptOptions extends PromptContextOptions {
 }
 
 /** 말풍선 격자 이미지를 읽고 번역하도록 요청하는 프롬프트 */
-export function buildGridPrompt({ expectedCells, pageCellCounts, speakerHint = '', withFullPage = false, output, ...contextOptions }: GridPromptOptions): string {
-  const images = withFullPage
-    ? `두 장의 이미지를 첨부했어:
-1. 원본 만화 페이지 전체 이미지 (문맥·상황·인물 표정 파악용)
-2. 그 페이지에서 대사가 있는 말풍선만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지`
-    : `첨부한 이미지는 만화 페이지에서 대사가 있는 말풍선만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지야.`;
+export function buildGridPrompt({ expectedCells, pageCellCounts, speakerHint = '', output, ...contextOptions }: GridPromptOptions): string {
+  const images = `첨부한 이미지는 만화 페이지에서 대사가 있는 말풍선만 네모나게 잘라내어 바둑판(Grid) 형태로 이어 붙인 크롭 이미지야.`;
 
   const outputRule = output === 'array'
     ? `반드시 JSON 배열(Array)로만 응답해. 배열의 각 객체는 아래 3개 key를 가져야 해.`

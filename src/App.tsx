@@ -19,7 +19,6 @@ import { useTranslationQueue } from './hooks/useTranslationQueue';
 import { resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
-import { summarizeWorkNotes } from './lib/gemini';
 import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
@@ -31,7 +30,7 @@ import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrecti
 import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
-import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, Provider, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
+import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
 const PRELOAD_PAGE_COUNT = 10;
@@ -44,7 +43,6 @@ const NOTES_SOURCE_PAIRS = 60;
 const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
-const PROVIDER_STORAGE_KEY = 'manga-translator-provider';
 const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
 const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
 
@@ -52,7 +50,6 @@ const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).
 
 function App() {
   // 주력은 OpenAI(Terra). Gemini는 보조 옵션
-  const [provider, setProvider] = useState<Provider>(() => (localStorage.getItem(PROVIDER_STORAGE_KEY) === 'google' ? 'google' : 'openai'));
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
@@ -95,8 +92,8 @@ function App() {
   );
 
   // 지금 고른 엔진의 키. 작품 노트 정리도 이 엔진으로 처리
-  const activeKey = provider === 'openai' ? openaiKey : googleKey;
-  const settings: TranslationSettings = { provider, googleKey, openaiKey, geminiVersion, openAiVersion, glossary };
+  const activeKey = openaiKey;
+  const settings: TranslationSettings = { openaiKey, openAiVersion, googleKey, geminiVersion, glossary };
 
   const visibleIndices = useMemo(() => getVisibleIndices(allImages, currentPageIndex, viewMode), [allImages, currentPageIndex, viewMode]);
   const translationQueue = useMemo(
@@ -135,7 +132,7 @@ function App() {
 
   const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
 
-  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (고른 엔진에 요청 1회) */
+  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (OpenAI 요청 1회) */
   const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (notesBusyRef.current || !activeKey || allImages.length === 0) return;
     const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
@@ -145,9 +142,7 @@ function App() {
     setIsGeneratingNotes(true);
     try {
       const known = Object.keys(glossary);
-      const result = provider === 'openai'
-        ? await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections), known)
-        : await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, buildCorrectionSection(corrections), known);
+      const result = await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections), known);
       if (result.notes) saveNotes(result.notes, translatedPageCount);
 
       const found = filterCandidates(result.glossary, pairs.map(p => p.original), glossary, dismissedCandidates);
@@ -439,11 +434,6 @@ function App() {
     }
   };
 
-  const handleProviderChange = (next: Provider) => {
-    setProvider(next);
-    remember(PROVIDER_STORAGE_KEY, next);
-  };
-
   const handleGeminiVersionChange = (next: GeminiVersion) => {
     setGeminiVersion(next);
     remember(GEMINI_VERSION_STORAGE_KEY, next);
@@ -454,16 +444,17 @@ function App() {
     remember(OPENAI_VERSION_STORAGE_KEY, next);
   };
 
-  const handleApiKeyChange = (rawValue: string) => {
-    // 복사·붙여넣기로 앞뒤 공백·줄바꿈이 섞여 들어오는 경우가 많아 헤더 전송 전에 미리 제거
+  // 복사·붙여넣기로 앞뒤 공백·줄바꿈이 섞여 들어오는 경우가 많아 헤더 전송 전에 미리 제거
+  const handleOpenaiKeyChange = (rawValue: string) => {
     const value = rawValue.trim();
-    if (provider === 'google') {
-      setGoogleKey(value);
-      localStorage.setItem(GOOGLE_KEY_STORAGE, value);
-    } else {
-      setOpenaiKey(value);
-      localStorage.setItem(OPENAI_KEY_STORAGE, value);
-    }
+    setOpenaiKey(value);
+    localStorage.setItem(OPENAI_KEY_STORAGE, value);
+  };
+
+  const handleGoogleKeyChange = (rawValue: string) => {
+    const value = rawValue.trim();
+    setGoogleKey(value);
+    localStorage.setItem(GOOGLE_KEY_STORAGE, value);
   };
 
   /** 지금 화면의 덮어쓰기와 같은 글자 크기로 저장하기 위한 기준 (뷰어 페이지 높이·배율·글꼴) */
@@ -588,14 +579,14 @@ function App() {
         onCloseSession={handleCloseSession}
         autoTranslate={queue.autoTranslate}
         onToggleAutoTranslate={() => queue.setAutoTranslate(!queue.autoTranslate)}
-        provider={provider}
-        onProviderChange={handleProviderChange}
-        geminiVersion={geminiVersion}
-        onGeminiVersionChange={handleGeminiVersionChange}
         openAiVersion={openAiVersion}
         onOpenAiVersionChange={handleOpenAiVersionChange}
-        apiKey={provider === 'google' ? googleKey : openaiKey}
-        onApiKeyChange={handleApiKeyChange}
+        openaiKey={openaiKey}
+        onOpenaiKeyChange={handleOpenaiKeyChange}
+        geminiVersion={geminiVersion}
+        onGeminiVersionChange={handleGeminiVersionChange}
+        googleKey={googleKey}
+        onGoogleKeyChange={handleGoogleKeyChange}
       />
 
       <main className="flex-1 flex flex-col p-4 overflow-hidden relative" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
@@ -679,7 +670,6 @@ function App() {
                   translatingKeys={queue.translatingKeys}
                   pageErrors={queue.pageErrors}
                   hasApiKey={queue.hasApiKey}
-                  providerLabel={provider === 'google' ? 'Gemini' : 'OpenAI'}
                   autoTranslate={queue.autoTranslate}
                   hoveredBubble={hoveredBubble}
                   onHoverBubble={setHoveredBubble}

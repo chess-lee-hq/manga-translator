@@ -24,10 +24,20 @@ export interface GridResult {
   cells: GridCellInfo[]; // Info to map grid cells back to original boxes
 }
 
+export interface GridImageOptions {
+  /** 열 수. 없으면 칸 수에 맞춰 비전 토큰이 가장 적은 배치를 자동 선택 */
+  columns?: number;
+  /** 칸 한 변 크기(px). 기본 300 — 재요청은 작은 글자·한자 획을 살리려고 2배로 키움 */
+  cellSize?: number;
+  /** 기본 JPEG. PNG는 용량이 크지만 가는 획 주변 번짐이 없음 */
+  format?: 'jpeg' | 'png';
+}
+
 /** 박스에 딱 맞게 자르면 글자 획이 잘려 인식률이 떨어지므로 사방에 여백을 둠 */
 const CROP_MARGIN_RATIO = 0.08;
 const CELL_SIZE = 300;
-const CELL_PADDING = 20;
+/** 칸 크기 대비 여백 비율 (300px 칸 기준 20px) */
+const CELL_PADDING_RATIO = 20 / 300;
 
 /**
  * 여러 페이지의 말풍선을 잘라 바둑판 이미지 한 장으로 붙입니다.
@@ -35,17 +45,19 @@ const CELL_PADDING = 20;
  * 박스는 호출 전에 readingOrder로 정렬되어 있고, 페이지 순서대로 이어 붙입니다.
  * 열 수를 지정하지 않으면 칸 수에 맞춰 비전 토큰이 가장 적게 드는 배치를 자동으로 고릅니다.
  */
-export async function createGridImage(sources: GridSource[], gridWidth?: number): Promise<GridResult | null> {
+export async function createGridImage(sources: GridSource[], options: GridImageOptions = {}): Promise<GridResult | null> {
+  const { cellSize = CELL_SIZE, format = 'jpeg' } = options;
+  const labelScale = cellSize / CELL_SIZE;
   const entries = sources.flatMap(source => source.boxes.map((box, boxIndex) => ({ box, source, speaker: source.speakers?.[boxIndex] ?? null })));
   if (entries.length === 0) return null;
 
   const cells: GridCellInfo[] = entries.map((entry, index) => ({ id: index + 1, box: entry.box, pageId: entry.source.pageId, speaker: entry.speaker }));
-  const columns = gridWidth ?? chooseGridColumns(cells.length, CELL_SIZE);
+  const columns = options.columns ?? chooseGridColumns(cells.length, cellSize);
   const rows = Math.ceil(cells.length / columns);
 
   const canvas = document.createElement('canvas');
-  canvas.width = columns * CELL_SIZE;
-  canvas.height = rows * CELL_SIZE;
+  canvas.width = columns * cellSize;
+  canvas.height = rows * cellSize;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
@@ -68,21 +80,21 @@ export async function createGridImage(sources: GridSource[], gridWidth?: number)
     const sh = Math.min(imageHeight, box.ymax + marginY) - sy;
     if (!(sw > 0 && sh > 0)) return;
 
-    const cellX = (i % columns) * CELL_SIZE;
-    const cellY = Math.floor(i / columns) * CELL_SIZE;
-    const inner = CELL_SIZE - CELL_PADDING * 2;
+    const cellX = (i % columns) * cellSize;
+    const cellY = Math.floor(i / columns) * cellSize;
+    const inner = cellSize * (1 - CELL_PADDING_RATIO * 2);
     const scale = Math.min(inner / sw, inner / sh);
     const drawW = sw * scale;
     const drawH = sh * scale;
 
-    ctx.drawImage(image, sx, sy, sw, sh, cellX + (CELL_SIZE - drawW) / 2, cellY + (CELL_SIZE - drawH) / 2, drawW, drawH);
+    ctx.drawImage(image, sx, sy, sw, sh, cellX + (cellSize - drawW) / 2, cellY + (cellSize - drawH) / 2, drawW, drawH);
 
     ctx.fillStyle = 'red';
-    ctx.font = 'bold 24px Arial';
-    ctx.fillText(`#${cells[i].id}`, cellX + 10, cellY + 30);
+    ctx.font = `bold ${Math.round(24 * labelScale)}px Arial`;
+    ctx.fillText(`#${cells[i].id}`, cellX + 10 * labelScale, cellY + 30 * labelScale);
   });
 
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.8), cells };
+  return { dataUrl: format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.8), cells };
 }
 
 export async function loadImage(src: string): Promise<HTMLImageElement> {

@@ -12,7 +12,6 @@ interface ScriptPanelProps {
   translatingKeys: Set<string>;
   pageErrors: Record<string, PageError>;
   hasApiKey: boolean;
-  providerLabel: string;
   autoTranslate: boolean;
   hoveredBubble: HoveredBubble | null;
   onHoverBubble: (bubble: HoveredBubble | null) => void;
@@ -47,7 +46,7 @@ function renderFurigana(text: string) {
 }
 
 export function ScriptPanel({
-  images, visibleIndices, viewMode, translationCache, translatingKeys, pageErrors, hasApiKey, providerLabel, autoTranslate,
+  images, visibleIndices, viewMode, translationCache, translatingKeys, pageErrors, hasApiKey, autoTranslate,
   hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDelete, onRetranslate, onAddToGlossary, onReorder, onToggleDisplayMode,
   onRetryPage, onTranslatePage, onResumeFromEmpty,
 }: ScriptPanelProps) {
@@ -109,7 +108,7 @@ export function ScriptPanel({
                 ) : !hasApiKey ? (
                   <>
                     <Key className="mb-2" size={24} />
-                    <span className="text-sm">상단에 {providerLabel} API 키를 입력하면 번역이 시작됩니다.</span>
+                    <span className="text-sm">상단에 OpenAI API 키를 입력하면 번역이 시작됩니다.</span>
                   </>
                 ) : !autoTranslate ? (
                   <>
