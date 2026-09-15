@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Save, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, OpenAiVersion, Provider, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
@@ -16,7 +16,6 @@ interface AppHeaderProps {
   onAddFiles: () => void;
   exportProgress: { done: number; total: number } | null;
   onExportAll: () => void;
-  onExportJSON: () => void;
   isDriveSyncing: boolean;
   /** 드라이브에 저장(덮어쓰기)할 파일 이름 */
   driveTargetName: string | null;
@@ -46,7 +45,7 @@ const actionButton = 'flex items-center gap-1 px-2 py-1 rounded text-xs font-med
 export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
-    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, onExportJSON, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
+    scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
     onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, provider, onProviderChange, geminiVersion, onGeminiVersionChange,
     openAiVersion, onOpenAiVersionChange, apiKey, onApiKeyChange,
   } = props;
@@ -144,9 +143,6 @@ export function AppHeader(props: AppHeaderProps) {
               {exportProgress
                 ? <><Loader2 size={14} className="animate-spin" /> {exportProgress.done}/{exportProgress.total}</>
                 : <><Download size={14} /> <span className={WIDE_LABEL}>ZIP</span></>}
-            </button>
-            <button onClick={onExportJSON} title="번역 데이터 JSON 저장" className={`${actionButton} bg-green-50 text-green-700 border-green-200 hover:bg-green-100`}>
-              <Save size={14} /> <span className={WIDE_LABEL}>JSON</span>
             </button>
             <button onClick={onSaveToDrive} disabled={isDriveSyncing} title={driveTargetName ? `구글 드라이브에 저장 — "${driveTargetName}" 덮어쓰기` : '구글 드라이브에 저장'} className={`${actionButton} bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100`}>
               {isDriveSyncing ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} <span className={WIDE_LABEL}>드라이브</span>

@@ -130,7 +130,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     }
 
     const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, maxFont);
-    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, !result.disable_keep_all, t => measure(t, fontSize), cssPx);
+    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx);
     drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);
   }

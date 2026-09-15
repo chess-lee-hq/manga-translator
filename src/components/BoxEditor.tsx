@@ -1,11 +1,9 @@
-import { ArrowLeftRight, ArrowUpDown, Link2, Square, Tag, Trash2, Undo2, Unlink2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, Square, Tag, Trash2, Undo2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface BoxEditorProps {
   initialBox: [number, number, number, number];
   onChange: (newBox: [number, number, number, number]) => void;
-  isKeepAll?: boolean;
-  onToggleKeepAll?: () => void;
   displayMode?: 'cover' | 'tag';
   onToggleDisplayMode?: () => void;
   textDirection?: 'horizontal' | 'vertical';
@@ -35,7 +33,7 @@ function ToolbarButton({ onClick, title, danger, children }: { onClick: () => vo
 }
 
 export function BoxEditor({
-  initialBox, onChange, isKeepAll = true, onToggleKeepAll, displayMode, onToggleDisplayMode,
+  initialBox, onChange, displayMode, onToggleDisplayMode,
   textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition, children,
 }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
@@ -94,9 +92,7 @@ export function BoxEditor({
   const height = `${((box[2] - box[0]) / 1000) * 100}%`;
   const width = `${((box[3] - box[1]) / 1000) * 100}%`;
 
-  // 세로쓰기에서는 묶음/풀림(음절 단위 줄바꿈)이 아무 효과가 없으므로(세로쓰기는 항상 한 글자씩 쌓음) 숨김
-  const showKeepAll = !!onToggleKeepAll && textDirection !== 'vertical';
-  const hasToolbar = !!onToggleDisplayMode || !!onToggleTextDirection || showKeepAll || !!onResetPosition || !!onDelete;
+  const hasToolbar = !!onToggleDisplayMode || !!onToggleTextDirection || !!onResetPosition || !!onDelete;
 
   return (
     <div
@@ -123,11 +119,6 @@ export function BoxEditor({
               {textDirection === 'vertical' ? <ArrowUpDown size={12} /> : <ArrowLeftRight size={12} />}
             </ToolbarButton>
           )}
-          {showKeepAll && (
-            <ToolbarButton onClick={onToggleKeepAll!} title={isKeepAll ? '단어 묶음(Keep-all) 적용 중 — 눌러서 해제' : '단어 묶음 해제됨 — 눌러서 적용'}>
-              {isKeepAll ? <Link2 size={12} /> : <Unlink2 size={12} />}
-            </ToolbarButton>
-          )}
           {onResetPosition && (
             <ToolbarButton onClick={onResetPosition} title="위치·크기를 자동 배치로 되돌리기">
               <Undo2 size={12} />
@@ -135,7 +126,7 @@ export function BoxEditor({
           )}
           {onDelete && (
             <>
-              {(onToggleDisplayMode || onToggleTextDirection || showKeepAll || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
+              {(onToggleDisplayMode || onToggleTextDirection || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
               <ToolbarButton onClick={onDelete} title="이 번역 삭제하기" danger>
                 <Trash2 size={12} />
               </ToolbarButton>

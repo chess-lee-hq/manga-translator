@@ -36,7 +36,6 @@ import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, Provider, Scri
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
 const PRELOAD_PAGE_COUNT = 10;
 const AUTO_NOTES_STORAGE_KEY = 'manga-translator-auto-notes';
-const CONTEXT_FIRST_STORAGE_KEY = 'manga-translator-context-first';
 /** 작품 노트를 처음 만드는 시점(번역된 페이지 수)과 이후 갱신 주기 */
 const NOTES_FIRST_PAGES = 3;
 const NOTES_REFRESH_PAGES = 10;
@@ -75,7 +74,6 @@ function App() {
   const [isWorkNotesOpen, setIsWorkNotesOpen] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
-  const [contextFirst, setContextFirst] = useState(() => localStorage.getItem(CONTEXT_FIRST_STORAGE_KEY) === 'true');
   const notesBusyRef = useRef(false);
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +113,6 @@ function App() {
     onPageTranslated: setPageResults,
     notes: notes?.text,
     corrections,
-    contextFirst,
   });
 
   const applyRestoredSession = (session: RestoredSession) => {
@@ -177,15 +174,6 @@ function App() {
     setAutoNotes(enabled);
     try {
       localStorage.setItem(AUTO_NOTES_STORAGE_KEY, String(enabled));
-    } catch (err) {
-      console.warn('설정 저장 실패:', err);
-    }
-  };
-
-  const updateContextFirst = (enabled: boolean) => {
-    setContextFirst(enabled);
-    try {
-      localStorage.setItem(CONTEXT_FIRST_STORAGE_KEY, String(enabled));
     } catch (err) {
       console.warn('설정 저장 실패:', err);
     }
@@ -313,10 +301,6 @@ function App() {
 
   const handleBoxChange = (imgIndex: number, id: string, box: Box2d) => {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true } : r)));
-  };
-
-  const handleToggleKeepAll = (imgIndex: number, id: string) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, disable_keep_all: !r.disable_keep_all } : r)));
   };
 
   /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */
@@ -482,12 +466,6 @@ function App() {
     }
   };
 
-  const handleExportJSON = () => {
-    const currentKeys = new Set(allImages.map(img => getCacheKey(img.file)));
-    const exportData = Object.fromEntries(Object.entries(translationCache).filter(([key]) => currentKeys.has(key)));
-    downloadBlob(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }), 'manga_translation_data.json');
-  };
-
   /** 지금 화면의 덮어쓰기와 같은 글자 크기로 저장하기 위한 기준 (뷰어 페이지 높이·배율·글꼴) */
   const getRenderOptions = () => ({
     displayPageHeight: Math.max(1, (window.innerHeight - VIEWER_CHROME_PX) * scale),
@@ -600,7 +578,6 @@ function App() {
         onAddFiles={() => fileInputRef.current?.click()}
         exportProgress={exportProgress}
         onExportAll={handleExportAll}
-        onExportJSON={handleExportJSON}
         isDriveSyncing={drive.isDriveSyncing}
         driveTargetName={driveFileName}
         onSaveToDrive={drive.saveToDrive}
@@ -670,7 +647,6 @@ function App() {
                 hoveredBubble={hoveredBubble}
                 onHoverBubble={handleHoverBubble}
                 onBoxChange={handleBoxChange}
-                onToggleKeepAll={handleToggleKeepAll}
                 onToggleDisplayMode={handleToggleDisplayMode}
                 onSetTextDirection={handleSetTextDirection}
                 onSetTagPosition={handleSetTagPosition}
@@ -746,11 +722,9 @@ function App() {
           isRegenerating={isGeneratingNotes}
           canRegenerate={!!activeKey && translatedPageCount > 0}
           autoUpdate={autoNotes}
-          contextFirst={contextFirst}
           onSave={text => saveNotes(text)}
           onRegenerate={() => regenerateWorkNotes()}
           onToggleAutoUpdate={() => updateAutoNotes(!autoNotes)}
-          onToggleContextFirst={() => updateContextFirst(!contextFirst)}
           corrections={corrections}
           onRemoveCorrection={removeCorrection}
           onClearCorrections={clearCorrections}

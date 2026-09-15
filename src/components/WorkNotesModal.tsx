@@ -11,11 +11,9 @@ interface WorkNotesModalProps {
   isRegenerating: boolean;
   canRegenerate: boolean;
   autoUpdate: boolean;
-  contextFirst: boolean;
   onSave: (text: string) => void;
   onRegenerate: () => void;
   onToggleAutoUpdate: () => void;
-  onToggleContextFirst: () => void;
   /** 대본에서 직접 고친 번역 (최신이 앞) */
   corrections: Correction[];
   onRemoveCorrection: (original: string) => void;
@@ -24,8 +22,8 @@ interface WorkNotesModalProps {
 }
 
 export function WorkNotesModal({
-  workName, notes, recentPairCount, isRegenerating, canRegenerate, autoUpdate, contextFirst,
-  onSave, onRegenerate, onToggleAutoUpdate, onToggleContextFirst, corrections, onRemoveCorrection, onClearCorrections, onClose,
+  workName, notes, recentPairCount, isRegenerating, canRegenerate, autoUpdate,
+  onSave, onRegenerate, onToggleAutoUpdate, corrections, onRemoveCorrection, onClearCorrections, onClose,
 }: WorkNotesModalProps) {
   const [text, setText] = useState(notes?.text ?? '');
   const [syncedAt, setSyncedAt] = useState(notes?.updatedAt ?? '');
@@ -111,10 +109,6 @@ export function WorkNotesModal({
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={autoUpdate} onChange={onToggleAutoUpdate} className="accent-teal-600" />
             번역이 쌓이면 노트를 자동으로 갱신 (처음 3장, 이후 10장마다 · 번역 엔진 요청 1회)
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={contextFirst} onChange={onToggleContextFirst} className="accent-teal-600" />
-            문맥 우선 모드 — 한 장씩 순서대로 번역해 앞 내용을 최대한 반영 (느려지지만 일관성 최고)
           </label>
         </div>
 

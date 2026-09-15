@@ -31,11 +31,9 @@ interface Options {
   notes?: string;
   /** 사용자가 직접 고친 번역 — 번역 프롬프트에 교정 예시로 전달 */
   corrections?: Correction[];
-  /** 한 장씩 순서대로 번역해 앞 페이지 내용을 최대한 반영 */
-  contextFirst?: boolean;
 }
 
-export function useTranslationQueue({ images, queue, visibleIndices, settings, translationCache, onPageTranslated, notes, corrections, contextFirst }: Options) {
+export function useTranslationQueue({ images, queue, visibleIndices, settings, translationCache, onPageTranslated, notes, corrections }: Options) {
   // 진행 상태는 페이지 번호가 아니라 캐시 키(파일) 기준 → 이미지 추가·재정렬 중에도 중복 호출·누락 없음
   const inFlightRef = useRef<Set<string>>(new Set());
   const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(() => new Set());
@@ -124,8 +122,8 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
       }
     };
 
-    // 묶음은 OpenAI 전용. Gemini 보조 모드와 '순서대로 번역'에서는 한 장씩
-    const canBatch = attemptSettings.provider === 'openai' && !contextFirst && batchSize > 1;
+    // 묶음은 OpenAI 전용. Gemini 보조 모드에서는 한 장씩
+    const canBatch = attemptSettings.provider === 'openai' && batchSize > 1;
     const groups: (typeof jobs)[] = [];
     for (let i = 0; i < jobs.length; i += canBatch ? batchSize : 1) {
       groups.push(jobs.slice(i, i + (canBatch ? batchSize : 1)));
@@ -143,7 +141,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
         }
       }
     };
-    const concurrency = Math.min(contextFirst ? 1 : TRANSLATION_CONCURRENCY, groups.length);
+    const concurrency = Math.min(TRANSLATION_CONCURRENCY, groups.length);
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
   };
 

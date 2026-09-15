@@ -123,7 +123,7 @@ export function layoutTags(
     const gap = TAG_STYLE.gapPx * unit * tagScale;
 
     const measureLine = (text: string) => measure(text, fontSize);
-    const lines = wrapText(result.translated_text.trim(), TAG_STYLE.maxTextWidthPx * unit * tagScale, measureLine, !result.disable_keep_all);
+    const lines = wrapText(result.translated_text.trim(), TAG_STYLE.maxTextWidthPx * unit * tagScale, measureLine, true);
     const width = Math.max(...lines.map(measureLine)) + padX * 2;
     const height = lines.length * fontSize * OVERLAY_STYLE.lineHeight + padY * 2;
 

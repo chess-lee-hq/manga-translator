@@ -19,7 +19,6 @@ interface MangaViewerProps {
   hoveredBubble: HoveredBubble | null;
   onHoverBubble: (bubble: HoveredBubble | null) => void;
   onBoxChange: (imgIndex: number, id: string, box: Box2d) => void;
-  onToggleKeepAll: (imgIndex: number, id: string) => void;
   onToggleDisplayMode: (imgIndex: number, id: string) => void;
   onSetTextDirection: (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => void;
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
@@ -53,7 +52,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
-  hoveredBubble, onHoverBubble, onBoxChange, onToggleKeepAll, onToggleDisplayMode, onSetTextDirection,
+  hoveredBubble, onHoverBubble, onBoxChange, onToggleDisplayMode, onSetTextDirection,
   onSetTagPosition, onSetTagScale, onResetTag, onDelete, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -236,8 +235,6 @@ export function MangaViewer({
                                   <BoxEditor
                                     initialBox={result.box_2d}
                                     onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
-                                    isKeepAll={!result.disable_keep_all}
-                                    onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
                                     displayMode="tag"
                                     onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                                     onDelete={() => onDelete(imgIndex, result.id)}
@@ -305,8 +302,8 @@ export function MangaViewer({
                                 fontSize: `clamp(${OVERLAY_STYLE.minFontPx * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${OVERLAY_STYLE.maxFontPx * scale}px)`,
                                 fontWeight: OVERLAY_STYLE.fontWeight,
                                 lineHeight: OVERLAY_STYLE.lineHeight,
-                                wordBreak: result.disable_keep_all ? 'break-all' : 'keep-all',
-                                lineBreak: result.disable_keep_all ? 'anywhere' : 'auto',
+                                // 어절 단위로 줄바꿈하고, 한 어절이 줄보다 길 때만 overflowWrap이 글자 단위로 자동으로 끊음
+                                wordBreak: 'keep-all',
                                 whiteSpace: 'pre-wrap',
                                 overflowWrap: 'break-word',
                                 textAlign: 'center',
@@ -329,8 +326,6 @@ export function MangaViewer({
                                 key={result.id}
                                 initialBox={[top0, left0, bottom0, right0]}
                                 onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
-                                isKeepAll={!result.disable_keep_all}
-                                onToggleKeepAll={() => onToggleKeepAll(imgIndex, result.id)}
                                 displayMode="cover"
                                 onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                                 textDirection={textDirection}
