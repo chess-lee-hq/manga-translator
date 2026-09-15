@@ -4,6 +4,7 @@ import { createGridImage, loadImage, type GridCellInfo, type GridResult, type Gr
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
+import { normalizeEllipsis } from './ellipsis';
 import { sanitizeResults } from './results';
 import { RETRY_INSTRUCTION } from './translationPrompt';
 import { applyQualityRetry, stripTypeTags, type QualityReport } from './translationQuality';
@@ -284,17 +285,17 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
   const [cell] = checked.translations;
 
   if (!cell) return { originalText: '...', translatedText: '' };
-  return { originalText: cell.original_text || '...', translatedText: cell.translated_text };
+  return { originalText: cell.original_text || '...', translatedText: normalizeEllipsis(cell.translated_text) };
 }
 
 /** 원문 한 문장만 다시 번역합니다. */
 export async function retranslateText(originalText: string, settings: TranslationSettings): Promise<string> {
   requireKeys(settings);
-  return retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, settings.glossary, settings.context);
+  return normalizeEllipsis(await retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, settings.glossary, settings.context));
 }
 
 /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역합니다. */
 export async function shortenTranslation(originalText: string, currentTranslation: string, maxChars: number, settings: TranslationSettings): Promise<string> {
   requireKeys(settings);
-  return shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, Math.max(1, maxChars), settings.glossary, settings.context);
+  return normalizeEllipsis(await shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, Math.max(1, maxChars), settings.glossary, settings.context));
 }

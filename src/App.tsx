@@ -25,6 +25,7 @@ import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
+import { normalizeEllipsis } from './lib/ellipsis';
 import { retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
 import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
 import { filterCandidates } from './lib/glossaryCandidates';
@@ -340,7 +341,9 @@ function App() {
     });
   };
 
-  const handleSaveEdit = (key: string, id: string, text: string) => {
+  const handleSaveEdit = (key: string, id: string, rawText: string) => {
+    // 직접 고친 번역도 말줄임표 규칙을 똑같이 적용 (저장했다 다시 열었을 때 모양이 바뀌지 않도록)
+    const text = normalizeEllipsis(rawText);
     const edited = translationCache[key]?.find(r => r.id === id);
     if (edited) recordCorrection(edited.original_text, edited.translated_text, text);
     updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: text } : r)));
