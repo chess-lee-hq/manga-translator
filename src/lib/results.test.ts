@@ -71,3 +71,14 @@ describe('sanitizeResults — 빈 번역 자동 정리', () => {
     expect(notNumber.tag_scale).toBeUndefined();
   });
 });
+
+describe('sanitizeResults — 말풍선 맞춤 설정', () => {
+  it('fit_bubble은 true/false만 남긴다', () => {
+    const [on, off, junk] = sanitizeResults([
+      { box_2d: [0, 0, 1, 1], translated_text: 'a', fit_bubble: true },
+      { box_2d: [0, 0, 1, 1], translated_text: 'b', fit_bubble: false },
+      { box_2d: [0, 0, 1, 1], translated_text: 'c', fit_bubble: 'yes' },
+    ])!;
+    expect([on.fit_bubble, off.fit_bubble, junk.fit_bubble]).toEqual([true, false, undefined]);
+  });
+});

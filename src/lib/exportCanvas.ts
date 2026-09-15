@@ -1,4 +1,6 @@
-import { layoutTags, resolveDisplayMode, TAG_STYLE } from './bubbleDisplay';
+import { layoutTags, resolveDisplayMode, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
+import { BUBBLE_FIT, fillOutline, layoutBubbleText, type BubbleTextLayout } from './bubbleLayout';
+import { detectPageBubbleShapes } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize, resolveTextDirection, VERTICAL_TEXT, type VerticalLayout } from './overlayLayout';
@@ -56,6 +58,29 @@ function drawTextLines(ctx: CanvasRenderingContext2D, lines: string[], cx: numbe
   });
 }
 
+/** 원본 말풍선 모양대로 흰색으로 지우고, 줄마다 정해진 자리에 번역문을 그림 (화면 BubbleFitText와 같은 배치) */
+function drawBubbleFit(ctx: CanvasRenderingContext2D, layout: BubbleTextLayout, setFont: (size: number) => void) {
+  const outline = fillOutline(layout.fill);
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  setFont(layout.fontSize);
+  ctx.fillStyle = '#111827';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const metrics = ctx.measureText('가');
+  const ascent = metrics.fontBoundingBoxAscent || layout.fontSize * 0.88;
+  const descent = metrics.fontBoundingBoxDescent || layout.fontSize * 0.12;
+  for (const line of layout.lines) {
+    ctx.fillText(line.text, line.cx, line.top + (layout.lineHeight - (ascent + descent)) / 2 + ascent);
+  }
+}
+
 /** 세로쓰기: 첫 열을 가장 오른쪽에 두고 글자를 한 칸씩 아래로 그림 */
 function drawVerticalColumns(ctx: CanvasRenderingContext2D, layout: VerticalLayout, cx: number, cy: number, setFont: (size: number) => void) {
   setFont(layout.fontSize);
@@ -105,9 +130,26 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   const maxFont = OVERLAY_STYLE.maxFontPx * options.viewScale * cssPx;
   const { measure, setFont } = createTextMeasurer(options.fontFamily || DEFAULT_FONT_FAMILY, ctx);
 
+  // 원본 말풍선 모양 (화면과 같은 규칙으로 찾음 — 대상이 하나라도 있을 때만 픽셀을 읽음)
+  let shapes: ReturnType<typeof detectPageBubbleShapes> = {};
+  if (results.some(wantsBubbleFit)) {
+    try {
+      shapes = detectPageBubbleShapes(image, results);
+    } catch (error) {
+      console.warn('저장 중 말풍선 모양 찾기 실패 — 둥근 사각형으로 그립니다:', error);
+    }
+  }
+
   // 1) 원문을 덮는 말풍선
   for (const result of results) {
     if (resolveDisplayMode(result) === 'tag') continue;
+
+    const shape = wantsBubbleFit(result) ? shapes[result.id] : null;
+    const fitted = shape ? layoutBubbleText(result.translated_text ?? '', shape, width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, maxFont) : null;
+    if (fitted) {
+      drawBubbleFit(ctx, fitted, setFont);
+      continue;
+    }
 
     const displayBox = getDisplayBox(result);
     const [ymin, xmin, ymax, xmax] = displayBox;

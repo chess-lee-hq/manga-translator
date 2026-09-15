@@ -1,8 +1,12 @@
 import { Download } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
-import { layoutTags, resolveDisplayMode, TAG_STYLE } from '../lib/bubbleDisplay';
+import { useBubbleShapes } from '../hooks/useBubbleShapes';
+import { layoutTags, resolveDisplayMode, TAG_STYLE, wantsBubbleFit } from '../lib/bubbleDisplay';
+import { BUBBLE_FIT, bubbleCapacity, layoutBubbleText, type BubbleTextLayout } from '../lib/bubbleLayout';
+import type { BubbleShape } from '../lib/bubbleShape';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { BubbleFitText } from './BubbleFitText';
 import { VerticalBubbleText } from './VerticalBubbleText';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
@@ -28,10 +32,17 @@ interface MangaViewerProps {
   /** 딱지 위치·크기를 모두 자동으로 되돌림 */
   onResetTag: (imgIndex: number, id: string) => void;
   onDelete: (imgIndex: number, id: string) => void;
+  /** 원본 말풍선 모양에 맞춰 넣기 켜기/끄기 */
+  onSetBubbleFit: (imgIndex: number, id: string, enabled: boolean) => void;
+  /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역 */
+  onShorten: (imgIndex: number, id: string, maxChars: number) => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
   footer: ReactNode;
 }
+
+/** 말풍선 모양별 배치 결과 (화면이 다시 그려질 때마다 배치를 새로 찾지 않도록) */
+const bubbleLayoutCache = new WeakMap<BubbleShape, Map<string, BubbleTextLayout | null>>();
 
 interface DrawingBox {
   imgIndex: number;
@@ -53,7 +64,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
   hoveredBubble, onHoverBubble, onBoxChange, onToggleDisplayMode, onSetTextDirection,
-  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onCreateBox, onDownloadPage, footer,
+  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onSetBubbleFit, onShorten, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -66,6 +77,24 @@ export function MangaViewer({
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+
+  // 원본 말풍선 모양 (페이지 픽셀을 읽어 비동기로 계산) + 모양·글·페이지 크기가 같으면 배치 결과를 재사용
+  const shapeOf = useBubbleShapes(
+    visibleIndices.filter(i => images[i]).map(i => ({ src: images[i].src, results: translationCache[getCacheKey(images[i].file)] || [] })),
+    scriptStyle === 'overlay',
+  );
+  const bubbleLayoutFor = (shape: BubbleShape, text: string, pageWidth: number, pageHeight: number) => {
+    let byKey = bubbleLayoutCache.get(shape);
+    if (!byKey) {
+      byKey = new Map();
+      bubbleLayoutCache.set(shape, byKey);
+    }
+    const key = `${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${text}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, layoutBubbleText(text, shape, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, OVERLAY_STYLE.maxFontPx * scale));
+    }
+    return byKey.get(key)!;
+  };
   const [isPanning, setIsPanning] = useState(false);
   const [drawingBox, setDrawingBox] = useState<DrawingBox | null>(null);
 
@@ -282,6 +311,45 @@ export function MangaViewer({
                             );
                           }
 
+                          // 원본 말풍선 모양에 맞춰 넣기 (찾지 못했거나 최소 글자 크기·흰 영역 확장으로도 넘치면 둥근 사각형으로)
+                          const shape = shapeOf(img.src, result);
+                          const fitWanted = wantsBubbleFit(result);
+                          const bubbleLayout = fitWanted && shape ? bubbleLayoutFor(shape, result.translated_text, pageWidth, pageHeight) : null;
+                          // 말풍선을 찾았는데 번역문이 길어 넘쳤거나 흰 영역을 넓혀야 했던 경우 → 영역 수정에서 표시하고 "짧게 다시 번역" 제안
+                          const overflowNote = fitWanted && shape
+                            ? (!bubbleLayout ? '번역문이 길어 말풍선에 다 들어가지 않아 네모 상자로 표시 중' : bubbleLayout.expanded ? '번역문이 길어 흰 영역을 말풍선 밖으로 조금 넓혔음' : null)
+                            : null;
+                          const bubbleEditProps = shape ? {
+                            bubbleFit: fitWanted,
+                            onToggleBubbleFit: () => onSetBubbleFit(imgIndex, result.id, !fitWanted),
+                            warning: overflowNote ?? undefined,
+                            onShorten: overflowNote ? () => onShorten(
+                              imgIndex,
+                              result.id,
+                              bubbleCapacity(result.translated_text, shape, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale),
+                            ) : undefined,
+                          } : {};
+
+                          if (bubbleLayout) {
+                            const fitted = <BubbleFitText layout={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />;
+                            if (!isEditingBoxes) return <Fragment key={result.id}>{fitted}</Fragment>;
+                            return (
+                              <Fragment key={result.id}>
+                                {fitted}
+                                <BoxEditor
+                                  initialBox={[top0, left0, bottom0, right0]}
+                                  onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
+                                  displayMode="cover"
+                                  onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                  onDelete={() => onDelete(imgIndex, result.id)}
+                                  {...bubbleEditProps}
+                                >
+                                  {null}
+                                </BoxEditor>
+                              </Fragment>
+                            );
+                          }
+
                           // 글자 규칙은 이미지 저장(lib/overlayLayout.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
                           const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
 
@@ -331,6 +399,7 @@ export function MangaViewer({
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
                                 onDelete={() => onDelete(imgIndex, result.id)}
+                                {...bubbleEditProps}
                               >
                                 {textContent}
                               </BoxEditor>

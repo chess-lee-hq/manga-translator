@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLikelySfx, layoutTags, resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './bubbleDisplay';
+import { isLikelySfx, layoutTags, resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN, wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 
 const bubble = (over: Partial<TranslationResult>): TranslationResult => ({
@@ -115,5 +115,22 @@ describe('layoutTags', () => {
     const tooSmall = layoutTags([{ ...sfxAt('a', [400, 400, 500, 500]), tag_scale: 0.01 }], 1000, 1000, 1, measure);
     expect(tooBig.a.scale).toBe(TAG_SCALE_MAX);
     expect(tooSmall.a.scale).toBe(TAG_SCALE_MIN);
+  });
+});
+
+describe('wantsBubbleFit (원본 말풍선 모양에 맞춰 넣을 대상)', () => {
+  const speech = { translated_text: '진심으로 하는 말이야?', original_text: '本気で言ってるのか', box_2d: [100, 100, 300, 200] as [number, number, number, number] };
+
+  it('덮기 방식이면 기본으로 켜고, 박스를 직접 고쳤거나 세로쓰기를 고르면 끈다', () => {
+    expect(wantsBubbleFit(bubble(speech))).toBe(true);
+    expect(wantsBubbleFit(bubble({ ...speech, is_edited_box: true }))).toBe(false);
+    expect(wantsBubbleFit(bubble({ ...speech, text_direction: 'vertical' }))).toBe(false);
+    expect(wantsBubbleFit(bubble({ ...speech, display_mode: 'tag' }))).toBe(false);
+  });
+
+  it('사용자가 직접 켜고 끈 값이 자동 판단보다 우선 (단, 작은 딱지는 항상 제외)', () => {
+    expect(wantsBubbleFit(bubble({ ...speech, fit_bubble: false }))).toBe(false);
+    expect(wantsBubbleFit(bubble({ ...speech, is_edited_box: true, fit_bubble: true }))).toBe(true);
+    expect(wantsBubbleFit(bubble({ ...speech, display_mode: 'tag', fit_bubble: true }))).toBe(false);
   });
 });

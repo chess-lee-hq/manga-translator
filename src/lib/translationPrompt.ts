@@ -138,6 +138,25 @@ ${originalText}
 번역문만 출력해. 따옴표·JSON·설명은 넣지 마.`;
 }
 
+/** 말풍선에 들어가지 않는 번역문을 뜻·말투는 살리고 글자 수만 줄이도록 요청하는 프롬프트 */
+export function buildShortenPrompt(originalText: string, currentTranslation: string, maxChars: number, options: PromptContextOptions = {}): string {
+  return `# 역할
+너는 최고 수준의 일본 만화 번역가야. 아래 한국어 번역문이 말풍선에 다 들어가지 않아서, 더 짧게 다듬어야 해.
+
+${TRANSLATION_RULES}
+- 공백을 포함해 ${maxChars}자 이내로 줄여.
+- 뜻과 인물의 말투(반말/존댓말·어미)는 그대로 유지하고, 군더더기 표현·반복·불필요한 접속어부터 줄여.
+- 대사의 핵심 정보(누가·무엇을·감정)는 빼지 마.
+${buildSharedContext({ ...options, sourceText: originalText })}
+# 원문
+${originalText}
+
+# 지금 번역문 (${Array.from(currentTranslation).length}자)
+${currentTranslation}
+
+줄인 번역문만 출력해. 따옴표·설명은 넣지 마.`;
+}
+
 /**
  * 작품 노트(말투·호칭 기억)를 정리하면서, 단어장에 올릴 만한 고유명사 후보도 함께 받는 프롬프트.
  * 요청 하나로 두 가지를 얻어 추가 요청을 만들지 않음.

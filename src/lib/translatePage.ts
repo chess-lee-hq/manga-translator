@@ -1,7 +1,7 @@
 import type { Box2d, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { translateGridImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
-import { retranslateTextOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
+import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { sanitizeResults } from './results';
@@ -291,4 +291,10 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
 export async function retranslateText(originalText: string, settings: TranslationSettings): Promise<string> {
   requireKeys(settings);
   return retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, settings.glossary, settings.context);
+}
+
+/** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역합니다. */
+export async function shortenTranslation(originalText: string, currentTranslation: string, maxChars: number, settings: TranslationSettings): Promise<string> {
+  requireKeys(settings);
+  return shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, Math.max(1, maxChars), settings.glossary, settings.context);
 }

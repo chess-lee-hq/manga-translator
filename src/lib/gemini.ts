@@ -18,6 +18,11 @@ export interface TranslationResult {
   tag_pos?: [number, number];
   /** 작은 딱지 크기 배율. 없으면 기본 크기(1) */
   tag_scale?: number;
+  /**
+   * 원본 말풍선 모양에 맞춰 넣기. 없으면 자동(직접 옮기거나 크기를 바꾼 박스는 끔),
+   * true면 박스를 고쳤어도 켬, false면 끔 (둥근 사각형 덮기)
+   */
+  fit_bubble?: boolean;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

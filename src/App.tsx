@@ -25,7 +25,7 @@ import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
 import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
-import { retranslateText, translateRegion } from './lib/translatePage';
+import { retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
 import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
 import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
@@ -310,6 +310,11 @@ function App() {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, text_direction: direction } : r)));
   };
 
+  /** 원본 말풍선 모양에 맞춰 넣기 켜기/끄기 (자동 판별보다 우선) */
+  const handleSetBubbleFit = (imgIndex: number, id: string, enabled: boolean) => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, fit_bubble: enabled } : r)));
+  };
+
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   const handleSetTagPosition = (imgIndex: number, id: string, pos: [number, number] | null) => {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)));
@@ -385,6 +390,28 @@ function App() {
       updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: translated } : r)));
     } catch (err: any) {
       alert('재번역 실패: ' + err.message);
+    } finally {
+      setBubblePending(id, false);
+    }
+  };
+
+  /** 말풍선에 넘치는 번역문을 짧게 다시 번역. 결과가 오히려 길면 바꾸지 않음 */
+  const handleShorten = async (imgIndex: number, id: string, maxChars: number) => {
+    const key = keyOf(imgIndex);
+    const target = translationCache[key]?.find(r => r.id === id);
+    if (!target) return;
+    setBubblePending(id, true);
+    try {
+      const shortened = await shortenTranslation(target.original_text, target.translated_text, maxChars, settingsWithContext(imgIndex));
+      const length = (t: string) => Array.from(t.trim()).length;
+      console.info(`[bubble] 짧게 다시 번역: ${length(target.translated_text)}자 → ${length(shortened)}자 (목표 ${maxChars}자)`);
+      if (length(shortened) >= length(target.translated_text)) {
+        alert('더 짧은 번역을 받지 못해 원래 번역을 유지합니다.');
+        return;
+      }
+      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: shortened } : r)));
+    } catch (err: any) {
+      alert('짧게 다시 번역 실패: ' + err.message);
     } finally {
       setBubblePending(id, false);
     }
@@ -644,6 +671,8 @@ function App() {
                 onSetTagScale={handleSetTagScale}
                 onResetTag={handleResetTag}
                 onDelete={handleDeleteBubble}
+                onSetBubbleFit={handleSetBubbleFit}
+                onShorten={handleShorten}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}
                 footer={

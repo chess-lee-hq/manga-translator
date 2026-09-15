@@ -36,5 +36,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       tag_scale: typeof r.tag_scale === 'number' && Number.isFinite(r.tag_scale)
         ? Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, r.tag_scale))
         : undefined,
+      fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
     }));
 }

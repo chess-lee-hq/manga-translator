@@ -54,6 +54,16 @@ export function resolveDisplayMode(result: Pick<TranslationResult, 'box_2d' | 'o
   return isLikelySfx(result) ? 'tag' : 'cover';
 }
 
+/**
+ * 원본 말풍선 모양에 맞춰 넣을 대상인지. 덮기 방식이고 사용자가 끄지 않았으며,
+ * 박스를 직접 옮기거나 크기를 바꾸지 않았고(그 경우 사용자가 둔 자리를 존중), 세로쓰기를 직접 고르지 않은 경우
+ */
+export function wantsBubbleFit(result: Pick<TranslationResult, 'box_2d' | 'original_text' | 'translated_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble'>): boolean {
+  if (resolveDisplayMode(result) !== 'cover' || result.fit_bubble === false) return false;
+  if (result.fit_bubble === true) return true;
+  return !result.is_edited_box && result.text_direction !== 'vertical';
+}
+
 export interface Rect {
   x: number;
   y: number;

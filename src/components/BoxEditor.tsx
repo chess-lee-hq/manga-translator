@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ArrowUpDown, Square, Tag, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, MessageCircle, Scissors, Square, Tag, Trash2, Undo2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface BoxEditorProps {
@@ -13,6 +13,12 @@ interface BoxEditorProps {
   resizable?: boolean;
   /** 있으면 툴바에 자동 배치로 되돌리는 버튼을 보여줌 */
   onResetPosition?: () => void;
+  /** 원본 말풍선 모양에 맞춰 넣는 중인지 (말풍선을 찾은 항목에만 토글 표시) */
+  bubbleFit?: boolean;
+  onToggleBubbleFit?: () => void;
+  /** 번역문이 넘친 항목: 박스 모서리에 주황 점 + 툴바에 "짧게 다시 번역" */
+  warning?: string;
+  onShorten?: () => void;
   children: React.ReactNode;
 }
 
@@ -34,7 +40,8 @@ function ToolbarButton({ onClick, title, danger, children }: { onClick: () => vo
 
 export function BoxEditor({
   initialBox, onChange, displayMode, onToggleDisplayMode,
-  textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition, children,
+  textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition,
+  bubbleFit, onToggleBubbleFit, warning, onShorten, children,
 }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
@@ -92,7 +99,7 @@ export function BoxEditor({
   const height = `${((box[2] - box[0]) / 1000) * 100}%`;
   const width = `${((box[3] - box[1]) / 1000) * 100}%`;
 
-  const hasToolbar = !!onToggleDisplayMode || !!onToggleTextDirection || !!onResetPosition || !!onDelete;
+  const hasToolbar = !!onToggleDisplayMode || !!onToggleBubbleFit || !!onToggleTextDirection || !!onShorten || !!onResetPosition || !!onDelete;
 
   return (
     <div
@@ -114,9 +121,22 @@ export function BoxEditor({
               {displayMode === 'tag' ? <Tag size={12} /> : <Square size={12} />}
             </ToolbarButton>
           )}
+          {onToggleBubbleFit && (
+            <ToolbarButton
+              onClick={onToggleBubbleFit}
+              title={bubbleFit ? '원본 말풍선 모양에 맞춰 넣는 중 → 누르면 네모 상자로 덮기' : '네모 상자로 덮는 중 → 누르면 원본 말풍선 모양에 맞춰 넣기'}
+            >
+              <MessageCircle size={12} className={bubbleFit ? 'fill-white/80' : 'opacity-60'} />
+            </ToolbarButton>
+          )}
           {onToggleTextDirection && (
             <ToolbarButton onClick={onToggleTextDirection} title="글자 방향 전환: 가로쓰기 ↔ 세로쓰기 (홀쭉한 영역은 자동으로 세로쓰기)">
               {textDirection === 'vertical' ? <ArrowUpDown size={12} /> : <ArrowLeftRight size={12} />}
+            </ToolbarButton>
+          )}
+          {onShorten && (
+            <ToolbarButton onClick={onShorten} title="말풍선에 들어가도록 짧게 다시 번역 (뜻은 유지)">
+              <Scissors size={12} className="text-amber-300" />
             </ToolbarButton>
           )}
           {onResetPosition && (
@@ -126,13 +146,20 @@ export function BoxEditor({
           )}
           {onDelete && (
             <>
-              {(onToggleDisplayMode || onToggleTextDirection || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
+              {(onToggleDisplayMode || onToggleBubbleFit || onToggleTextDirection || onShorten || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
               <ToolbarButton onClick={onDelete} title="이 번역 삭제하기" danger>
                 <Trash2 size={12} />
               </ToolbarButton>
             </>
           )}
         </div>
+      )}
+
+      {warning && (
+        <div
+          className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white shadow z-50"
+          title={warning}
+        />
       )}
 
       {resizable && (

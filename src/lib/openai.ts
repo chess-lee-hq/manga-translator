@@ -3,7 +3,7 @@ import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildWorkNotesPrompt } from './translationPrompt';
+import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt } from './translationPrompt';
 import { recordUsage } from './usageLog';
 
 type OpenAiVersion = 'sol' | 'terra';
@@ -125,6 +125,20 @@ export async function retranslateTextOpenAI(
   }, '문장 재번역');
 
   return response?.choices?.[0]?.message?.content?.trim() || "번역 실패";
+}
+
+/** 말풍선에 들어가도록 번역문을 짧게 다듬습니다. */
+export async function shortenTranslationOpenAI(
+  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, currentTranslation: string, maxChars: number,
+  glossary?: Record<string, string>, context?: string): Promise<string> {
+  const response = await createChatCompletion(apiKey, {
+    model: modelFor(openAiVersion),
+    messages: [{ role: 'user', content: buildShortenPrompt(originalText, currentTranslation, maxChars, { glossary, context }) }],
+  }, '짧게 다시 번역');
+
+  const text = response?.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error('No response from OpenAI API');
+  return text;
 }
 
 /** 지금까지의 번역으로 작품 노트(말투·호칭 기억)를 정리합니다. */
