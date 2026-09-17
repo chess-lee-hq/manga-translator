@@ -1,5 +1,5 @@
-import { BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
-import type { GeminiVersion, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
+import { ArrowLeftRight, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 
 interface AppHeaderProps {
   loadedFilename: string | null;
@@ -28,6 +28,9 @@ interface AppHeaderProps {
   onCloseSession: () => void;
   autoTranslate: boolean;
   onToggleAutoTranslate: () => void;
+  /** 1차 번역을 맡는 엔진. 나머지 한 쪽은 재요청(다시 읽기) 보조로만 쓰임 */
+  mainEngine: MainEngine;
+  onSwapEngines: () => void;
   openAiVersion: OpenAiVersion;
   onOpenAiVersionChange: (version: OpenAiVersion) => void;
   openaiKey: string;
@@ -43,11 +46,80 @@ interface AppHeaderProps {
 const WIDE_LABEL = 'hidden min-[1900px]:inline';
 const actionButton = 'flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border whitespace-nowrap shrink-0 disabled:opacity-50';
 
+const ENGINE_ACCENT = {
+  green: { text: 'text-green-600', textDim: 'text-green-700/70', border: 'border-green-200', bg: 'bg-green-50/60', ring: 'focus-within:ring-green-500' },
+  blue: { text: 'text-blue-600', textDim: 'text-blue-700/70', border: 'border-blue-200', bg: 'bg-blue-50/60', ring: 'focus-within:ring-blue-500' },
+} as const;
+
+interface EngineSlotProps<V extends string> {
+  role: 'main' | 'secondary';
+  icon: React.ReactNode;
+  label: string;
+  accent: keyof typeof ENGINE_ACCENT;
+  version: V;
+  onVersionChange: (value: V) => void;
+  versionOptions: [V, string][];
+  versionTitle: string;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+  keyPlaceholder: string;
+}
+
+/**
+ * 엔진 하나(모델 버전 선택 + 키 입력)를 보여줍니다. 메인은 진하게, 서브는 점선 테두리로 구분해
+ * 지금 어느 쪽이 1차 번역을 맡고 있는지 한눈에 알 수 있게 합니다.
+ */
+function EngineSlot<V extends string>({
+  role, icon, label, accent, version, onVersionChange, versionOptions, versionTitle, apiKey, onApiKeyChange, keyPlaceholder,
+}: EngineSlotProps<V>) {
+  const isMain = role === 'main';
+  const c = ENGINE_ACCENT[accent];
+
+  return (
+    <div
+      className={`flex items-center shrink-0 border rounded-md ${c.ring} ${isMain ? `${c.border} ${c.bg}` : 'border-dashed border-gray-300 bg-transparent'}`}
+      title={isMain ? `메인: 1차 번역(원문 인식·번역)을 이 엔진이 처리합니다. ${keyPlaceholder}가 필요합니다.` : '서브: 품질 검사에 걸린 칸만 이 엔진이 고해상도로 다시 읽습니다. 키는 선택 사항입니다.'}
+    >
+      <span className={`flex items-center gap-1 pl-2 pr-1 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap ${isMain ? c.text : 'text-gray-400'}`}>
+        {isMain ? '메인' : '서브'}
+      </span>
+      <span className={`flex items-center gap-1 pr-1 text-xs font-medium whitespace-nowrap ${isMain ? c.text : c.textDim}`}>
+        {icon} <span className={WIDE_LABEL}>{label}</span>
+      </span>
+      <select
+        value={version}
+        onChange={(e) => onVersionChange(e.target.value as V)}
+        title={versionTitle}
+        className={`text-xs py-1 pr-1 bg-transparent outline-none cursor-pointer ${isMain ? c.text : 'text-gray-400'}`}
+      >
+        {versionOptions.map(([value, optionLabel]) => (
+          <option key={value} value={value}>{optionLabel}</option>
+        ))}
+      </select>
+      <div className="relative flex items-center border-l border-gray-200/70">
+        {isMain && <Key size={12} className="text-gray-400 absolute left-2 pointer-events-none" />}
+        <input
+          type="password"
+          placeholder={isMain ? keyPlaceholder : `${keyPlaceholder} (선택)`}
+          title={isMain ? `${keyPlaceholder} (필수)` : `${keyPlaceholder} (선택)`}
+          value={apiKey}
+          onChange={(e) => onApiKeyChange(e.target.value)}
+          autoComplete="new-password"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          spellCheck="false"
+          className={`rounded-r-md py-1 text-xs w-24 focus:w-44 transition-all outline-none bg-transparent ${isMain ? 'pl-6 pr-2' : 'px-2'}`}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate,
+    onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
     openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
@@ -186,67 +258,42 @@ export function AppHeader(props: AppHeaderProps) {
           {autoTranslate ? <Zap size={12} /> : <ZapOff size={12} />} <span className={WIDE_LABEL}>자동 번역</span> {autoTranslate ? 'ON' : 'OFF'}
         </button>
 
-        {/* 번역 엔진: OpenAI (말풍선 이미지에서 원문 인식·번역을 한 번에) */}
-        <div className="flex items-center shrink-0 border border-gray-200 rounded-md bg-white focus-within:ring-1 focus-within:ring-green-500">
-          <span className="flex items-center gap-1 pl-2 pr-1 text-xs font-medium text-green-600 whitespace-nowrap" title="OpenAI 5.6: 말풍선 이미지를 직접 읽어 원문 인식·번역을 한 번에 처리합니다.">
-            <Bot size={12} /> <span className={WIDE_LABEL}>OpenAI 5.6</span>
-          </span>
-          <select
-            value={openAiVersion}
-            onChange={(e) => onOpenAiVersionChange(e.target.value as OpenAiVersion)}
-            title="Terra: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
-            className="text-xs py-1 pr-1 bg-transparent text-green-700 outline-none cursor-pointer"
-          >
-            <option value="terra">Terra</option>
-            <option value="sol">Sol</option>
-          </select>
-          <div className="relative flex items-center border-l border-gray-200">
-            <Key size={12} className="text-gray-400 absolute left-2 pointer-events-none" />
-            <input
-              type="password"
-              placeholder="OpenAI Key"
-              title="OpenAI API 키 (필수)"
-              value={openaiKey}
-              onChange={(e) => onOpenaiKeyChange(e.target.value)}
-              autoComplete="new-password"
-              data-1p-ignore="true"
-              data-lpignore="true"
-              spellCheck="false"
-              className="rounded-r-md pl-6 pr-2 py-1 text-xs w-24 focus:w-44 transition-all outline-none"
-            />
-          </div>
-        </div>
+        {/* 번역 엔진: 메인이 1차 번역(원문 인식·번역)을 맡고, 서브는 품질 검사에 걸린 칸만 다시 읽음 */}
+        <EngineSlot
+          role={mainEngine === 'openai' ? 'main' : 'secondary'}
+          icon={<Bot size={12} />}
+          label="OpenAI 5.6"
+          accent="green"
+          version={openAiVersion}
+          onVersionChange={onOpenAiVersionChange}
+          versionOptions={[['terra', 'Terra'], ['sol', 'Sol']]}
+          versionTitle="Terra: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
+          apiKey={openaiKey}
+          onApiKeyChange={onOpenaiKeyChange}
+          keyPlaceholder="OpenAI Key"
+        />
 
-        {/* 보조: Gemini — 키를 넣으면 품질 검사에 걸린 칸만 Gemini가 고해상도로 다시 읽음 (없으면 OpenAI Sol이 대신) */}
-        <div
-          className={`flex items-center shrink-0 border rounded-md focus-within:ring-1 focus-within:ring-blue-500 ${googleKey ? 'border-blue-200 bg-blue-50/50' : 'border-dashed border-gray-300 bg-transparent'}`}
-          title="선택 사항 · 다시 읽기 보조: 번역이 비었거나 일본어가 남은 칸만 2배 해상도로 Gemini가 다시 읽습니다. 키가 없으면 OpenAI Sol이 대신 다시 읽습니다."
+        <button
+          onClick={onSwapEngines}
+          title={`메인·서브 역할 바꾸기 → ${mainEngine === 'openai' ? 'Gemini' : 'OpenAI'}가 메인이 됩니다`}
+          className="p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
         >
-          <span className={`flex items-center gap-1 pl-2 pr-1 text-xs font-medium whitespace-nowrap ${googleKey ? 'text-blue-600' : 'text-gray-400'}`}>
-            <Cpu size={12} /> <span className={WIDE_LABEL}>재인식</span>
-          </span>
-          <select
-            value={geminiVersion}
-            onChange={(e) => onGeminiVersionChange(e.target.value as GeminiVersion)}
-            title="다시 읽기에 쓸 Gemini 모델"
-            className={`text-xs py-1 pr-1 bg-transparent outline-none cursor-pointer ${googleKey ? 'text-blue-700' : 'text-gray-400'}`}
-          >
-            <option value="3.6">3.6 Flash</option>
-            <option value="3.7">3.7 Flash</option>
-          </select>
-          <input
-            type="password"
-            placeholder="Gemini (선택)"
-            title="Gemini API 키 (선택)"
-            value={googleKey}
-            onChange={(e) => onGoogleKeyChange(e.target.value)}
-            autoComplete="new-password"
-            data-1p-ignore="true"
-            data-lpignore="true"
-            spellCheck="false"
-            className="border-l border-gray-200 rounded-r-md px-2 py-1 text-xs w-24 focus:w-44 transition-all outline-none bg-transparent"
-          />
-        </div>
+          <ArrowLeftRight size={14} />
+        </button>
+
+        <EngineSlot
+          role={mainEngine === 'gemini' ? 'main' : 'secondary'}
+          icon={<Cpu size={12} />}
+          label="Gemini"
+          accent="blue"
+          version={geminiVersion}
+          onVersionChange={onGeminiVersionChange}
+          versionOptions={[['3.6', '3.6 Flash'], ['3.7', '3.7 Flash']]}
+          versionTitle="번역·다시 읽기에 쓸 Gemini 모델"
+          apiKey={googleKey}
+          onApiKeyChange={onGoogleKeyChange}
+          keyPlaceholder="Gemini Key"
+        />
       </div>
     </header>
   );

@@ -1,6 +1,8 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { parseJsonResponse } from './prompt';
-import { buildGridPrompt } from './translationPrompt';
+import { sortMangaBoxesByTier } from './readingOrder';
+import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt } from './translationPrompt';
+import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { recordUsage } from './usageLog';
 
@@ -55,6 +57,117 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
   } catch (error) {
     throw toFriendlyError(error, 'Gemini');
   }
+}
+
+/**
+ * [메인 선택 시] 말풍선을 찾지 못한 페이지의 대체 경로: 페이지 전체를 보여주고 좌표까지 함께 받습니다.
+ * 좌표는 모델 추정치라 정확도가 낮으므로, 격자 경로가 가능하면 그쪽을 씁니다.
+ */
+export async function translateMangaImage(
+  apiKey: string,
+  base64Image: string,
+  mimeType: string,
+  geminiVersion: GeminiVersion = '3.6',
+  glossary?: Record<string, string>,
+  context?: string,
+): Promise<RawTranslationResult[]> {
+  const prompt = buildFullPagePrompt({ output: 'array', glossary, context });
+
+  const response = await generateContent(apiKey, {
+    model: modelNameFor(geminiVersion),
+    contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { data: base64Image, mimeType } }] }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            original_text: { type: Type.STRING },
+            translated_text: { type: Type.STRING },
+            box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+          },
+          required: ['original_text', 'translated_text', 'box_2d'],
+        },
+      },
+      temperature: 0.35,
+    },
+  }, '페이지 전체 번역');
+
+  const text = response.text;
+  if (!text) throw new Error('No response from Gemini API');
+
+  try {
+    const results = parseJsonResponse<RawTranslationResult[]>(text);
+    return sortMangaBoxesByTier(results, r => r.box_2d);
+  } catch (error: any) {
+    throw new Error('Failed to parse JSON response: ' + error.message);
+  }
+}
+
+/** [메인 선택 시] 원문 한 문장만 다시 번역합니다. */
+export async function retranslateTextGemini(
+  apiKey: string, originalText: string, geminiVersion: GeminiVersion = '3.6', glossary?: Record<string, string>, context?: string,
+): Promise<string> {
+  const response = await generateContent(apiKey, {
+    model: modelNameFor(geminiVersion),
+    contents: buildRetranslatePrompt(originalText, { glossary, context }),
+    config: { temperature: 0.7 },
+  }, '문장 재번역');
+
+  return response.text?.trim() || '번역 실패';
+}
+
+/** [메인 선택 시] 말풍선에 들어가도록 번역문을 짧게 다듬습니다. */
+export async function shortenTranslationGemini(
+  apiKey: string, geminiVersion: GeminiVersion, originalText: string, currentTranslation: string, maxChars: number,
+  glossary?: Record<string, string>, context?: string,
+): Promise<string> {
+  const response = await generateContent(apiKey, {
+    model: modelNameFor(geminiVersion),
+    contents: buildShortenPrompt(originalText, currentTranslation, maxChars, { glossary, context }),
+  }, '짧게 다시 번역');
+
+  const text = response.text?.trim();
+  if (!text) throw new Error('No response from Gemini API');
+  return text;
+}
+
+/** [메인 선택 시] 지금까지의 번역으로 작품 노트(말투·호칭 기억)를 정리합니다. */
+export async function summarizeWorkNotes(
+  apiKey: string,
+  geminiVersion: GeminiVersion,
+  pairs: { original: string; translated: string }[],
+  previousNotes?: string,
+  correctionSection?: string,
+  existingGlossary: string[] = [],
+): Promise<WorkNotesResult> {
+  if (pairs.length === 0) return { notes: previousNotes?.trim() ?? '', glossary: [] };
+
+  const response = await generateContent(apiKey, {
+    model: modelNameFor(geminiVersion),
+    contents: buildWorkNotesPrompt(pairs, previousNotes, correctionSection, existingGlossary),
+    config: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          notes: { type: Type.STRING },
+          glossary: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: { original: { type: Type.STRING }, translated: { type: Type.STRING } },
+              required: ['original', 'translated'],
+            },
+          },
+        },
+        required: ['notes', 'glossary'],
+      },
+    },
+  }, '작품 노트 정리 (+단어장 후보)');
+  return parseWorkNotesResponse(response.text ?? '');
 }
 
 export interface GridRequestOptions {

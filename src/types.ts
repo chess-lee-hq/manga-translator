@@ -15,6 +15,8 @@ export interface UploadedImage {
 
 export type GeminiVersion = '3.6' | '3.7';
 export type OpenAiVersion = 'sol' | 'terra';
+/** 1차 번역을 맡는 엔진. 나머지 한 쪽은 품질 검사 재요청(다시 읽기)만 담당 */
+export type MainEngine = 'openai' | 'gemini';
 export type ViewMode = '1page' | '2page';
 export type ScriptStyle = 'side' | 'overlay';
 /** [ymin, xmin, ymax, xmax], 0~1000 정규화 좌표 */
@@ -23,9 +25,11 @@ export type TranslationCache = Record<string, TranslationResult[]>;
 export type Glossary = Record<string, string>;
 
 export interface TranslationSettings {
+  /** 1차 번역(페이지·영역·재번역·작품 노트)을 맡는 엔진. 이 엔진의 키는 필수 */
+  mainEngine: MainEngine;
   openaiKey: string;
   openAiVersion: OpenAiVersion;
-  /** 선택: 있으면 품질 검사에 걸린 칸의 재요청을 Gemini로 보내 다른 눈으로 다시 읽음 */
+  /** mainEngine이 openai면 선택 사항(재요청 보조), gemini면 1차 번역용(필수) */
   googleKey: string;
   geminiVersion: GeminiVersion;
   glossary: Glossary;

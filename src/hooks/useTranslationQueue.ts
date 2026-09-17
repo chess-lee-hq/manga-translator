@@ -41,10 +41,12 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
   const [autoTranslate, setAutoTranslateState] = useState(() => localStorage.getItem(AUTO_TRANSLATE_STORAGE_KEY) !== 'false');
   const [retryTrigger, setRetryTrigger] = useState(0);
 
-  const currentKey = settings.openaiKey;
-  // API 키를 한 글자씩 입력하는 도중에는 번역을 시작하지 않도록, 입력이 멈춘 뒤의 값만 사용
-  // (Gemini 키는 재요청에만 쓰는 선택 사항이라 번역 시작 조건에 넣지 않음)
-  const liveCredential = settings.openaiKey;
+  // 1차 번역은 메인 엔진이 담당하므로, 번역 시작 여부는 메인 엔진의 키만 봄
+  // (보조 엔진 키는 재요청에만 쓰이므로 조건에 넣지 않음)
+  const currentKey = settings.mainEngine === 'gemini' ? settings.googleKey : settings.openaiKey;
+  // API 키를 한 글자씩 입력하는 도중에는 번역을 시작하지 않도록, 입력이 멈춘 뒤의 값만 사용.
+  // 메인 엔진을 바꾸면(스위칭) 실패했던 페이지도 새 크리덴셜로 보고 자동으로 다시 시도하도록 엔진 이름을 포함
+  const liveCredential = `${settings.mainEngine}|${currentKey}`;
   const credential = useDebouncedValue(liveCredential, API_KEY_DEBOUNCE_MS);
   const isCredentialSettled = credential === liveCredential;
 
@@ -123,7 +125,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
       }
     };
 
-    // 묶음은 OpenAI 전용. Gemini 보조 모드에서는 한 장씩
+    // 격자 묶음 번역은 메인 엔진이 OpenAI든 Gemini든 동일한 구조라 둘 다 지원됨
     const canBatch = batchSize > 1;
     const groups: (typeof jobs)[] = [];
     for (let i = 0; i < jobs.length; i += canBatch ? batchSize : 1) {

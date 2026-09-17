@@ -7,15 +7,15 @@ const translateGridImageOpenAI = vi.fn();
 vi.mock('./gemini', () => ({ translateGridImage }));
 vi.mock('./openai', () => ({ translateGridImageOpenAI, translateFullPageOpenAI: vi.fn(), retranslateTextOpenAI: vi.fn() }));
 
-const { mergeChunkResponses, retryRequesterFor } = await import('./translatePage');
+const { firstRequesterFor, mergeChunkResponses, retryRequesterFor } = await import('./translatePage');
 
 const settings = (over: Partial<TranslationSettings> = {}): TranslationSettings => ({
-  openaiKey: 'sk-test', openAiVersion: 'terra', googleKey: '', geminiVersion: '3.6', glossary: {}, ...over,
+  mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'terra', googleKey: '', geminiVersion: '3.6', glossary: {}, ...over,
 });
 const grid = { dataUrl: 'data:image/png;base64,GRID', cells: [{ id: 1, pageId: 'p', box: { xmin: 0, ymin: 0, xmax: 1, ymax: 1, confidence: 1, classId: 3 } }] };
 const answer = [{ id: 1, original_text: 'あ', translated_text: '가' }];
 
-describe('품질 검사 재요청 엔진', () => {
+describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
   beforeEach(() => {
     translateGridImage.mockReset();
     translateGridImageOpenAI.mockReset();
@@ -45,6 +45,59 @@ describe('품질 검사 재요청 엔진', () => {
     translateGridImageOpenAI.mockResolvedValue(answer);
     expect(await retryRequesterFor(settings({ googleKey: 'g-key' }))(grid, undefined)).toEqual(answer);
     expect(translateGridImageOpenAI.mock.calls[0][0]).toBe('sol');
+  });
+});
+
+describe('품질 검사 재요청 엔진 (메인 = Gemini, 역할을 뒤집은 경우)', () => {
+  beforeEach(() => {
+    translateGridImage.mockReset();
+    translateGridImageOpenAI.mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('OpenAI 키가 없으면 Gemini 3.7(더 강한 모델)로 다시 읽는다', async () => {
+    translateGridImage.mockResolvedValue(answer);
+    await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: '', googleKey: 'g-key', geminiVersion: '3.6' }))(grid, undefined);
+    expect(translateGridImage.mock.calls[0][4]).toBe('3.7');
+    expect(translateGridImageOpenAI).not.toHaveBeenCalled();
+  });
+
+  it('OpenAI 키가 있으면 OpenAI(고른 버전)로 다시 읽는다', async () => {
+    translateGridImageOpenAI.mockResolvedValue(answer);
+    await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: 'sk-key', openAiVersion: 'sol', googleKey: 'g-key' }))(grid, [1]);
+    const [version, key] = translateGridImageOpenAI.mock.calls[0];
+    expect([version, key]).toEqual(['sol', 'sk-key']);
+    expect(translateGridImage).not.toHaveBeenCalled();
+  });
+
+  it('OpenAI 요청이 실패하면 Gemini 3.7로 넘긴다', async () => {
+    translateGridImageOpenAI.mockRejectedValue(new Error('OpenAI API Error 429'));
+    translateGridImage.mockResolvedValue(answer);
+    const result = await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: 'sk-key', googleKey: 'g-key' }))(grid, undefined);
+    expect(result).toEqual(answer);
+    expect(translateGridImage.mock.calls[0][4]).toBe('3.7');
+  });
+});
+
+describe('firstRequesterFor (1차 번역은 항상 메인 엔진으로)', () => {
+  beforeEach(() => {
+    translateGridImage.mockReset();
+    translateGridImageOpenAI.mockReset();
+  });
+
+  it('메인이 OpenAI면 1차 요청도 OpenAI로 간다', async () => {
+    translateGridImageOpenAI.mockResolvedValue(answer);
+    await firstRequesterFor(settings({ googleKey: 'g-key' }))(grid, undefined);
+    expect(translateGridImageOpenAI.mock.calls[0][0]).toBe('terra');
+    expect(translateGridImage).not.toHaveBeenCalled();
+  });
+
+  it('메인을 Gemini로 바꾸면 1차 요청도 Gemini로 간다 (OpenAI 키가 있어도)', async () => {
+    translateGridImage.mockResolvedValue(answer);
+    await firstRequesterFor(settings({ mainEngine: 'gemini', googleKey: 'g-key', geminiVersion: '3.6' }))(grid, undefined);
+    const [key, , , , version] = translateGridImage.mock.calls[0];
+    expect([key, version]).toEqual(['g-key', '3.6']);
+    expect(translateGridImageOpenAI).not.toHaveBeenCalled();
   });
 });
 

@@ -19,6 +19,7 @@ import { useTranslationQueue } from './hooks/useTranslationQueue';
 import { resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './lib/bubbleDisplay';
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
+import { summarizeWorkNotes } from './lib/gemini';
 import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
@@ -31,7 +32,7 @@ import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrecti
 import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
-import type { Box2d, GeminiVersion, HoveredBubble, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
+import type { Box2d, GeminiVersion, HoveredBubble, MainEngine, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
 const PRELOAD_PAGE_COUNT = 10;
@@ -46,15 +47,18 @@ const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
 const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
 const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
+/** 1차 번역을 맡는 엔진(메인/서브 역할) — 기본은 OpenAI */
+const MAIN_ENGINE_STORAGE_KEY = 'manga-translator-main-engine';
 
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 function App() {
-  // 주력은 OpenAI(Terra). Gemini는 보조 옵션
+  // 메인은 기본 OpenAI(Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
   const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(() => (localStorage.getItem(OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'terra'));
+  const [mainEngine, setMainEngine] = useState<MainEngine>(() => (localStorage.getItem(MAIN_ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'openai'));
 
   const [allImages, setAllImages] = useState<UploadedImage[]>([]);
   const [loadedFilename, setLoadedFilename] = useState<string | null>(null);
@@ -92,9 +96,9 @@ function App() {
     () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
   );
 
-  // 지금 고른 엔진의 키. 작품 노트 정리도 이 엔진으로 처리
-  const activeKey = openaiKey;
-  const settings: TranslationSettings = { openaiKey, openAiVersion, googleKey, geminiVersion, glossary };
+  // 메인 엔진의 키. 작품 노트 정리도 이 엔진으로 처리
+  const activeKey = mainEngine === 'gemini' ? googleKey : openaiKey;
+  const settings: TranslationSettings = { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary };
 
   const visibleIndices = useMemo(() => getVisibleIndices(allImages, currentPageIndex, viewMode), [allImages, currentPageIndex, viewMode]);
   const translationQueue = useMemo(
@@ -133,7 +137,7 @@ function App() {
 
   const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
 
-  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (OpenAI 요청 1회) */
+  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (메인 엔진에 요청 1회) */
   const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (notesBusyRef.current || !activeKey || allImages.length === 0) return;
     const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
@@ -143,7 +147,10 @@ function App() {
     setIsGeneratingNotes(true);
     try {
       const known = Object.keys(glossary);
-      const result = await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, buildCorrectionSection(corrections), known);
+      const correctionSection = buildCorrectionSection(corrections);
+      const result = mainEngine === 'gemini'
+        ? await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, correctionSection, known)
+        : await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, correctionSection, known);
       if (result.notes) saveNotes(result.notes, translatedPageCount);
 
       const found = filterCandidates(result.glossary, pairs.map(p => p.original), glossary, dismissedCandidates);
@@ -464,6 +471,15 @@ function App() {
     }
   };
 
+  /** 메인/서브 엔진 역할을 통째로 뒤집습니다. (예: OpenAI가 메인이었으면 Gemini가 메인으로) */
+  const handleSwapEngines = () => {
+    setMainEngine(prev => {
+      const next = prev === 'openai' ? 'gemini' : 'openai';
+      remember(MAIN_ENGINE_STORAGE_KEY, next);
+      return next;
+    });
+  };
+
   const handleGeminiVersionChange = (next: GeminiVersion) => {
     setGeminiVersion(next);
     remember(GEMINI_VERSION_STORAGE_KEY, next);
@@ -609,6 +625,8 @@ function App() {
         onCloseSession={handleCloseSession}
         autoTranslate={queue.autoTranslate}
         onToggleAutoTranslate={() => queue.setAutoTranslate(!queue.autoTranslate)}
+        mainEngine={mainEngine}
+        onSwapEngines={handleSwapEngines}
         openAiVersion={openAiVersion}
         onOpenAiVersionChange={handleOpenAiVersionChange}
         openaiKey={openaiKey}
@@ -702,6 +720,7 @@ function App() {
                   translatingKeys={queue.translatingKeys}
                   pageErrors={queue.pageErrors}
                   hasApiKey={queue.hasApiKey}
+                  mainEngineLabel={mainEngine === 'gemini' ? 'Gemini' : 'OpenAI'}
                   autoTranslate={queue.autoTranslate}
                   hoveredBubble={hoveredBubble}
                   onHoverBubble={setHoveredBubble}
