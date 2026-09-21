@@ -33,8 +33,10 @@ export interface TranslationSettings {
   googleKey: string;
   geminiVersion: GeminiVersion;
   glossary: Glossary;
-  /** 앞 페이지 번역·작품 노트로 만든 맥락 지시문 (프롬프트에 그대로 삽입) */
+  /** (B) 작품 노트 — 작품 단위로만 바뀌므로 프롬프트 앞쪽(캐시 구간)에 들어감 */
   context?: string;
+  /** (C) 직전 대사·내 교정 — 요청마다 바뀌므로 프롬프트 맨 뒤에 들어감 */
+  recentContext?: string;
 }
 
 export interface PageError {

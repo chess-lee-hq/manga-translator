@@ -82,7 +82,7 @@ describe('격자 프롬프트에 화자 힌트 반영', () => {
   it('힌트가 있으면 프롬프트에 들어가고, 없으면 흔적이 남지 않는다', async () => {
     const { buildGridPrompt } = await import('./translationPrompt');
     const hint = buildSpeakerHint([{ id: 1, speaker: 'p|0:f0' }, { id: 2, speaker: 'p|0:f1' }]);
-    expect(buildGridPrompt({ expectedCells: 2, output: 'cells', speakerHint: hint })).toContain('- 같은 컷: #1 / #2');
-    expect(buildGridPrompt({ expectedCells: 2, output: 'cells' })).not.toContain('화자 힌트');
+    expect(buildGridPrompt({ expectedCells: 2, speakerHint: hint })).toContain('- 같은 컷: #1 / #2');
+    expect(buildGridPrompt({ expectedCells: 2 })).not.toContain('화자 힌트');
   });
 });

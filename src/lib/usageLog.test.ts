@@ -13,14 +13,14 @@ describe('recordUsage', () => {
     recordUsage('openai', '번역', 300, 100);
 
     expect(getUsageTotals()).toEqual({
-      gemini: { calls: 2, inputTokens: 1500, outputTokens: 70 },
-      openai: { calls: 1, inputTokens: 300, outputTokens: 100 },
+      gemini: { calls: 2, inputTokens: 1500, cachedInputTokens: 0, outputTokens: 70 },
+      openai: { calls: 1, inputTokens: 300, cachedInputTokens: 0, outputTokens: 100 },
     });
   });
 
   it('초기화하면 0으로 돌아간다', () => {
     recordUsage('openai', '번역', 10, 5);
     resetUsageTotals();
-    expect(getUsageTotals().openai).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0 });
+    expect(getUsageTotals().openai).toEqual({ calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 });
   });
 });

@@ -36,6 +36,8 @@ export interface GridImageOptions {
 /** 박스에 딱 맞게 자르면 글자 획이 잘려 인식률이 떨어지므로 사방에 여백을 둠 */
 const CROP_MARGIN_RATIO = 0.08;
 const CELL_SIZE = 300;
+/** 격자 JPEG 압축 품질 (토큰 비용과 무관 — imageUtils 하단 주석 참고) */
+const JPEG_QUALITY = 0.92;
 /** 칸 크기 대비 여백 비율 (300px 칸 기준 20px) */
 const CELL_PADDING_RATIO = 20 / 300;
 
@@ -94,7 +96,9 @@ export async function createGridImage(sources: GridSource[], options: GridImageO
     ctx.fillText(`#${cells[i].id}`, cellX + 10 * labelScale, cellY + 30 * labelScale);
   });
 
-  return { dataUrl: format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.8), cells };
+  // 비전 토큰은 이미지의 가로×세로로만 계산되고 파일 용량과 무관하므로, 압축 품질을 올려도 비용은 그대로다.
+  // 작은 한자 획이 압축으로 뭉개지면 곧바로 품질 검사 재요청(비싼 경로)으로 이어지므로 넉넉하게 준다.
+  return { dataUrl: format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', JPEG_QUALITY), cells };
 }
 
 export async function loadImage(src: string): Promise<HTMLImageElement> {

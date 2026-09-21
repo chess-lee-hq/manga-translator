@@ -359,7 +359,7 @@ function App() {
   /** 재번역·새 영역 번역에도 자동 번역과 같은 맥락(작품 노트·앞 대사·내 교정)을 넣음 */
   const settingsWithContext = (imgIndex: number): TranslationSettings => ({
     ...settings,
-    context: buildContextInstruction(notes?.text, collectRecentPairs(allImages, translationCache, imgIndex), corrections),
+    ...buildContextInstruction(notes?.text, collectRecentPairs(allImages, translationCache, imgIndex), corrections),
   });
 
   const handleCreateBox = async (imgIndex: number, box: Box2d) => {

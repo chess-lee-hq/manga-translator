@@ -49,15 +49,24 @@ describe('collectRecentPairs', () => {
 });
 
 describe('buildContextInstruction', () => {
-  it('노트와 대사가 모두 없으면 빈 문자열', () => {
-    expect(buildContextInstruction(undefined, [])).toBe('');
-    expect(buildContextInstruction('   ', [])).toBe('');
+  it('노트와 대사가 모두 없으면 둘 다 빈 문자열', () => {
+    expect(buildContextInstruction(undefined, [])).toEqual({ context: '', recentContext: '' });
+    expect(buildContextInstruction('   ', [])).toEqual({ context: '', recentContext: '' });
   });
 
-  it('작품 노트와 직전 대사를 함께 넣는다', () => {
-    const text = buildContextInstruction('- 주인공은 반말', [{ original: 'あ', translated: '가' }]);
-    expect(text).toContain('이어지는 맥락');
-    expect(text).toContain('- 주인공은 반말');
-    expect(text).toContain('- あ → 가');
+  it('작품 노트는 context(캐시 구간), 직전 대사·교정은 recentContext(매번 바뀜)로 나뉜다', () => {
+    const { context, recentContext } = buildContextInstruction('- 주인공은 반말', [{ original: 'あ', translated: '가' }]);
+    expect(context).toContain('이어지는 맥락');
+    expect(context).toContain('- 주인공은 반말');
+    // 페이지마다 바뀌는 직전 대사가 노트 쪽에 섞이면 노트까지 캐시가 깨진다
+    expect(context).not.toContain('- あ → 가');
+    expect(recentContext).toContain('- あ → 가');
+  });
+
+  it('노트가 없어도 직전 대사 쪽에 맥락 안내 문구가 한 번은 붙는다', () => {
+    const { context, recentContext } = buildContextInstruction(undefined, [{ original: 'あ', translated: '가' }]);
+    expect(context).toBe('');
+    expect(recentContext).toContain('이어지는 맥락');
+    expect(recentContext).toContain('- あ → 가');
   });
 });

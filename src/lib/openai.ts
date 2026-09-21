@@ -2,8 +2,12 @@ import type { GridTranslationResult, RawTranslationResult } from './gemini';
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
+import {
+  fullPageToResult, gridCellToResult, OPENAI_FULL_PAGE_SCHEMA, OPENAI_GRID_SCHEMA, OPENAI_WORK_NOTES_SCHEMA,
+  type FullPageWire, type GridCellWire,
+} from './responseShape';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt } from './translationPrompt';
+import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { recordUsage } from './usageLog';
 
 type OpenAiVersion = 'sol' | 'terra';
@@ -40,7 +44,8 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
         console.warn(`OpenAI 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
     });
-    recordUsage('openai', label, response?.usage?.prompt_tokens ?? 0, response?.usage?.completion_tokens ?? 0);
+    const usage = response?.usage;
+    recordUsage('openai', label, usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0, usage?.prompt_tokens_details?.cached_tokens ?? 0);
     return response;
   } catch (error) {
     throw toFriendlyError(error, 'OpenAI');
@@ -58,6 +63,7 @@ function imageMessage(prompt: string, imageDataUrl: string) {
   };
 }
 
+/** 응답 형태는 json_schema(strict)로 강제되므로, 여기서는 파싱만 합니다. */
 function parseCells<T>(content: unknown): T[] {
   if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
   try {
@@ -66,6 +72,19 @@ function parseCells<T>(content: unknown): T[] {
   } catch (error: any) {
     throw new Error('Failed to parse JSON response: ' + error.message);
   }
+}
+
+const contentOf = (response: any): unknown => response?.choices?.[0]?.message?.content;
+
+export interface GridRequestOptions extends PromptContextOptions {
+  /** 여러 페이지를 한 격자에 묶었을 때 페이지별 칸 수 */
+  pageCellCounts?: number[];
+  /** 얼굴 위치로 추정한 화자 힌트 */
+  speakerHint?: string;
+  /** 품질 검사에 걸린 칸을 다시 보내는 요청 */
+  retry?: boolean;
+  /** 토큰 사용량 로그에 표시할 이름 */
+  label?: string;
 }
 
 /**
@@ -77,20 +96,18 @@ export async function translateGridImageOpenAI(
   apiKey: string,
   gridDataUrl: string,
   expectedCells: number,
-  glossary?: Record<string, string>,
-  context?: string,
-  options: { pageCellCounts?: number[]; label?: string; speakerHint?: string } = {},
+  options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { pageCellCounts, label, speakerHint } = options;
-  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, speakerHint, output: 'cells', glossary, context });
+  const { pageCellCounts, label, ...promptOptions } = options;
+  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, ...promptOptions });
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
     messages: [imageMessage(prompt, gridDataUrl)],
-    response_format: { type: 'json_object' },
+    response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
   }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'));
 
-  return parseCells<GridTranslationResult>(response?.choices?.[0]?.message?.content);
+  return parseCells<GridCellWire>(contentOf(response)).map(gridCellToResult);
 }
 
 /**
@@ -101,42 +118,43 @@ export async function translateFullPageOpenAI(
   openAiVersion: OpenAiVersion,
   apiKey: string,
   pageDataUrl: string,
-  glossary?: Record<string, string>,
-  context?: string,
+  options: PromptContextOptions = {},
 ): Promise<RawTranslationResult[]> {
-  const prompt = buildFullPagePrompt({ output: 'cells', glossary, context });
-
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(prompt, pageDataUrl)],
-    response_format: { type: 'json_object' },
+    messages: [imageMessage(buildFullPagePrompt(options), pageDataUrl)],
+    response_format: { type: 'json_schema', json_schema: OPENAI_FULL_PAGE_SCHEMA },
   }, '페이지 전체 번역');
 
-  const cells = parseCells<RawTranslationResult>(response?.choices?.[0]?.message?.content);
+  const cells = parseCells<FullPageWire>(contentOf(response)).map(fullPageToResult);
   return sortMangaBoxesByTier(cells, c => c.box_2d);
 }
 
 /** 원문 한 문장만 다시 번역합니다. */
 export async function retranslateTextOpenAI(
-  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, glossary?: Record<string, string>, context?: string): Promise<string> {
+  openAiVersion: OpenAiVersion, apiKey: string, originalText: string, options: PromptContextOptions = {},
+): Promise<string> {
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [{ role: 'user', content: buildRetranslatePrompt(originalText, { glossary, context }) }],
+    messages: [{ role: 'user', content: buildRetranslatePrompt(originalText, options) }],
   }, '문장 재번역');
 
-  return response?.choices?.[0]?.message?.content?.trim() || "번역 실패";
+  const text = contentOf(response);
+  return (typeof text === 'string' ? text.trim() : '') || '번역 실패';
 }
 
 /** 말풍선에 들어가도록 번역문을 짧게 다듬습니다. */
 export async function shortenTranslationOpenAI(
   openAiVersion: OpenAiVersion, apiKey: string, originalText: string, currentTranslation: string, maxChars: number,
-  glossary?: Record<string, string>, context?: string): Promise<string> {
+  options: PromptContextOptions = {},
+): Promise<string> {
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [{ role: 'user', content: buildShortenPrompt(originalText, currentTranslation, maxChars, { glossary, context }) }],
+    messages: [{ role: 'user', content: buildShortenPrompt(originalText, currentTranslation, maxChars, options) }],
   }, '짧게 다시 번역');
 
-  const text = response?.choices?.[0]?.message?.content?.trim();
+  const content = contentOf(response);
+  const text = typeof content === 'string' ? content.trim() : '';
   if (!text) throw new Error('No response from OpenAI API');
   return text;
 }
@@ -155,8 +173,9 @@ export async function summarizeWorkNotesOpenAI(
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
     messages: [{ role: 'user', content: buildWorkNotesPrompt(pairs, previousNotes, correctionSection, existingGlossary) }],
-    response_format: { type: 'json_object' },
+    response_format: { type: 'json_schema', json_schema: OPENAI_WORK_NOTES_SCHEMA },
   }, '작품 노트 정리 (+단어장 후보)');
 
-  return parseWorkNotesResponse(response?.choices?.[0]?.message?.content ?? '');
+  const content = contentOf(response);
+  return parseWorkNotesResponse(typeof content === 'string' ? content : '');
 }

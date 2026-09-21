@@ -18,7 +18,7 @@ const promptText = () => lastRequest().contents[0].parts[0].text as string;
 describe('translateGridImage (재인식 보조 엔진)', () => {
   beforeEach(() => {
     generateContent.mockReset();
-    generateContent.mockResolvedValue({ text: '[{"id":1,"original_text":"あ","translated_text":"가"}]' });
+    generateContent.mockResolvedValue({ text: '{"cells":[{"id":1,"jp":"あ","ko":"가"}]}' });
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -46,7 +46,7 @@ describe('translateGridImage (재인식 보조 엔진)', () => {
 
   it('번역문까지 받도록 응답 스키마를 요구한다', async () => {
     await translateGridImage('key', 'GRID', 'image/jpeg', 1, '3.6');
-    expect(lastRequest().config.responseSchema.items.required).toEqual(['id', 'original_text', 'translated_text']);
+    expect(lastRequest().config.responseSchema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
   });
 });
 
@@ -57,8 +57,8 @@ describe('메인 엔진으로 골랐을 때만 쓰는 Gemini 함수들', () => {
   });
 
   it('translateMangaImage: 말풍선을 못 찾은 페이지 전체를 좌표까지 함께 읽는다', async () => {
-    generateContent.mockResolvedValue({ text: '[{"original_text":"あ","translated_text":"가","box_2d":[0,0,100,100]}]' });
-    const results = await translateMangaImage('key', 'FULL', 'image/jpeg', '3.7', { 拳王: '권왕' }, '맥락');
+    generateContent.mockResolvedValue({ text: '{"cells":[{"box":[0,0,100,100],"jp":"あ","ko":"가"}]}' });
+    const results = await translateMangaImage('key', 'FULL', 'image/jpeg', '3.7', { glossary: { 拳王: '권왕' }, context: '맥락' });
     expect(results).toEqual([{ original_text: 'あ', translated_text: '가', box_2d: [0, 0, 100, 100] }]);
     expect(lastRequest().model).toBe('gemini-3.7-flash');
     expect(promptText()).toContain('拳王 -> 권왕');

@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt } from './translationPrompt';
+import { fullPageToResult, gridCellToResult, type FullPageWire, type GridCellWire } from './responseShape';
+import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { recordUsage } from './usageLog';
@@ -52,7 +53,13 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
       },
     });
     const usage = response.usageMetadata;
-    recordUsage('gemini', label, usage?.promptTokenCount ?? 0, (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0));
+    recordUsage(
+      'gemini',
+      label,
+      usage?.promptTokenCount ?? 0,
+      (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+      usage?.cachedContentTokenCount ?? 0,
+    );
     return response;
   } catch (error) {
     throw toFriendlyError(error, 'Gemini');
@@ -68,10 +75,9 @@ export async function translateMangaImage(
   base64Image: string,
   mimeType: string,
   geminiVersion: GeminiVersion = '3.6',
-  glossary?: Record<string, string>,
-  context?: string,
+  options: PromptContextOptions = {},
 ): Promise<RawTranslationResult[]> {
-  const prompt = buildFullPagePrompt({ output: 'array', glossary, context });
+  const prompt = buildFullPagePrompt(options);
 
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),
@@ -79,16 +85,22 @@ export async function translateMangaImage(
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            original_text: { type: Type.STRING },
-            translated_text: { type: Type.STRING },
-            box_2d: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+        type: Type.OBJECT,
+        properties: {
+          cells: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                box: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+                jp: { type: Type.STRING },
+                ko: { type: Type.STRING },
+              },
+              required: ['box', 'jp', 'ko'],
+            },
           },
-          required: ['original_text', 'translated_text', 'box_2d'],
         },
+        required: ['cells'],
       },
       temperature: 0.35,
     },
@@ -98,7 +110,7 @@ export async function translateMangaImage(
   if (!text) throw new Error('No response from Gemini API');
 
   try {
-    const results = parseJsonResponse<RawTranslationResult[]>(text);
+    const results = (parseJsonResponse<{ cells?: FullPageWire[] }>(text).cells ?? []).map(fullPageToResult);
     return sortMangaBoxesByTier(results, r => r.box_2d);
   } catch (error: any) {
     throw new Error('Failed to parse JSON response: ' + error.message);
@@ -107,11 +119,11 @@ export async function translateMangaImage(
 
 /** [메인 선택 시] 원문 한 문장만 다시 번역합니다. */
 export async function retranslateTextGemini(
-  apiKey: string, originalText: string, geminiVersion: GeminiVersion = '3.6', glossary?: Record<string, string>, context?: string,
+  apiKey: string, originalText: string, geminiVersion: GeminiVersion = '3.6', options: PromptContextOptions = {},
 ): Promise<string> {
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),
-    contents: buildRetranslatePrompt(originalText, { glossary, context }),
+    contents: buildRetranslatePrompt(originalText, options),
     config: { temperature: 0.7 },
   }, '문장 재번역');
 
@@ -121,11 +133,11 @@ export async function retranslateTextGemini(
 /** [메인 선택 시] 말풍선에 들어가도록 번역문을 짧게 다듬습니다. */
 export async function shortenTranslationGemini(
   apiKey: string, geminiVersion: GeminiVersion, originalText: string, currentTranslation: string, maxChars: number,
-  glossary?: Record<string, string>, context?: string,
+  options: PromptContextOptions = {},
 ): Promise<string> {
   const response = await generateContent(apiKey, {
     model: modelNameFor(geminiVersion),
-    contents: buildShortenPrompt(originalText, currentTranslation, maxChars, { glossary, context }),
+    contents: buildShortenPrompt(originalText, currentTranslation, maxChars, options),
   }, '짧게 다시 번역');
 
   const text = response.text?.trim();
@@ -170,15 +182,15 @@ export async function summarizeWorkNotes(
   return parseWorkNotesResponse(response.text ?? '');
 }
 
-export interface GridRequestOptions {
+export interface GridRequestOptions extends PromptContextOptions {
   /** 여러 페이지에서 모은 칸일 때 페이지별 칸 수 */
   pageCellCounts?: number[];
-  glossary?: Record<string, string>;
-  context?: string;
-  /** 토큰 사용량 로그에 표시할 이름 */
-  label?: string;
   /** 얼굴 위치로 추정한 화자 힌트 */
   speakerHint?: string;
+  /** 품질 검사에 걸린 칸을 다시 보내는 요청 */
+  retry?: boolean;
+  /** 토큰 사용량 로그에 표시할 이름 */
+  label?: string;
 }
 
 /**
@@ -193,16 +205,8 @@ export async function translateGridImage(
   geminiVersion: GeminiVersion = '3.6',
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { pageCellCounts, glossary, context, label, speakerHint } = options;
-
-  const prompt = buildGridPrompt({
-    expectedCells,
-    pageCellCounts,
-    speakerHint,
-    output: 'array',
-    glossary,
-    context,
-  });
+  const { pageCellCounts, label, ...promptOptions } = options;
+  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, ...promptOptions });
 
   const parts = [
     { text: prompt },
@@ -215,16 +219,22 @@ export async function translateGridImage(
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            id: { type: Type.INTEGER },
-            original_text: { type: Type.STRING },
-            translated_text: { type: Type.STRING },
+        type: Type.OBJECT,
+        properties: {
+          cells: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.INTEGER },
+                jp: { type: Type.STRING },
+                ko: { type: Type.STRING },
+              },
+              required: ['id', 'jp', 'ko'],
+            },
           },
-          required: ['id', 'original_text', 'translated_text'],
         },
+        required: ['cells'],
       },
       temperature: 0.35,
     },
@@ -234,7 +244,7 @@ export async function translateGridImage(
   if (!text) throw new Error("No response from Gemini API");
 
   try {
-    return parseJsonResponse<GridTranslationResult[]>(text);
+    return (parseJsonResponse<{ cells?: GridCellWire[] }>(text).cells ?? []).map(gridCellToResult);
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }

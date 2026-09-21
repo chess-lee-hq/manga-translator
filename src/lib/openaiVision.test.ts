@@ -21,7 +21,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
 
   it('격자 이미지를 직접 보내고 칸별 원문·번역을 한 번에 받는다', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      okResponse(JSON.stringify({ cells: [{ id: 1, original_text: 'あ', translated_text: '가' }] })),
+      okResponse(JSON.stringify({ cells: [{ id: 1, jp: 'あ', ko: '가' }] })),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -33,7 +33,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, outputTokens: 90 });
+    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 90 });
     expect(getUsageTotals().gemini.calls).toBe(0);
   });
 
@@ -42,13 +42,15 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await translateGridImageOpenAI('sol', 'sk-test', 'data:image/jpeg;base64,GRID', 3,
-      { 拳王: '권왕' }, '# 앞 페이지 맥락\n- 주인공은 반말을 쓴다');
+      { glossary: { 拳王: '권왕' }, context: '# 앞 페이지 맥락\n- 주인공은 반말을 쓴다' });
 
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('拳王 -> 권왕');
     expect(prompt).toContain('주인공은 반말을 쓴다');
     expect(prompt).toContain('번역 지침');
-    expect(prompt).toContain('cells');
+    // 응답 형태는 json_schema(strict)가 강제하므로 프롬프트에는 각 필드의 뜻만 짧게 남는다
+    expect(prompt).toContain('jp = 일본어 원문');
+    expect(sentBody(fetchMock).response_format.json_schema.schema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
     expect(sentBody(fetchMock).model).toBe('gpt-5.6-sol');
   });
 
@@ -66,8 +68,8 @@ describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
 
   it('좌표를 함께 받아 일본 만화 읽는 순서로 정렬한다', async () => {
     const cells = [
-      { box_2d: [100, 100, 200, 300], original_text: 'い', translated_text: '왼쪽 위' },
-      { box_2d: [100, 700, 200, 900], original_text: 'あ', translated_text: '오른쪽 위' },
+      { box: [100, 100, 200, 300], jp: 'い', ko: '왼쪽 위' },
+      { box: [100, 700, 200, 900], jp: 'あ', ko: '오른쪽 위' },
     ];
     const fetchMock = vi.fn().mockResolvedValue(okResponse(JSON.stringify({ cells })));
     vi.stubGlobal('fetch', fetchMock);
@@ -76,7 +78,7 @@ describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
 
     // 오른쪽 위부터 읽어야 함
     expect(results.map(r => r.translated_text)).toEqual(['오른쪽 위', '왼쪽 위']);
-    expect(sentPrompt(fetchMock)).toContain('box_2d');
+    expect(sentPrompt(fetchMock)).toContain('box = 영역 좌표');
   });
 });
 
@@ -94,7 +96,8 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
 
     expect(result).toEqual({ notes: '- 주인공: 반말', glossary: [{ original: '雷神流', translated: '뇌신류' }] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sentBody(fetchMock).response_format).toEqual({ type: 'json_object' });
+    expect(sentBody(fetchMock).response_format.type).toBe('json_schema');
+    expect(sentBody(fetchMock).response_format.json_schema.strict).toBe(true);
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('기존 노트');
     expect(prompt).toContain('이미 단어장에 있는 원문은 제외: リョウ');
@@ -116,7 +119,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const fetchMock = vi.fn().mockResolvedValue(okResponse('권왕이다'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await retranslateTextOpenAI('terra', 'sk-test', '拳王だ', { 拳王: '권왕', 南斗: '남두' });
+    await retranslateTextOpenAI('terra', 'sk-test', '拳王だ', { glossary: { 拳王: '권왕', 南斗: '남두' } });
 
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('拳王 -> 권왕');

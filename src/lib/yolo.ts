@@ -9,7 +9,13 @@ const getModelUrl = () => new URL(`${import.meta.env.BASE_URL}manga109_yolo_s_fp
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
-const pending = new Map<number, { resolve: (boxes: BoundingBox[]) => void; reject: (error: Error) => void }>();
+export interface DetectionResult {
+  boxes: BoundingBox[];
+  /** 페이지에서 어두운(글자·그림) 픽셀 비율. 빈 페이지 판정에 씀 — 완전히 흰 페이지는 0에 가까움 */
+  darkRatio: number;
+}
+
+const pending = new Map<number, { resolve: (result: DetectionResult) => void; reject: (error: Error) => void }>();
 
 /** 말풍선 검출(ONNX 추론)은 번역 중 화면이 끊기지 않도록 Web Worker에서 실행합니다. */
 function getWorker(): Worker {
@@ -23,7 +29,7 @@ function getWorker(): Worker {
     pending.delete(response.id);
     if (response.ok) {
       console.debug(`[yolo] 박스 ${response.boxes.length}개 검출 (${response.elapsedMs}ms, 어두운 비율 ${response.darkRatio}${response.invertedPass ? ', 색 반전 재검출' : ''})`);
-      request.resolve(response.boxes);
+      request.resolve({ boxes: response.boxes, darkRatio: response.darkRatio });
     } else {
       request.reject(new Error(`말풍선 검출 실패: ${response.error}`));
     }
@@ -40,11 +46,11 @@ function getWorker(): Worker {
   return created;
 }
 
-export async function detectSpeechBubbles(image: HTMLImageElement, confThreshold = 0.25, iouThreshold = 0.45): Promise<BoundingBox[]> {
+export async function detectSpeechBubbles(image: HTMLImageElement, confThreshold = 0.25, iouThreshold = 0.45): Promise<DetectionResult> {
   const bitmap = await createImageBitmap(image);
   const target = getWorker();
   const id = nextRequestId++;
-  return new Promise((resolve, reject) => {
+  return new Promise<DetectionResult>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     const request: DetectRequest = { id, bitmap, modelUrl: getModelUrl(), confThreshold, iouThreshold, detectInverted: true };
     target.postMessage(request, [bitmap]);

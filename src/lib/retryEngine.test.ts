@@ -29,15 +29,30 @@ describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
     expect(translateGridImage).not.toHaveBeenCalled();
   });
 
-  it('Gemini 키가 있으면 Gemini로 PNG 격자를 보내고 재요청 안내를 붙인다', async () => {
+  it('Gemini 키가 있으면 Gemini로 PNG 격자를 보내고 재요청 표시를 켠다', async () => {
     translateGridImage.mockResolvedValue(answer);
     await retryRequesterFor(settings({ googleKey: 'g-key', geminiVersion: '3.7', context: '맥락' }))(grid, [1]);
     const [key, base64, mime, expected, version, options] = translateGridImage.mock.calls[0];
     expect([key, base64, mime, expected, version]).toEqual(['g-key', 'GRID', 'image/png', 1, '3.7']);
     expect(options.pageCellCounts).toEqual([1]);
-    expect(options.context).toMatch(/^맥락/);
-    expect(options.context.length).toBeGreaterThan('맥락'.length);
+    expect(options.retry).toBe(true);
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
+  });
+
+  it('재요청에는 작품 노트·단어장은 그대로 두고 직전 대사만 뺀다 (앞부분이 같아야 캐시가 걸림)', async () => {
+    translateGridImage.mockResolvedValue(answer);
+    const withContext = settings({ googleKey: 'g-key', context: '## 작품 노트', recentContext: '## 직전까지의 번역' });
+
+    await firstRequesterFor(withContext)(grid, undefined);
+    const first = translateGridImageOpenAI.mock.calls[0][4];
+    expect(first.context).toBe('## 작품 노트');
+    expect(first.recentContext).toBe('## 직전까지의 번역');
+
+    await retryRequesterFor(withContext)(grid, undefined);
+    const retryOptions = translateGridImage.mock.calls[0][5];
+    expect(retryOptions.context).toBe('## 작품 노트');
+    expect(retryOptions.glossary).toEqual(withContext.glossary);
+    expect(retryOptions.recentContext).toBeUndefined();
   });
 
   it('Gemini 요청이 실패하면 OpenAI Sol로 넘긴다', async () => {

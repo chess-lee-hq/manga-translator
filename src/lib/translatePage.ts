@@ -6,7 +6,6 @@ import { sortTextByReadingOrder } from './readingOrder';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
 import { sanitizeResults } from './results';
-import { RETRY_INSTRUCTION } from './translationPrompt';
 import { applyQualityRetry, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
 import type { BoundingBox } from './yoloPostprocess';
@@ -74,7 +73,7 @@ function orderForSpread(results: TranslationResult[], isSpread: boolean): Transl
 
 /** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
 async function detectPage(image: HTMLImageElement, pageId: string) {
-  const detections = await detectSpeechBubbles(image);
+  const { boxes: detections, darkRatio } = await detectSpeechBubbles(image);
   const boxes = sortTextByReadingOrder(detections);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
@@ -85,38 +84,55 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
     const bodies = detections.filter(d => d.classId === 0).length;
     console.debug(`[speaker] 말풍선 ${boxes.length}개 중 ${known}개 화자 추정 (얼굴 ${faces} · 몸 ${bodies})`);
   }
-  return { boxes, speakers };
+  return { boxes, speakers, darkRatio };
 }
+
+/**
+ * 글자가 있을 수 없을 만큼 비어 있는 페이지(속표지 뒷면·여백 등)를 가르는 기준.
+ * 말풍선을 못 찾으면 페이지 전체 인식으로 넘어가 요청 한 번(≈2천 토큰)이 그냥 나가므로,
+ * "어두운 픽셀이 사실상 0"인 페이지만 요청 없이 건너뜁니다. (작은 글자 서너 자만 있어도 이 값을 넘습니다)
+ */
+const BLANK_PAGE_DARK_RATIO = 0.0015;
 
 /** 격자 한 장을 번역 엔진에 보냅니다. */
 type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined) => Promise<GridTranslationResult[]>;
 
-function viaOpenAiGrid(apiKey: string, version: 'sol' | 'terra', glossary: TranslationSettings['glossary'], context: string | undefined, label?: string): GridRequest {
+/** 프롬프트에 함께 싣는 맥락. 재요청이면 "직전 대사"는 빼서 비용을 줄입니다. */
+interface GridPromptParts {
+  glossary: TranslationSettings['glossary'];
+  /** (B) 작품 노트 — 캐시가 걸리는 구간 */
+  context?: string;
+  /** (C) 직전 대사·내 교정 — 재요청에는 싣지 않음 */
+  recentContext?: string;
+  retry?: boolean;
+  label?: string;
+}
+
+function viaOpenAiGrid(apiKey: string, version: 'sol' | 'terra', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
-    translateGridImageOpenAI(version, apiKey, grid.dataUrl, grid.cells.length, glossary, context, {
+    translateGridImageOpenAI(version, apiKey, grid.dataUrl, grid.cells.length, {
+      ...parts,
       pageCellCounts,
-      label,
       speakerHint: buildSpeakerHint(grid.cells),
     });
 }
 
-function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7', glossary: TranslationSettings['glossary'], context: string | undefined, label?: string): GridRequest {
+function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
     translateGridImage(apiKey, base64Of(grid.dataUrl), mimeOf(grid.dataUrl), grid.cells.length, version, {
+      ...parts,
       pageCellCounts,
-      glossary,
-      context,
-      label,
       speakerHint: buildSpeakerHint(grid.cells),
     });
 }
 
 /** 첫 요청: 메인 엔진(고른 버전)으로 보냅니다. */
 export function firstRequesterFor(settings: TranslationSettings): GridRequest {
-  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context } = settings;
+  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context, recentContext } = settings;
+  const parts: GridPromptParts = { glossary, context, recentContext };
   return mainEngine === 'gemini'
-    ? viaGeminiGrid(googleKey, geminiVersion, glossary, context)
-    : viaOpenAiGrid(openaiKey, openAiVersion, glossary, context);
+    ? viaGeminiGrid(googleKey, geminiVersion, parts)
+    : viaOpenAiGrid(openaiKey, openAiVersion, parts);
 }
 
 /**
@@ -132,15 +148,17 @@ export const RETRY_CELLS_PER_IMAGE = 3;
  * 그쪽 키가 있으면 그 엔진(고른 버전)으로, 없거나 실패하면 메인 엔진의 더 강한 모델로 보냅니다.
  */
 export function retryRequesterFor(settings: TranslationSettings): GridRequest {
-  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary } = settings;
-  const context = `${settings.context ?? ''}${RETRY_INSTRUCTION}`;
+  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context } = settings;
+  // 재요청의 목적은 "안 읽힌 글자를 다시 읽는 것"이라 직전 대사(recentContext)는 싣지 않습니다.
+  // 고정 구간·단어장·작품 노트는 그대로 둬야 방금 보낸 첫 요청과 앞부분이 같아져 프롬프트 캐시가 걸립니다.
+  const parts: GridPromptParts = { glossary, context, retry: true };
 
   if (mainEngine === 'gemini') {
     // 메인이 Gemini일 때, 보조 키가 없으면 Gemini 3.7(더 강한 모델)로 재시도
-    const viaStrongerGemini = viaGeminiGrid(googleKey, '3.7', glossary, context, '격자 재요청 (고해상도 · 3.7 Flash)');
+    const viaStrongerGemini = viaGeminiGrid(googleKey, '3.7', { ...parts, label: '격자 재요청 (고해상도 · 3.7 Flash)' });
     if (!openaiKey) return viaStrongerGemini;
 
-    const viaOpenAi = viaOpenAiGrid(openaiKey, openAiVersion, glossary, context, '격자 재요청 (고해상도 · OpenAI)');
+    const viaOpenAi = viaOpenAiGrid(openaiKey, openAiVersion, { ...parts, label: '격자 재요청 (고해상도 · OpenAI)' });
     return async (grid, pageCellCounts) => {
       try {
         return await viaOpenAi(grid, pageCellCounts);
@@ -152,10 +170,10 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
   }
 
   // 메인이 OpenAI일 때, 보조 키가 없으면 OpenAI Sol(더 강한 모델)로 재시도
-  const viaSol = viaOpenAiGrid(openaiKey, 'sol', glossary, context, '격자 재요청 (고해상도 · Sol)');
+  const viaSol = viaOpenAiGrid(openaiKey, 'sol', { ...parts, label: '격자 재요청 (고해상도 · Sol)' });
   if (!googleKey) return viaSol;
 
-  const viaGemini = viaGeminiGrid(googleKey, geminiVersion, glossary, context, '격자 재요청 (고해상도 · Gemini)');
+  const viaGemini = viaGeminiGrid(googleKey, geminiVersion, { ...parts, label: '격자 재요청 (고해상도 · Gemini)' });
   return async (grid, pageCellCounts) => {
     try {
       return await viaGemini(grid, pageCellCounts);
@@ -239,17 +257,21 @@ async function translateGridWithQualityCheck(sources: GridSource[], settings: Tr
  */
 export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
   requireKeys(settings);
-  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context } = settings;
+  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context, recentContext } = settings;
   const imgElement = await loadImage(img.src);
-  const { boxes: textBoxes, speakers } = await detectPage(imgElement, 'page');
+  const { boxes: textBoxes, speakers, darkRatio } = await detectPage(imgElement, 'page');
 
   let rawResults: RawTranslationResult[];
-  if (textBoxes.length === 0) {
+  if (textBoxes.length === 0 && darkRatio < BLANK_PAGE_DARK_RATIO) {
+    // 그림도 글자도 거의 없는 빈 페이지 — API 요청 없이 "번역 0건"으로 확정
+    console.info(`[skip] 글자가 없는 빈 페이지로 보고 번역 요청을 건너뜁니다 (어두운 비율 ${darkRatio}).`);
+    return [];
+  } else if (textBoxes.length === 0) {
     // 말풍선을 찾지 못하면 페이지 전체를 읽는 대체 경로 (좌표까지 모델이 추정하므로 정확도는 떨어짐)
     console.warn('말풍선을 찾지 못해 페이지 전체 인식으로 대체합니다.');
     const fullPage = mainEngine === 'gemini'
-      ? await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, glossary, context)
-      : await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, glossary, context);
+      ? await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, { glossary, context, recentContext })
+      : await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, { glossary, context, recentContext });
     rawResults = fullPage.map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
   } else {
     const checked = await translateGridWithQualityCheck(
@@ -322,9 +344,10 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
 /** 원문 한 문장만 다시 번역합니다. (메인 엔진이 처리) */
 export async function retranslateText(originalText: string, settings: TranslationSettings): Promise<string> {
   requireKeys(settings);
+  const promptOptions = { glossary: settings.glossary, context: settings.context, recentContext: settings.recentContext };
   const translated = settings.mainEngine === 'gemini'
-    ? await retranslateTextGemini(settings.googleKey, originalText, settings.geminiVersion, settings.glossary, settings.context)
-    : await retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, settings.glossary, settings.context);
+    ? await retranslateTextGemini(settings.googleKey, originalText, settings.geminiVersion, promptOptions)
+    : await retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, promptOptions);
   return normalizeEllipsis(translated);
 }
 
@@ -332,8 +355,9 @@ export async function retranslateText(originalText: string, settings: Translatio
 export async function shortenTranslation(originalText: string, currentTranslation: string, maxChars: number, settings: TranslationSettings): Promise<string> {
   requireKeys(settings);
   const clamped = Math.max(1, maxChars);
+  const promptOptions = { glossary: settings.glossary, context: settings.context, recentContext: settings.recentContext };
   const shortened = settings.mainEngine === 'gemini'
-    ? await shortenTranslationGemini(settings.googleKey, settings.geminiVersion, originalText, currentTranslation, clamped, settings.glossary, settings.context)
-    : await shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, clamped, settings.glossary, settings.context);
+    ? await shortenTranslationGemini(settings.googleKey, settings.geminiVersion, originalText, currentTranslation, clamped, promptOptions)
+    : await shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, clamped, promptOptions);
   return normalizeEllipsis(shortened);
 }

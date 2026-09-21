@@ -105,7 +105,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
 
     const translateOne = async (job: typeof jobs[number]) => {
       try {
-        finish(job, await translatePage(job.img, { ...attemptSettings, context: contextFor(job.idx) }));
+        finish(job, await translatePage(job.img, { ...attemptSettings, ...contextFor(job.idx) }));
       } catch (err) {
         fail(job, err);
       }
@@ -116,7 +116,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
       try {
         const byPage = await translatePageBatch(group.map(job => ({ id: job.key, img: job.img })), {
           ...attemptSettings,
-          context: contextFor(group[0].idx),
+          ...contextFor(group[0].idx),
         });
         group.forEach(job => finish(job, byPage.get(job.key) ?? []));
       } catch (err) {
