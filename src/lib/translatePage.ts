@@ -255,33 +255,38 @@ async function translateGridWithQualityCheck(sources: GridSource[], settings: Tr
  *
  * 격자 이미지 한 장으로 원문 인식·번역을 한 번에 처리하고, 실패한 칸만 고해상도로 다시 읽습니다.
  */
-export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
-  requireKeys(settings);
-  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context, recentContext } = settings;
-  const imgElement = await loadImage(img.src);
-  const { boxes: textBoxes, speakers, darkRatio } = await detectPage(imgElement, 'page');
-
-  let rawResults: RawTranslationResult[];
-  if (textBoxes.length === 0 && darkRatio < BLANK_PAGE_DARK_RATIO) {
-    // 그림도 글자도 거의 없는 빈 페이지 — API 요청 없이 "번역 0건"으로 확정
+/**
+ * 말풍선을 하나도 찾지 못한 페이지 처리 (한 장씩 번역·묶음 번역 공통).
+ * - 그림도 글자도 거의 없는 빈 페이지: API 요청 없이 "번역 0건"
+ * - 그 밖(스크린톤 위 나레이션, 테두리 없는 대사 등 검출이 놓친 글자): 페이지 전체를 보여주고 읽는 대체 경로
+ *   (좌표까지 모델이 추정하므로 격자 경로보다 정확도는 떨어짐)
+ */
+async function translatePageWithoutBubbles(img: UploadedImage, darkRatio: number, settings: TranslationSettings): Promise<TranslationResult[]> {
+  if (darkRatio < BLANK_PAGE_DARK_RATIO) {
     console.info(`[skip] 글자가 없는 빈 페이지로 보고 번역 요청을 건너뜁니다 (어두운 비율 ${darkRatio}).`);
     return [];
-  } else if (textBoxes.length === 0) {
-    // 말풍선을 찾지 못하면 페이지 전체를 읽는 대체 경로 (좌표까지 모델이 추정하므로 정확도는 떨어짐)
-    console.warn('말풍선을 찾지 못해 페이지 전체 인식으로 대체합니다.');
-    const fullPage = mainEngine === 'gemini'
-      ? await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, { glossary, context, recentContext })
-      : await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, { glossary, context, recentContext });
-    rawResults = fullPage.map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
-  } else {
-    const checked = await translateGridWithQualityCheck(
-      [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers }],
-      settings,
-    );
-    if (!checked) return [];
-    rawResults = mapGridToResults(checked.translations, checked.grid.cells, imgElement.width, imgElement.height);
   }
+  console.warn('말풍선을 찾지 못해 페이지 전체 인식으로 대체합니다.');
+  const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context, recentContext } = settings;
+  const fullPage = mainEngine === 'gemini'
+    ? await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, { glossary, context, recentContext })
+    : await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, { glossary, context, recentContext });
+  const raw = fullPage.map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
+  return orderForSpread(sanitizeResults(raw) ?? [], !!img.isSpread);
+}
 
+export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
+  requireKeys(settings);
+  const imgElement = await loadImage(img.src);
+  const { boxes: textBoxes, speakers, darkRatio } = await detectPage(imgElement, 'page');
+  if (textBoxes.length === 0) return translatePageWithoutBubbles(img, darkRatio, settings);
+
+  const checked = await translateGridWithQualityCheck(
+    [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers }],
+    settings,
+  );
+  if (!checked) return [];
+  const rawResults = mapGridToResults(checked.translations, checked.grid.cells, imgElement.width, imgElement.height);
   const results = sanitizeResults(rawResults) ?? []; // 좌표가 깨진 응답 제거 + id 부여
   return orderForSpread(results, !!img.isSpread);
 }
@@ -302,18 +307,27 @@ export async function translatePageBatch(pages: BatchPage[], settings: Translati
 
   const prepared = await Promise.all(pages.map(async page => {
     const image = await loadImage(page.img.src);
-    const { boxes, speakers } = await detectPage(image, page.id);
-    return { page, image, boxes, speakers };
+    const { boxes, speakers, darkRatio } = await detectPage(image, page.id);
+    return { page, image, boxes, speakers, darkRatio };
   }));
 
-  const sources: GridSource[] = prepared.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes, speakers: p.speakers }));
+  const withBubbles = prepared.filter(p => p.boxes.length > 0);
+  const withoutBubbles = prepared.filter(p => p.boxes.length === 0);
+  const sources: GridSource[] = withBubbles.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes, speakers: p.speakers }));
   const sizeById = new Map(prepared.map(p => [p.page.id, { width: p.image.width, height: p.image.height }]));
   const spreadById = new Map(prepared.map(p => [p.page.id, !!p.page.img.isSpread]));
 
-  // 대사를 하나도 못 찾은 페이지도 "번역 완료(0건)"로 남겨 다시 요청하지 않도록 빈 배열로 채워둠
+  // 결과가 없는 페이지도 "번역 완료(0건)"로 남겨 다시 요청하지 않도록 빈 배열로 채워둠
   const byPage = new Map<string, TranslationResult[]>(pages.map(page => [page.id, []]));
 
-  const checked = await translateGridWithQualityCheck(sources, settings);
+  // 말풍선을 못 찾은 페이지는 한 장씩 번역할 때와 똑같이 빈 페이지 판정 → 페이지 전체 인식으로 처리
+  // (예전에는 여기서 바로 0건으로 확정돼, 미리 번역한 페이지의 나레이션·스크린톤 위 글자가 영영 번역되지 않았음)
+  const [checked] = await Promise.all([
+    sources.length > 0 ? translateGridWithQualityCheck(sources, settings) : Promise.resolve(null),
+    ...withoutBubbles.map(async p => {
+      byPage.set(p.page.id, await translatePageWithoutBubbles(p.page.img, p.darkRatio, settings));
+    }),
+  ]);
   if (!checked) return byPage;
 
   const raw = mapGridToPages(checked.translations, checked.grid.cells, id => sizeById.get(id) ?? { width: 1, height: 1 });
