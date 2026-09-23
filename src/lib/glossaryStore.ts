@@ -12,7 +12,7 @@ const PREFIX = 'manga-work-glossary-';
 /** 작품별로 나누기 전, 모든 작품이 함께 쓰던 단어장 (가져오기용으로만 남겨 둠) */
 export const LEGACY_GLOSSARY_KEY = 'manga-glossary-current';
 
-export const glossaryKey = (workKey: string) => `${PREFIX}${workKey || 'default'}`;
+const glossaryKey = (workKey: string) => `${PREFIX}${workKey || 'default'}`;
 
 function parseGlossary(raw: string | null): Glossary {
   if (!raw) return {};

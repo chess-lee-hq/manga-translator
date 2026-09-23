@@ -35,7 +35,7 @@ export interface UsageRecord {
 
 const WORK_USAGE_PREFIX = 'manga-usage-work-';
 
-export const emptyUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 });
+const emptyUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 });
 
 const byProvider: Record<UsageProvider, UsageTotals> = { gemini: emptyUsage(), openai: emptyUsage() };
 let sessionByModel: Record<string, UsageTotals> = {};

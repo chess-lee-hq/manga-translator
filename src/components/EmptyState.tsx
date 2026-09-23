@@ -28,7 +28,7 @@ export function EmptyState({ isDragging, isRestoring, isDriveSyncing, onPickFile
       >
         <Upload size={48} className="text-gray-400 mb-4" />
         <p className="text-lg font-medium text-gray-600">여러 장의 이미지를 드래그하여 업로드하세요</p>
-        <p className="text-sm text-gray-400 mt-1">백업 ZIP이나 예전에 저장한 번역 JSON을 같이 올리면 번역이 바로 복원됩니다.</p>
+        <p className="text-sm text-gray-400 mt-1">압축 파일(ZIP·CBZ)도 되고, 이 앱에서 저장한 백업 ZIP을 올리면 번역까지 그대로 복원됩니다.</p>
       </div>
 
       <div className="flex items-center gap-4 mt-4">

@@ -2,6 +2,7 @@ import { AlertTriangle, BookOpen, Check, Edit2, GripVertical, Key, Languages, Lo
 import { useState } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { resolveDisplayMode } from '../lib/bubbleDisplay';
+import { stripFurigana } from '../lib/prompt';
 import type { HoveredBubble, PageError, TranslationCache, UploadedImage, ViewMode } from '../types';
 
 interface ScriptPanelProps {
@@ -33,24 +34,6 @@ interface ScriptPanelProps {
   onRetryPage: (imgIndex: number) => void;
   onTranslatePage: (imgIndex: number) => void;
   onResumeFromEmpty: (imgIndex: number) => void;
-}
-
-/** 요미가나 표기 `漢字(かんじ)`를 <ruby>로 표시 */
-function renderFurigana(text: string) {
-  if (!text) return null;
-  const parts = text.split(/([一-龯]+)\(([ぁ-んァ-ヶ]+)\)/g);
-  if (parts.length === 1) return text;
-
-  const result = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 3 === 0) {
-      result.push(parts[i]);
-    } else if (i % 3 === 1) {
-      result.push(<ruby key={i}>{parts[i]}<rt className="text-[8px] opacity-75">{parts[i + 1]}</rt></ruby>);
-      i++;
-    }
-  }
-  return result;
 }
 
 export function ScriptPanel({
@@ -257,7 +240,7 @@ export function ScriptPanel({
                           )}
                           {result.original_text && (
                             <p className="text-gray-400 text-[11px] mt-1.5 font-serif leading-snug tracking-wide">
-                              {renderFurigana(result.original_text)}
+                              {stripFurigana(result.original_text)}
                             </p>
                           )}
                         </>

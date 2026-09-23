@@ -4,7 +4,6 @@ import type { Glossary, TranslationCache, UploadedImage } from '../types';
 import { extractMangaZip } from './drive';
 import { basename, isImageEntryPath, mimeTypeFromPath, naturalCompare, stripArchiveExtension } from './fileImport';
 import { loadImage } from './imageUtils';
-import { sanitizeResults } from './results';
 
 export interface ImportResult {
   /** backup: 백업 ZIP 복원(현재 작업을 대체) / append: 현재 작업에 이미지 추가 */
@@ -22,7 +21,6 @@ export interface ImportResult {
   /** 백업 ZIP의 원래 파일 이름 (확장자 포함) — 드라이브 저장 기본 이름으로 사용 */
   archiveFileName?: string;
   failedImages: number;
-  jsonFailed: boolean;
 }
 
 /**
@@ -79,17 +77,15 @@ export async function importBackupZip(zipBlob: Blob, name: string): Promise<Impo
     lastReadPage,
     loadedFilename: name,
     failedImages: loaded.failed,
-    jsonFailed: false,
   };
 }
 
-/** 드롭하거나 선택한 파일(이미지, ZIP/CBZ, 백업 ZIP, 번역 JSON)을 읽습니다. 지원하는 파일이 없으면 null. */
+/** 드롭하거나 선택한 파일(이미지, ZIP/CBZ, 백업 ZIP)을 읽습니다. 지원하는 파일이 없으면 null. */
 export async function importFiles(fileList: FileList | File[]): Promise<ImportResult | null> {
   const files = Array.from(fileList);
   const looseImages = files.filter(f => f.type.startsWith('image/') || isImageEntryPath(f.name));
-  const jsonFile = files.find(f => f.name.toLowerCase().endsWith('.json'));
   const archiveFile = files.find(f => /\.(zip|cbz)$/i.test(f.name));
-  if (looseImages.length === 0 && !archiveFile && !jsonFile) return null;
+  if (looseImages.length === 0 && !archiveFile) return null;
 
   const candidates = looseImages.map(file => ({ file, sortKey: file.webkitRelativePath || file.name }));
   let loadedFilename: string | undefined;
@@ -114,24 +110,8 @@ export async function importFiles(fileList: FileList | File[]): Promise<ImportRe
     }
   }
 
-  const translations: TranslationCache = {};
-  let jsonFailed = false;
-  if (jsonFile) {
-    try {
-      const imported = JSON.parse(await jsonFile.text());
-      for (const key of Object.keys(imported)) {
-        if (!key.startsWith('manga-cache-')) continue;
-        const sanitized = sanitizeResults(imported[key]);
-        if (sanitized) translations[key] = sanitized;
-      }
-    } catch (err) {
-      console.error('JSON 파싱 에러:', err);
-      jsonFailed = true;
-    }
-  }
-
   const loaded = await loadCandidates(candidates);
-  return { mode: 'append', images: loaded.images, translations, loadedFilename, failedImages: loaded.failed, jsonFailed };
+  return { mode: 'append', images: loaded.images, translations: {}, loadedFilename, failedImages: loaded.failed };
 }
 
 /**

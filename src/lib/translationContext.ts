@@ -14,8 +14,8 @@ const PLACEHOLDER_TEXTS = new Set(['...', '번역 중...', '인식된 텍스트�
  * 번역 요청마다 붙이는 직전 대사 수. 작품 노트가 있으면 말투·호칭은 노트가 알려 주므로
  * 직전 대사는 바로 앞 흐름만 알 만큼 줄여 매 요청의 입력 토큰을 아낍니다.
  */
-export const RECENT_PAIRS_WITH_NOTES = 8;
-export const RECENT_PAIRS_WITHOUT_NOTES = 16;
+const RECENT_PAIRS_WITH_NOTES = 8;
+const RECENT_PAIRS_WITHOUT_NOTES = 16;
 export const recentPairLimit = (notes: string | undefined) => (notes?.trim() ? RECENT_PAIRS_WITH_NOTES : RECENT_PAIRS_WITHOUT_NOTES);
 
 function pagePairs(images: UploadedImage[], cache: TranslationCache, index: number): { key: string; pairs: DialoguePair[] } {

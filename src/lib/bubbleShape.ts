@@ -42,7 +42,7 @@ export interface BubbleShape {
   centerY: number;
 }
 
-export const BUBBLE_RULE = {
+const BUBBLE_RULE = {
   /** 탐색 범위: 글자 영역에서 가로·세로로 각각 이만큼(글자 영역 긴 변 대비) 넓힘 */
   searchMarginRatio: 1.1,
   /** 픽셀 격자의 긴 변 칸 수 상한 (크면 정밀하지만 느림) */
@@ -258,7 +258,7 @@ export function detectBubbleShape(
 }
 
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */
-export function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
+function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
   const width = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
   const height = image instanceof HTMLImageElement ? image.naturalHeight || image.height : image.height;
   const canvas = document.createElement('canvas');

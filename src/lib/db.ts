@@ -9,7 +9,7 @@ const DB_VERSION = 2;
 export const PAGES_STORE = 'pages';
 export const META_STORE = 'meta';
 export const TRANSLATIONS_STORE = 'translations';
-export const TRANSLATIONS_WORK_INDEX = 'workKey';
+const TRANSLATIONS_WORK_INDEX = 'workKey';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 

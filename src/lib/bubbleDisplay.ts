@@ -6,7 +6,7 @@ import { stripFurigana } from './prompt';
 export type DisplayMode = 'cover' | 'tag';
 
 /** 효과음(큰 글씨) 자동 판별 기준. 면적은 페이지 전체를 1로 본 비율 */
-export const SFX_RULE = {
+const SFX_RULE = {
   /** 번역문 글자 수 상한 (공백·문장부호 제외) */
   maxTranslatedGlyphs: 5,
   /** 원문 글자 수 상한 (요미가나·문장부호 제외) */
@@ -79,7 +79,7 @@ export interface TagLayout {
   scale: number;
 }
 
-export function boxToRect([ymin, xmin, ymax, xmax]: Box, pageWidth: number, pageHeight: number): Rect {
+function boxToRect([ymin, xmin, ymax, xmax]: Box, pageWidth: number, pageHeight: number): Rect {
   return {
     x: (xmin / 1000) * pageWidth,
     y: (ymin / 1000) * pageHeight,

@@ -301,7 +301,6 @@ function App() {
     }
 
     if (result.failedImages > 0) warnings.push(`이미지 ${result.failedImages}장은 읽을 수 없어 건너뛰었습니다.`);
-    if (result.jsonFailed) warnings.push('번역 데이터(.json) 파일을 읽지 못했습니다.');
     return { warnings, info };
   };
 
@@ -838,7 +837,7 @@ function App() {
           ref={fileInputRef}
           className="hidden"
           multiple
-          accept="image/*,application/json,.zip,.cbz"
+          accept="image/*,.zip,.cbz"
           onChange={(e) => {
             if (e.target.files) processFiles(e.target.files);
             e.target.value = '';

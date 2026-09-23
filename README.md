@@ -1,32 +1,64 @@
-# React + TypeScript + Vite
+# Manga Translator
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+일본 만화를 브라우저에서 바로 한국어로 읽기 위한 개인용 번역 뷰어입니다.
+만화 이미지(또는 ZIP·CBZ)를 올리면 말풍선을 찾아 원문을 읽고 번역해, 원래 말풍선 자리에 덮어 보여주거나 오른쪽 대본으로 보여줍니다.
 
-Currently, two official plugins are available:
+- 배포: GitHub Pages (`main`에 푸시하면 `.github/workflows/deploy.yml`이 빌드·배포)
+- 서버 없음: API 키·번역 기록·단어장은 모두 **내 브라우저 안에만** 저장됩니다.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 동작 방식
 
-## React Compiler
+1. **말풍선 찾기** — 브라우저 안에서 YOLO(Manga109) 모델로 말풍선·글자 영역을 찾습니다. (`public/manga109_yolo_s_fp16w.onnx`, Web Worker)
+2. **격자 이미지** — 찾은 말풍선을 잘라 번호를 붙인 바둑판 이미지로 모읍니다. 칸이 너무 작아지지 않는 범위에서 이미지 토큰이 가장 적게 드는 배치를 고르고, 칸이 많으면 여러 장으로 나눠 **요청 한 번**에 보냅니다. (`src/lib/gridLayout.ts`)
+3. **읽기·번역 한 번에** — 메인 엔진(OpenAI 또는 Gemini)이 원문 인식과 번역을 한 번에 돌려줍니다. 응답 형태는 API 스키마로 강제합니다.
+4. **품질 검사** — 빈 번역·일본어가 남은 번역·모델이 "확신 없음"으로 표시한 칸만 2배 해상도로 **다른 엔진**에 다시 읽힙니다. 그래도 남은 문제는 "검토" 표시로 남깁니다.
+5. **맥락 유지** — 단어장(작품별), 작품 노트(인물 말투·호칭 요약), 직전 대사, 내가 고친 번역을 프롬프트에 함께 넣습니다. 바뀌는 주기가 긴 것부터 앞에 두어 프롬프트 캐시가 걸리게 합니다. (`src/lib/translationPrompt.ts`)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 엔진
 
-## Expanding the Oxlint configuration
+| 역할 | 설명 |
+| --- | --- |
+| 메인 | 1차 번역을 맡는 엔진. 이 엔진의 키는 필수 |
+| 서브 | 품질 검사에 걸린 칸만 고해상도로 다시 읽음. 키는 선택 (없으면 메인의 더 강한 모델로 재시도) |
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+헤더의 ⇄ 버튼으로 메인·서브를 바꿀 수 있습니다.
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+- OpenAI: 5.6 Terra(기본) / 6 Sol(가장 강함, 재시도 승격 대상) / 6 Luna(시험용)
+- Gemini: 3.6 Flash / 3.7 Flash (SDK 없이 REST로 호출)
+
+## 주요 기능
+
+- 1장·2장(펼침면) 보기, 덮어쓰기 / 우측 대본, 말풍선 모양에 맞춰 글자 넣기, 세로쓰기
+- 자동 번역: 보고 있는 페이지는 바로, 그 페이지에 2초 이상 머물면 뒤 페이지를 묶음으로 미리 번역
+- 대본에서 번역 고치기 · 원문 고치기(고친 원문으로 재번역) · 이미지에서 다시 읽기 · 짧게 다시 번역
+- 검토 목록: 자동 재요청 뒤에도 확신할 수 없던 말풍선 모아 보기
+- 작품별 단어장·작품 노트·단어장 후보 추천 (같은 작품의 다른 권은 파일 이름에서 권 번호를 떼어 자동으로 이어짐)
+- 사용량 창: 모델별·작품별 토큰, 추론 토큰 비중, 단가를 넣으면 예상 비용, "추론 줄이기" 실험 옵션
+- 저장소 창: 작품별 번역 기록 보기·삭제
+- 번역된 페이지 ZIP 내보내기, 백업 ZIP(이미지+번역+단어장+노트) 저장·복원, 구글 드라이브 저장·불러오기
+- 키보드: ← 다음 페이지 / → 이전 페이지 / + − 확대·축소
+
+## 저장 위치
+
+| 데이터 | 위치 |
+| --- | --- |
+| 번역 기록 | IndexedDB `manga-translator` → `translations` (지금 연 페이지 것만 읽음) |
+| 열어 둔 이미지·읽던 위치 | IndexedDB `pages`, `meta` (새로고침해도 이어서) |
+| 단어장·작품 노트·내가 고친 번역·단어장 후보 | localStorage (`manga-work-glossary-<작품>` 등 작품별) |
+| API 키·설정·사용량 | localStorage |
+
+예전 버전은 번역 기록을 localStorage에 두었습니다. 처음 열 때 IndexedDB로 **복사**하고 원본은 지우지 않습니다. (저장소 창의 "예전 저장소 정리"로 직접 정리)
+
+## 개발
+
+```bash
+npm install
+npm run dev      # 개발 서버
+npm test         # vitest
+npm run lint     # oxlint
+npm run build    # tsc + vite build → dist/
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- React 19 + Vite + TypeScript, Tailwind CSS
+- 말풍선 검출 wasm은 CDN(jsdelivr)에서 받으므로 빌드 결과에서 onnxruntime의 .wasm은 뺍니다. (`vite.config.ts`)
+- 변경 기록과 되돌리는 방법: `docs/PATCH_LOG_2026-09.md`

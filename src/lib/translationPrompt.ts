@@ -48,7 +48,7 @@ function stableContext({ glossary, context, sourceText }: PromptContextOptions):
 }
 
 /** 품질 검사에서 걸린 칸만 다시 요청할 때 맨 뒤에 덧붙이는 안내 */
-export const RETRY_INSTRUCTION = `
+const RETRY_INSTRUCTION = `
 # 재요청 안내 (중요)
 이 칸들은 앞선 응답에서 번역문이 비어 있거나, 한국어로 번역되지 않고 일본어가 남아 있었어.
 각 칸의 글자를 다시 정확히 읽고, ko에는 반드시 자연스러운 한국어만 적어.

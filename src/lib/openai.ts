@@ -21,7 +21,7 @@ type HttpError = Error & { status?: number; retryAfterMs?: number };
  * - sol: 가장 강한 인식·번역 (품질 검사 재요청의 승격 대상이기도 함)
  * - luna: 시험용. 고어체·붓글씨체 원문을 잘못 읽는 경우가 있어 지켜보는 중
  */
-export const OPENAI_MODELS: Record<OpenAiVersion, string> = {
+const OPENAI_MODELS: Record<OpenAiVersion, string> = {
   terra: 'gpt-5.6-terra',
   sol: 'gpt-6-sol',
   luna: 'gpt-6-luna',

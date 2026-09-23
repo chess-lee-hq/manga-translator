@@ -13,7 +13,7 @@ export interface WorkNotes {
   coveredPages?: string[];
 }
 
-export const workNotesKey = (workName: string) => `${NOTES_PREFIX}${workName || 'default'}`;
+const workNotesKey = (workName: string) => `${NOTES_PREFIX}${workName || 'default'}`;
 
 export function loadWorkNotes(workName: string): WorkNotes | null {
   try {

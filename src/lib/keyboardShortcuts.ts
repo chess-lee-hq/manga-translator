@@ -14,7 +14,7 @@ interface KeyLike {
 }
 
 /** 글자를 입력하는 중인 곳(입력칸·드롭다운·편집 가능한 영역)인지 */
-export function isTypingTarget(target: EventTarget | null | undefined): boolean {
+function isTypingTarget(target: EventTarget | null | undefined): boolean {
   const el = target as HTMLElement | null | undefined;
   if (!el || typeof el.tagName !== 'string') return false;
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || !!el.isContentEditable;

@@ -32,7 +32,7 @@ export interface GridResponseWire {
   unsure?: number[];
 }
 
-export const gridCellToResult = (cell: GridCellWire): GridTranslationResult => ({
+const gridCellToResult = (cell: GridCellWire): GridTranslationResult => ({
   id: cell.id,
   original_text: cell.jp ?? '',
   translated_text: cell.ko ?? '',
