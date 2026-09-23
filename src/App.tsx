@@ -77,7 +77,11 @@ function App() {
   // 메인은 기본 OpenAI(5.6 Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
-  const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
+  // 예전 3.7을 골라 뒀던 값은 3.8로 옮김 (3.7은 없앰)
+  const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => {
+    const saved = localStorage.getItem(GEMINI_VERSION_STORAGE_KEY);
+    return saved === '3.8' || saved === '3.7' ? '3.8' : '3.6';
+  });
   const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(loadOpenAiVersion);
   const [mainEngine, setMainEngine] = useState<MainEngine>(() => (localStorage.getItem(MAIN_ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'openai'));
 

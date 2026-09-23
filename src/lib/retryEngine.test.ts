@@ -31,9 +31,9 @@ describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
 
   it('Gemini 키가 있으면 Gemini로 PNG 격자를 보내고 재요청 표시를 켠다', async () => {
     translateGridImage.mockResolvedValue(answer);
-    await retryRequesterFor(settings({ googleKey: 'g-key', geminiVersion: '3.7', context: '맥락' }))(grid, [1]);
+    await retryRequesterFor(settings({ googleKey: 'g-key', geminiVersion: '3.8', context: '맥락' }))(grid, [1]);
     const [key, images, expected, version, options] = translateGridImage.mock.calls[0];
-    expect([key, images, expected, version]).toEqual(['g-key', [{ data: 'GRID', mimeType: 'image/png' }], 1, '3.7']);
+    expect([key, images, expected, version]).toEqual(['g-key', [{ data: 'GRID', mimeType: 'image/png' }], 1, '3.8']);
     expect(options.pageCellCounts).toEqual([1]);
     expect(options.retry).toBe(true);
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
@@ -70,10 +70,10 @@ describe('품질 검사 재요청 엔진 (메인 = Gemini, 역할을 뒤집은 �
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  it('OpenAI 키가 없으면 Gemini 3.7(더 강한 모델)로 다시 읽는다', async () => {
+  it('OpenAI 키가 없으면 Gemini 3.8(더 강한 모델)로 다시 읽는다', async () => {
     translateGridImage.mockResolvedValue(answer);
     await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: '', googleKey: 'g-key', geminiVersion: '3.6' }))(grid, undefined);
-    expect(translateGridImage.mock.calls[0][3]).toBe('3.7');
+    expect(translateGridImage.mock.calls[0][3]).toBe('3.8');
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
   });
 
@@ -85,12 +85,12 @@ describe('품질 검사 재요청 엔진 (메인 = Gemini, 역할을 뒤집은 �
     expect(translateGridImage).not.toHaveBeenCalled();
   });
 
-  it('OpenAI 요청이 실패하면 Gemini 3.7로 넘긴다', async () => {
+  it('OpenAI 요청이 실패하면 Gemini 3.8로 넘긴다', async () => {
     translateGridImageOpenAI.mockRejectedValue(new Error('OpenAI API Error 429'));
     translateGridImage.mockResolvedValue(answer);
     const result = await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: 'sk-key', googleKey: 'g-key' }))(grid, undefined);
     expect(result).toEqual(answer);
-    expect(translateGridImage.mock.calls[0][3]).toBe('3.7');
+    expect(translateGridImage.mock.calls[0][3]).toBe('3.8');
   });
 });
 

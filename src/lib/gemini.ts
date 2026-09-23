@@ -46,11 +46,10 @@ export interface GridTranslationResult {
   review?: string;
 }
 
-type GeminiVersion = '3.6' | '3.7' | '3.8';
+type GeminiVersion = '3.6' | '3.8';
 
 const GEMINI_MODELS: Record<GeminiVersion, string> = {
   '3.6': 'gemini-3.6-flash',
-  '3.7': 'gemini-3.7-flash',
   '3.8': 'gemini-3.8-flash',
 };
 const modelNameFor = (geminiVersion: GeminiVersion) => GEMINI_MODELS[geminiVersion] ?? GEMINI_MODELS['3.6'];

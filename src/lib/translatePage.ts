@@ -119,7 +119,7 @@ function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPrompt
     });
 }
 
-function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7' | '3.8', parts: GridPromptParts): GridRequest {
+function viaGeminiGrid(apiKey: string, version: '3.6' | '3.8', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
     translateGridImage(apiKey, grid.images.map(inlineImage), grid.cells.length, version, {
       ...parts,
@@ -159,8 +159,8 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
   const parts: GridPromptParts = { glossary, context, retry: true };
 
   if (mainEngine === 'gemini') {
-    // 메인이 Gemini일 때, 보조 키가 없으면 Gemini 3.7(더 강한 모델)로 재시도
-    const viaStrongerGemini = viaGeminiGrid(googleKey, '3.7', { ...parts, label: '격자 재요청 (고해상도 · 3.7 Flash)' });
+    // 메인이 Gemini일 때, 보조 키가 없으면 Gemini 3.8(더 강한 모델)로 재시도
+    const viaStrongerGemini = viaGeminiGrid(googleKey, '3.8', { ...parts, label: '격자 재요청 (고해상도 · 3.8 Flash)' });
     if (!openaiKey) return viaStrongerGemini;
 
     const viaOpenAi = viaOpenAiGrid(openaiKey, openAiVersion, { ...parts, label: '격자 재요청 (고해상도 · OpenAI)' });

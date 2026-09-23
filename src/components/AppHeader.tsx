@@ -310,7 +310,7 @@ export function AppHeader(props: AppHeaderProps) {
           accent="blue"
           version={geminiVersion}
           onVersionChange={onGeminiVersionChange}
-          versionOptions={[['3.6', '3.6 Flash'], ['3.7', '3.7 Flash'], ['3.8', '3.8 Flash']]}
+          versionOptions={[['3.6', '3.6 Flash'], ['3.8', '3.8 Flash']]}
           versionTitle="번역·다시 읽기에 쓸 Gemini 모델"
           apiKey={googleKey}
           onApiKeyChange={onGoogleKeyChange}
