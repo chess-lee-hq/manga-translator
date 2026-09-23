@@ -36,6 +36,7 @@ import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs, collectUnsummarizedPairs, recentPairLimit } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
 import { clearLegacyGlossary, loadLegacyGlossary, mergeIntoStoredGlossary } from './lib/glossaryStore';
+import { shortcutFor } from './lib/keyboardShortcuts';
 import { setUsageWork } from './lib/usageLog';
 import { carryOverWorkData, listKnownWorks, loadWorkAliases, migrateLegacyWorkData, rememberWork, resolveWork, setWorkAlias } from './lib/workIdentity';
 import type { Box2d, GeminiVersion, HoveredBubble, MainEngine, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
@@ -568,6 +569,31 @@ function App() {
     goToPage(Math.min(currentPageIndex + visibleIndices.length, allImages.length - 1));
   };
 
+  const zoomIn = () => setScale(s => Math.min(s + 0.1, 3.0));
+  const zoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
+
+  // 키보드 단축키 (← 다음 / → 이전 / +·- 확대·축소). 창이 떠 있거나 글자를 입력 중이면 무시
+  const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen;
+  const shortcutRef = useRef({ enabled: false, handlePrev, handleNext, zoomIn, zoomOut });
+  useEffect(() => {
+    shortcutRef.current = { enabled: allImages.length > 0 && !isAnyModalOpen && !isRestoring, handlePrev, handleNext, zoomIn, zoomOut };
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const current = shortcutRef.current;
+      if (!current.enabled) return;
+      const action = shortcutFor(event);
+      if (!action) return;
+      event.preventDefault();
+      if (action === 'next') current.handleNext();
+      else if (action === 'prev') current.handlePrev();
+      else if (action === 'zoomIn') current.zoomIn();
+      else current.zoomOut();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const handleHoverBubble = (bubble: HoveredBubble | null) => {
     setHoveredBubble(bubble);
     if (bubble && scriptStyle === 'side') {
@@ -754,8 +780,8 @@ function App() {
         isEditingBoxes={isEditingBoxes}
         onToggleEditingBoxes={() => setIsEditingBoxes(prev => !prev)}
         scale={scale}
-        onZoomIn={() => setScale(s => Math.min(s + 0.1, 3.0))}
-        onZoomOut={() => setScale(s => Math.max(s - 0.1, 0.5))}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
         onAddFiles={() => fileInputRef.current?.click()}
         exportProgress={exportProgress}
         onExportAll={handleExportAll}
