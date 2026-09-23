@@ -32,6 +32,8 @@ interface Options {
   visibleIndices: number[];
   settings: TranslationSettings;
   translationCache: TranslationCache;
+  /** false면 저장된 번역 기록을 아직 읽는 중이라 자동 번역을 시작하지 않음 */
+  ready?: boolean;
   onPageTranslated: (key: string, results: TranslationResult[]) => void;
   /** 작품 노트 (인물·말투 요약) — 번역 프롬프트에 함께 전달 */
   notes?: string;
@@ -39,7 +41,7 @@ interface Options {
   corrections?: Correction[];
 }
 
-export function useTranslationQueue({ images, queue, visibleIndices, settings, translationCache, onPageTranslated, notes, corrections }: Options) {
+export function useTranslationQueue({ images, queue, visibleIndices, settings, translationCache, ready = true, onPageTranslated, notes, corrections }: Options) {
   // 진행 상태는 페이지 번호가 아니라 캐시 키(파일) 기준 → 이미지 추가·재정렬 중에도 중복 호출·누락 없음
   const inFlightRef = useRef<Set<string>>(new Set());
   const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(() => new Set());
@@ -169,7 +171,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
   const clearPageErrors = () => setPageErrors({});
 
   useEffect(() => {
-    if (!autoTranslate || !isCredentialSettled || !currentKey || images.length === 0 || queue.length === 0) return;
+    if (!ready || !autoTranslate || !isCredentialSettled || !currentKey || images.length === 0 || queue.length === 0) return;
 
     const missingIndices = queue.filter(i => {
       const key = getCacheKey(images[i].file);
@@ -201,7 +203,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
       cancelled = true;
       endDwell();
     };
-  }, [queue.join(','), images, credential, isCredentialSettled, autoTranslate, retryTrigger]);
+  }, [queue.join(','), images, credential, isCredentialSettled, autoTranslate, retryTrigger, ready]);
 
   return {
     translatingKeys,

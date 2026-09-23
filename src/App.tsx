@@ -9,6 +9,7 @@ import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
 import { ReviewListModal, type ReviewItem } from './components/ReviewListModal';
+import { StorageModal } from './components/StorageModal';
 import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
@@ -96,6 +97,7 @@ function App() {
   const [isWorkNotesOpen, setIsWorkNotesOpen] = useState(false);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [isStorageOpen, setIsStorageOpen] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const notesBusyRef = useRef(false);
@@ -134,9 +136,10 @@ function App() {
   // 작품 노트를 정리할 때 함께 받은 단어장 후보 (단어장에 이미 들어간 건 화면에서 숨김)
   const { candidates: storedCandidates, dismissed: dismissedCandidates, addCandidates, removeCandidate, dismissCandidate } = useGlossaryCandidates(workName);
   const glossaryCandidates = storedCandidates.filter(c => !(c.original in glossary));
-  const { translationCache, updatePageResults, setPageResults, mergeTranslations, removePages, clearAll } = useTranslationCache(
+  const { translationCache, isCacheReady, updatePageResults, setPageResults, mergeTranslations, removePages, forgetPages } = useTranslationCache(
     allImages,
-    () => setError('저장 공간이 가득 찼습니다. 기록 삭제 후 다시 시도해주세요.'),
+    work.key,
+    () => setError('저장 공간이 가득 찼습니다. [저장소] 창에서 다 읽은 작품의 번역 기록을 정리한 뒤 다시 시도해주세요.'),
   );
 
   // 메인 엔진의 키. 작품 노트 정리도 이 엔진으로 처리
@@ -155,6 +158,8 @@ function App() {
     visibleIndices,
     settings,
     translationCache,
+    // 저장된 번역 기록을 다 읽기 전에 자동 번역을 시작하면 이미 번역한 페이지를 다시 요청하게 됨
+    ready: isCacheReady,
     onPageTranslated: setPageResults,
     notes: notes?.text,
     corrections,
@@ -573,7 +578,7 @@ function App() {
   const zoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
 
   // 키보드 단축키 (← 다음 / → 이전 / +·- 확대·축소). 창이 떠 있거나 글자를 입력 중이면 무시
-  const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen;
+  const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen || isStorageOpen;
   const shortcutRef = useRef({ enabled: false, handlePrev, handleNext, zoomIn, zoomOut });
   useEffect(() => {
     shortcutRef.current = { enabled: allImages.length > 0 && !isAnyModalOpen && !isRestoring, handlePrev, handleNext, zoomIn, zoomOut };
@@ -740,12 +745,14 @@ function App() {
     }
   };
 
-  const handleClearCache = () => {
-    if (!confirm('브라우저에 자동 저장된 모든 번역 기록을 영구적으로 삭제하시겠습니까?\n\n삭제 직후 보이는 페이지가 다시 번역되며 요금이 나가는 것을 막기 위해 자동 번역이 꺼집니다.')) return;
-    clearAll();
+  /** 저장소 창에서 번역 기록을 지웠을 때 */
+  const handleTranslationsDeleted = (keys: string[], includesCurrentWork: boolean) => {
+    forgetPages(keys);
+    if (!includesCurrentWork) return;
+    // 지운 직후 보이는 페이지가 다시 번역되며 요금이 나가는 것을 막음
     queue.clearPageErrors();
     queue.setAutoTranslate(false);
-    alert('저장된 번역 기록을 삭제했습니다.\n다시 번역하려면 상단의 [자동 번역] 버튼을 켜거나, 대본 패널에서 페이지별로 번역하세요.');
+    alert('번역 기록을 삭제했습니다.\n다시 번역하려면 상단의 [자동 번역] 버튼을 켜거나, 대본 패널에서 페이지별로 번역하세요.');
   };
 
   const handleCloseSession = () => {
@@ -791,7 +798,7 @@ function App() {
         onOpenGlossary={() => setGlossaryDraft({ original: '', translated: '' })}
         glossaryCandidateCount={glossaryCandidates.length}
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
-        onClearCache={handleClearCache}
+        onOpenStorage={() => setIsStorageOpen(true)}
         onOpenUsage={() => setIsUsageOpen(true)}
         reviewCount={reviewItems.length}
         onOpenReview={() => setIsReviewOpen(true)}
@@ -952,6 +959,15 @@ function App() {
           onRemoveCorrection={removeCorrection}
           onClearCorrections={clearCorrections}
           onClose={() => setIsWorkNotesOpen(false)}
+        />
+      )}
+
+      {isStorageOpen && (
+        <StorageModal
+          workTitles={Object.fromEntries(listKnownWorks().map(w => [w.key, w.title]))}
+          currentWorkKey={work.key}
+          onDeleted={handleTranslationsDeleted}
+          onClose={() => setIsStorageOpen(false)}
         />
       )}
 

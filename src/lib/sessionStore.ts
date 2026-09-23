@@ -1,11 +1,9 @@
+import { getDb, META_STORE, PAGES_STORE, requestToPromise, transactionDone } from './db';
+
 /**
  * 새로고침해도 작업을 이어갈 수 있도록 이미지와 읽던 위치를 IndexedDB에 저장합니다.
- * (번역 결과와 단어장은 기존대로 localStorage에 저장)
+ * (번역 기록은 translationStore, 단어장·노트는 localStorage)
  */
-const DB_NAME = 'manga-translator';
-const DB_VERSION = 1;
-const PAGES_STORE = 'pages';
-const META_STORE = 'meta';
 const META_KEY = 'current';
 
 export interface StoredPage {
@@ -33,46 +31,6 @@ export interface PageToStore {
   file: File;
   mimeType: string;
   sortKey: string;
-}
-
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-function getDb(): Promise<IDBDatabase> {
-  if (!dbPromise) {
-    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      if (typeof indexedDB === 'undefined') {
-        reject(new Error('이 브라우저에서는 IndexedDB를 사용할 수 없습니다.'));
-        return;
-      }
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(PAGES_STORE)) db.createObjectStore(PAGES_STORE, { keyPath: 'key' });
-        if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE);
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error('IndexedDB를 열지 못했습니다.'));
-    }).catch(error => {
-      dbPromise = null;
-      throw error;
-    });
-  }
-  return dbPromise;
-}
-
-function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function transactionDone(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error ?? new Error('IndexedDB 트랜잭션이 취소되었습니다.'));
-  });
 }
 
 /** 페이지 목록과 순서를 저장합니다. 이미 저장된 이미지는 다시 쓰지 않고, 추가·삭제된 페이지만 반영합니다. */

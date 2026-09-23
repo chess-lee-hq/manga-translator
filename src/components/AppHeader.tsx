@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Database, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 import { getUsageByModel, sumUsage } from '../lib/usageLog';
 import { formatTokens, useUsageVersion } from './UsageModal';
@@ -26,7 +26,8 @@ interface AppHeaderProps {
   /** 확인을 기다리는 단어장 후보 수 */
   glossaryCandidateCount: number;
   onOpenWorkNotes: () => void;
-  onClearCache: () => void;
+  /** 저장소 창 (작품별 번역 기록 보기·삭제) */
+  onOpenStorage: () => void;
   onOpenUsage: () => void;
   /** 검토 표시가 남은 말풍선 수 (0이면 버튼 숨김) */
   reviewCount: number;
@@ -125,7 +126,7 @@ export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onClearCache, onOpenUsage, reviewCount, onOpenReview, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
+    onOpenStorage, onOpenUsage, reviewCount, onOpenReview, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
     openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
@@ -248,8 +249,8 @@ export function AppHeader(props: AppHeaderProps) {
             <button onClick={onOpenWorkNotes} title="작품 노트: 인물 말투·호칭을 기억해 다음 번역에 반영" className={`${actionButton} bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100`}>
               <NotebookPen size={14} /> <span className={WIDE_LABEL}>작품 노트</span>
             </button>
-            <button onClick={onClearCache} title="저장된 번역 기록 모두 삭제" className={`${actionButton} bg-red-50 text-red-700 border-red-200 hover:bg-red-100`}>
-              <Trash2 size={14} /> <span className={WIDE_LABEL}>기록 삭제</span>
+            <button onClick={onOpenStorage} title="저장소: 작품별 번역 기록 보기·삭제" className={`${actionButton} bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100`}>
+              <Database size={14} /> <span className={WIDE_LABEL}>저장소</span>
             </button>
             <button
               onClick={onCloseSession}

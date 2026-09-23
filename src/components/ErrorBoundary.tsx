@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { clearAllTranslations } from '../lib/translationStore';
 
 interface Props {
   children: ReactNode;
@@ -24,8 +25,13 @@ export class ErrorBoundary extends Component<Props, State> {
     location.reload();
   };
 
-  handleClearCacheAndReload = () => {
+  handleClearCacheAndReload = async () => {
     if (!confirm('브라우저에 저장된 번역 기록을 모두 삭제하고 다시 불러올까요?\n(단어장과 API 키는 유지됩니다)')) return;
+    try {
+      await clearAllTranslations();
+    } catch (error) {
+      console.error('번역 기록 저장소를 지우지 못했습니다:', error);
+    }
     Object.keys(localStorage)
       .filter(k => k.startsWith('manga-cache-'))
       .forEach(k => localStorage.removeItem(k));
