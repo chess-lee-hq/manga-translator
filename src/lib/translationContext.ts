@@ -11,6 +11,22 @@ export interface DialoguePair {
 const PLACEHOLDER_TEXTS = new Set(['...', '번역 중...', '인식된 텍스트가 없습니다.']);
 
 /**
+ * 번역 요청마다 붙이는 직전 대사 수. 작품 노트가 있으면 말투·호칭은 노트가 알려 주므로
+ * 직전 대사는 바로 앞 흐름만 알 만큼 줄여 매 요청의 입력 토큰을 아낍니다.
+ */
+export const RECENT_PAIRS_WITH_NOTES = 8;
+export const RECENT_PAIRS_WITHOUT_NOTES = 16;
+export const recentPairLimit = (notes: string | undefined) => (notes?.trim() ? RECENT_PAIRS_WITH_NOTES : RECENT_PAIRS_WITHOUT_NOTES);
+
+function pagePairs(images: UploadedImage[], cache: TranslationCache, index: number): { key: string; pairs: DialoguePair[] } {
+  const key = buildCacheKey(images[index].file.name, images[index].file.size);
+  const pairs = (cache[key] ?? [])
+    .filter(r => r.translated_text?.trim() && !PLACEHOLDER_TEXTS.has(r.translated_text.trim()))
+    .map(r => ({ original: stripFurigana(r.original_text ?? '').trim(), translated: r.translated_text.trim() }));
+  return { key, pairs };
+}
+
+/**
  * 이미 번역이 끝난 앞 페이지들에서 대사를 모읍니다. (가까운 페이지 우선, 읽는 순서 유지)
  * 병렬 번역 때문에 바로 앞 페이지가 아직 없을 수 있어, 번역된 페이지만 거슬러 올라가며 찾습니다.
  */
@@ -24,12 +40,7 @@ export function collectRecentPairs(
   let collected = 0;
 
   for (let i = Math.min(beforePageIndex, images.length) - 1; i >= 0 && collected < maxPairs; i--) {
-    const results = cache[buildCacheKey(images[i].file.name, images[i].file.size)];
-    if (!results?.length) continue;
-
-    const page = results
-      .filter(r => r.translated_text?.trim() && !PLACEHOLDER_TEXTS.has(r.translated_text.trim()))
-      .map(r => ({ original: stripFurigana(r.original_text ?? '').trim(), translated: r.translated_text.trim() }));
+    const { pairs: page } = pagePairs(images, cache, i);
     if (page.length === 0) continue;
 
     pages.unshift(page);
@@ -37,6 +48,28 @@ export function collectRecentPairs(
   }
 
   return pages.flat().slice(-maxPairs);
+}
+
+/**
+ * 작품 노트에 아직 반영되지 않은 페이지의 대사만 모읍니다. (읽는 순서, 너무 많으면 최근 것만)
+ * pageKeys는 대사가 있는 번역된 페이지 전체 — 갱신에 성공하면 이것을 "반영됨"으로 저장합니다.
+ */
+export function collectUnsummarizedPairs(
+  images: UploadedImage[],
+  cache: TranslationCache,
+  coveredPages: Iterable<string>,
+  maxPairs: number,
+): { pairs: DialoguePair[]; pageKeys: string[] } {
+  const covered = new Set(coveredPages);
+  const pairs: DialoguePair[] = [];
+  const pageKeys: string[] = [];
+  images.forEach((_, i) => {
+    const { key, pairs: page } = pagePairs(images, cache, i);
+    if (page.length === 0) return;
+    pageKeys.push(key);
+    if (!covered.has(key)) pairs.push(...page);
+  });
+  return { pairs: pairs.slice(-maxPairs), pageKeys };
 }
 
 export interface TranslationContext {

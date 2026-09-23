@@ -6,6 +6,11 @@ export interface WorkNotes {
   /** 이 노트를 만들 때 번역되어 있던 페이지 수 (다음 갱신 시점 판단용) */
   pageCount: number;
   updatedAt: string;
+  /**
+   * 이 노트에 이미 반영된 페이지(번역 기록 키). 자동 갱신 때는 여기 없는 페이지의 대사만 보내
+   * 같은 대사를 10장마다 되풀이해 보내지 않습니다. (예전 노트에는 없음 → 한 번은 최근 대사로 전체 정리)
+   */
+  coveredPages?: string[];
 }
 
 export const workNotesKey = (workName: string) => `${NOTES_PREFIX}${workName || 'default'}`;
@@ -20,6 +25,7 @@ export function loadWorkNotes(workName: string): WorkNotes | null {
       text: parsed.text,
       pageCount: typeof parsed.pageCount === 'number' ? parsed.pageCount : 0,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+      ...(Array.isArray(parsed.coveredPages) ? { coveredPages: parsed.coveredPages.filter((k: unknown) => typeof k === 'string') } : {}),
     };
   } catch {
     return null;

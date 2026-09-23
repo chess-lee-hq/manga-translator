@@ -185,7 +185,7 @@ export function buildWorkNotesPrompt(
   existingGlossary: string[] = [],
 ): string {
   const known = existingGlossary.slice(0, 60);
-  return `너는 만화 번역 감수자야. 아래는 같은 작품에서 지금까지 번역한 대사들이야. 두 가지를 만들어.
+  return `너는 만화 번역 감수자야. 아래는 같은 작품에서 번역한 대사들이야. 두 가지를 만들어.
 
 # 1) 작품 노트 (notes)
 다음 페이지를 번역할 때 말투와 표기를 일관되게 유지할 수 있도록 한국어로 정리해.
@@ -195,10 +195,10 @@ export function buildWorkNotesPrompt(
 
 # 2) 단어장 후보 (glossary)
 번역이 흔들리면 안 되는 고유명사(인물 이름·별명, 지명, 조직, 기술·필살기 이름, 작품 고유 용어)만 골라.
-- 대사 원문에 2번 이상 나온 것만. 일반 단어·감탄사·조사는 넣지 마.
+- 되풀이해 나오는 것만 (기존 노트에 나온 이름이 대사에 다시 나오면 포함). 일반 단어·감탄사·조사는 넣지 마.
 - original은 요미가나 괄호 없이 원문 표기 그대로, translated는 지금까지 번역에서 쓴 한국어 표기.
 - 최대 10개. 없으면 빈 배열.
-${known.length ? `- 이미 단어장에 있는 원문은 제외: ${known.join(', ')}\n` : ''}${previousNotes?.trim() ? `\n# 기존 노트 (새 대사를 반영해 갱신해)\n${previousNotes.trim()}\n` : ''}${correctionSection ? `\n# ${correctionSection.replace(/^## /, '')}\n(사용자가 고친 방향에서 말투·호칭·표기 규칙을 읽어내 노트에 반영해)\n` : ''}
-# 지금까지의 대사 (원문 → 번역)
+${known.length ? `- 이미 단어장에 있는 원문은 제외: ${known.join(', ')}\n` : ''}${previousNotes?.trim() ? `\n# 기존 노트 (아래 대사를 반영해 갱신해. 아래 대사에 안 나온 인물·호칭·표기도 지우지 말고 유지하고, 500자를 넘으면 덜 중요한 것부터 줄여)\n${previousNotes.trim()}\n` : ''}${correctionSection ? `\n# ${correctionSection.replace(/^## /, '')}\n(사용자가 고친 방향에서 말투·호칭·표기 규칙을 읽어내 노트에 반영해)\n` : ''}
+# 반영할 대사 (원문 → 번역)
 ${pairs.map(p => `- ${p.original || '(원문 없음)'} → ${p.translated}`).join('\n')}`;
 }

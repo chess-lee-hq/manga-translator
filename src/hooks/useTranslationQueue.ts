@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { translatePage, translatePageBatch } from '../lib/translatePage';
-import { buildContextInstruction, collectRecentPairs } from '../lib/translationContext';
+import { buildContextInstruction, collectRecentPairs, recentPairLimit } from '../lib/translationContext';
 import type { Correction } from '../lib/corrections';
 import type { PageError, TranslationCache, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -84,7 +84,7 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
     const runResults = new Map<string, TranslationResult[]>();
     const contextFor = (pageIndex: number) => {
       const cache = runResults.size > 0 ? { ...translationCache, ...Object.fromEntries(runResults) } : translationCache;
-      return buildContextInstruction(notes, collectRecentPairs(images, cache, pageIndex), corrections);
+      return buildContextInstruction(notes, collectRecentPairs(images, cache, pageIndex, recentPairLimit(notes)), corrections);
     };
 
     const finish = (job: typeof jobs[number], results: TranslationResult[]) => {

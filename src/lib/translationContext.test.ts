@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TranslationCache, TranslationResult, UploadedImage } from '../types';
 import { buildCacheKey } from './cacheKey';
-import { buildContextInstruction, collectRecentPairs } from './translationContext';
+import { buildContextInstruction, collectRecentPairs, collectUnsummarizedPairs, recentPairLimit } from './translationContext';
 
 const page = (name: string): UploadedImage => ({
   src: '', file: new File([], name), mimeType: 'image/jpeg', sortKey: name, width: 800, height: 1200, isSpread: false,
@@ -68,5 +68,30 @@ describe('buildContextInstruction', () => {
     expect(context).toBe('');
     expect(recentContext).toContain('이어지는 맥락');
     expect(recentContext).toContain('- あ → 가');
+  });
+});
+
+describe('collectUnsummarizedPairs — 작품 노트에 아직 반영 안 된 페이지의 대사', () => {
+  const images = [0, 1, 2].map(i => ({ file: { name: `${i}.jpg`, size: 10 + i } })) as any[];
+  const keyOf = (i: number) => buildCacheKey(`${i}.jpg`, 10 + i);
+  const cache = {
+    [keyOf(0)]: [{ original_text: 'あ', translated_text: '가' }],
+    [keyOf(1)]: [{ original_text: 'い', translated_text: '나' }],
+    [keyOf(2)]: [{ original_text: 'う', translated_text: '다' }],
+  } as any;
+
+  it('반영된 페이지는 빼고 새 페이지 대사만, 번역된 페이지 키는 모두 돌려준다', () => {
+    const { pairs, pageKeys } = collectUnsummarizedPairs(images, cache, [keyOf(0), keyOf(1)], 60);
+    expect(pairs).toEqual([{ original: 'う', translated: '다' }]);
+    expect(pageKeys).toEqual([keyOf(0), keyOf(1), keyOf(2)]);
+  });
+
+  it('너무 많으면 최근 대사만 남긴다', () => {
+    expect(collectUnsummarizedPairs(images, cache, [], 2).pairs.map(p => p.original)).toEqual(['い', 'う']);
+  });
+
+  it('노트가 있으면 요청마다 붙이는 직전 대사를 줄인다', () => {
+    expect(recentPairLimit('- 반말')).toBeLessThan(recentPairLimit(undefined));
+    expect(recentPairLimit('  ')).toBe(recentPairLimit(undefined));
   });
 });

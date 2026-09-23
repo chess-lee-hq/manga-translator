@@ -14,11 +14,13 @@ export function useWorkNotes(workName: string) {
   }
   const notes = state.workName === workName ? state.notes : loadWorkNotes(workName);
 
-  const saveNotes = (text: string, pageCount?: number) => {
+  const saveNotes = (text: string, pageCount?: number, coveredPages?: string[]) => {
+    const covered = coveredPages ?? notes?.coveredPages;
     const next: WorkNotes = {
       text,
       pageCount: pageCount ?? notes?.pageCount ?? 0,
       updatedAt: new Date().toISOString(),
+      ...(covered ? { coveredPages: covered } : {}),
     };
     saveWorkNotes(workName, next);
     setState({ workName, notes: next });

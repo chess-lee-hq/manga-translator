@@ -32,7 +32,7 @@ import { normalizeEllipsis } from './lib/ellipsis';
 import { retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
 import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
 import { filterCandidates } from './lib/glossaryCandidates';
-import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
+import { buildContextInstruction, collectRecentPairs, collectUnsummarizedPairs, recentPairLimit } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
 import { clearLegacyGlossary, loadLegacyGlossary, mergeIntoStoredGlossary } from './lib/glossaryStore';
 import { setUsageWork } from './lib/usageLog';
@@ -47,6 +47,8 @@ const NOTES_FIRST_PAGES = 3;
 const NOTES_REFRESH_PAGES = 10;
 /** 작품 노트를 만들 때 참고할 최대 대사 수 */
 const NOTES_SOURCE_PAIRS = 60;
+/** 단어장 후보가 "대사에 2번 이상 나왔는지" 확인할 때 훑는 대사 수 (요청에는 안 보내므로 넉넉히) */
+const CANDIDATE_CHECK_PAIRS = 1000;
 const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
@@ -175,10 +177,18 @@ function App() {
 
   const translatedPageCount = allImages.filter(img => translationCache[getCacheKey(img.file)]?.length).length;
 
-  /** 지금까지 번역된 대사로 작품 노트를 다시 정리하고, 단어장 후보도 함께 받습니다. (메인 엔진에 요청 1회) */
+  /**
+   * 번역된 대사로 작품 노트를 갱신하고, 단어장 후보도 함께 받습니다. (메인 엔진에 요청 1회)
+   * - 자동 갱신: 노트에 아직 반영되지 않은 페이지의 대사만 보냄 (기존 노트 + 새 대사 → 갱신)
+   * - 직접 누른 "다시 정리": 최근 대사 전체로 새로 정리
+   */
   const regenerateWorkNotes = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (notesBusyRef.current || !activeKey || allImages.length === 0) return;
-    const pairs = collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
+    const incremental = silent && !!notes?.coveredPages;
+    const { pairs: newPairs, pageKeys } = collectUnsummarizedPairs(
+      allImages, translationCache, incremental ? notes!.coveredPages! : [], NOTES_SOURCE_PAIRS,
+    );
+    const pairs = incremental ? newPairs : collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS);
     if (pairs.length === 0) return;
 
     notesBusyRef.current = true;
@@ -189,9 +199,11 @@ function App() {
       const result = mainEngine === 'gemini'
         ? await summarizeWorkNotes(googleKey, geminiVersion, pairs, notes?.text, correctionSection, known)
         : await summarizeWorkNotesOpenAI(openAiVersion, openaiKey, pairs, notes?.text, correctionSection, known);
-      if (result.notes) saveNotes(result.notes, translatedPageCount);
+      if (result.notes) saveNotes(result.notes, translatedPageCount, pageKeys);
 
-      const found = filterCandidates(result.glossary, pairs.map(p => p.original), glossary, dismissedCandidates);
+      // 보낸 대사가 새 페이지 몇 장뿐이어도 "2번 이상 나왔는지"는 이 작품의 번역 기록 전체에서 셈
+      const allOriginals = collectRecentPairs(allImages, translationCache, allImages.length, CANDIDATE_CHECK_PAIRS).map(p => p.original);
+      const found = filterCandidates(result.glossary, allOriginals, glossary, dismissedCandidates);
       if (found.length > 0) addCandidates(found, glossary);
       console.info(`[glossary] 모델 제안 ${result.glossary.length}개 중 후보 ${found.length}개 (대사에 2번 이상 나오고 단어장에 없는 것만)`);
     } catch (err: any) {
@@ -425,7 +437,7 @@ function App() {
   /** 재번역·새 영역 번역에도 자동 번역과 같은 맥락(작품 노트·앞 대사·내 교정)을 넣음 */
   const settingsWithContext = (imgIndex: number): TranslationSettings => ({
     ...settings,
-    ...buildContextInstruction(notes?.text, collectRecentPairs(allImages, translationCache, imgIndex), corrections),
+    ...buildContextInstruction(notes?.text, collectRecentPairs(allImages, translationCache, imgIndex, recentPairLimit(notes?.text)), corrections),
   });
 
   const handleCreateBox = async (imgIndex: number, box: Box2d) => {
