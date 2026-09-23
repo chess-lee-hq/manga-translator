@@ -46,9 +46,14 @@ export interface GridTranslationResult {
   review?: string;
 }
 
-type GeminiVersion = '3.6' | '3.7';
+type GeminiVersion = '3.6' | '3.7' | '3.8';
 
-const modelNameFor = (geminiVersion: GeminiVersion) => (geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash');
+const GEMINI_MODELS: Record<GeminiVersion, string> = {
+  '3.6': 'gemini-3.6-flash',
+  '3.7': 'gemini-3.7-flash',
+  '3.8': 'gemini-3.8-flash',
+};
+const modelNameFor = (geminiVersion: GeminiVersion) => GEMINI_MODELS[geminiVersion] ?? GEMINI_MODELS['3.6'];
 
 /**
  * Gemini REST API를 직접 부릅니다. (예전에는 @google/genai SDK를 썼지만, 쓰는 기능이 generateContent 하나뿐이라

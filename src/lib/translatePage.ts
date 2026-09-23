@@ -119,7 +119,7 @@ function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPrompt
     });
 }
 
-function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7', parts: GridPromptParts): GridRequest {
+function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7' | '3.8', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
     translateGridImage(apiKey, grid.images.map(inlineImage), grid.cells.length, version, {
       ...parts,

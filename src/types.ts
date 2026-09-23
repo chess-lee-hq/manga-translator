@@ -13,7 +13,7 @@ export interface UploadedImage {
   isSpread: boolean;
 }
 
-export type GeminiVersion = '3.6' | '3.7';
+export type GeminiVersion = '3.6' | '3.7' | '3.8';
 /** terra = gpt-5.6-terra(기본) / sol = gpt-6-sol(가장 강함) / luna = gpt-6-luna(시험용) */
 export type OpenAiVersion = 'terra' | 'sol' | 'luna';
 /** 1차 번역을 맡는 엔진. 나머지 한 쪽은 품질 검사 재요청(다시 읽기)만 담당 */
