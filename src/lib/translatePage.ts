@@ -1,7 +1,7 @@
 import type { Box2d, OpenAiVersion, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, shortenTranslationGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import type { GridEngine } from './gridLayout';
-import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
+import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
@@ -264,9 +264,11 @@ async function translatePageWithoutBubbles(img: UploadedImage, darkRatio: number
   }
   console.warn('말풍선을 찾지 못해 페이지 전체 인식으로 대체합니다.');
   const { mainEngine, openaiKey, openAiVersion, googleKey, geminiVersion, glossary, context, recentContext } = settings;
+  // 화면용 주소(img.src)는 blob: 주소라, API로 보낼 때만 파일을 base64로 읽음
+  const pageDataUrl = await readFileAsDataURL(img.file);
   const fullPage = mainEngine === 'gemini'
-    ? await translateMangaImage(googleKey, base64Of(img.src), img.mimeType, geminiVersion, { glossary, context, recentContext })
-    : await translateFullPageOpenAI(openAiVersion, openaiKey, img.src, { glossary, context, recentContext });
+    ? await translateMangaImage(googleKey, base64Of(pageDataUrl), img.mimeType, geminiVersion, { glossary, context, recentContext })
+    : await translateFullPageOpenAI(openAiVersion, openaiKey, pageDataUrl, { glossary, context, recentContext });
   const raw = fullPage.map(r => ({ ...r, translated_text: stripTypeTags(r.translated_text ?? '') }));
   return orderForSpread(sanitizeResults(raw) ?? [], !!img.isSpread);
 }

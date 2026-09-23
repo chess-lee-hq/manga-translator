@@ -28,7 +28,7 @@ import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
-import { appendImages, importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
+import { appendImages, importBackupZip, importFiles, mergeImages, revokeImageUrls, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { normalizeEllipsis } from './lib/ellipsis';
 import { rereadBubble, retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
@@ -121,6 +121,14 @@ function App() {
     return identity;
   }, [rawWorkName, workAliases]);
   const workName = work.key;
+
+  // 화면에서 내린 페이지(작업 닫기·새로 열기·삭제)의 이미지 주소(blob:)를 해제해 메모리를 돌려줌
+  const shownSrcsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = new Set(allImages.map(img => img.src));
+    revokeImageUrls([...shownSrcsRef.current].filter(src => !current.has(src)).map(src => ({ src })));
+    shownSrcsRef.current = current;
+  }, [allImages]);
   const hasOpenWork = allImages.length > 0;
   // 토큰 사용량을 작품별로도 쌓도록 지금 작품을 알려 줌 (아무것도 안 열었으면 세션 합계에만)
   useEffect(() => {
@@ -321,6 +329,7 @@ function App() {
   const resolvePendingImport = (placement: 'replace' | 'append' | null) => {
     const result = pendingImport;
     setPendingImport(null);
+    if (result && !placement) revokeImageUrls(result.images);
     if (!result || !placement) return;
     const { warnings } = applyImport(result, placement);
     if (warnings.length > 0) setError(warnings.join(' '));

@@ -12,6 +12,7 @@ vi.mock('./gemini', () => ({ translateGridImage: vi.fn(), translateMangaImage: v
 vi.mock('./imageUtils', async () => ({
   ...(await vi.importActual<typeof import('./imageUtils')>('./imageUtils')),
   loadImage,
+  readFileAsDataURL: vi.fn(async () => 'data:image/png;base64,X'),
   createGridImage: vi.fn(async () => null),
 }));
 

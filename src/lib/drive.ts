@@ -153,7 +153,7 @@ export async function downloadFromGoogleDrive(accessToken: string, fileId: strin
 }
 
 export async function createMangaZip(
-  images: { file: File; src: string; mimeType: string }[],
+  images: { file: File; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number = 0,
   glossary?: Record<string, string>,
@@ -179,8 +179,7 @@ export async function createMangaZip(
     const ext = img.file.name.split('.').pop() || 'jpg';
     const filename = `page_${String(i).padStart(3, '0')}.${ext}`;
     
-    const base64Data = img.src.split(',')[1];
-    imagesFolder.file(filename, base64Data, { base64: true });
+    imagesFolder.file(filename, await img.file.arrayBuffer());
 
     const key = buildCacheKey(img.file.name, img.file.size);
     const result = translations[key]; // Do not default to [] if undefined
@@ -198,42 +197,33 @@ export async function createMangaZip(
 }
 
 export async function extractMangaZip(zipBlob: Blob): Promise<{
-  images: { file: File; src: string; mimeType: string }[],
+  images: { file: File; mimeType: string }[],
   translations: Record<string, TranslationResult[]>,
   lastReadPage: number,
   glossary?: Record<string, string>,
   notes?: string,
   corrections?: Correction[],
 }> {
-  const zip = await JSZip.loadAsync(zipBlob);
+  const zip = await JSZip.loadAsync(await zipBlob.arrayBuffer());
   const dataFile = zip.file("manga_data.json");
   if (!dataFile) throw new Error("Invalid manga save file: missing manga_data.json");
   
   const manifestStr = await dataFile.async("string");
   const manifest: MangaSaveData = JSON.parse(manifestStr);
   
-  const loadedImages: { file: File; src: string; mimeType: string }[] = [];
+  const loadedImages: { file: File; mimeType: string }[] = [];
   const loadedTranslations: Record<string, TranslationResult[]> = {};
   
   for (const imgData of manifest.images) {
     const imgFile = zip.file(`images/${imgData.filename}`);
     if (!imgFile) continue;
 
-    const base64Content = await imgFile.async("base64");
-    const dataUri = `data:${imgData.mimeType};base64,${base64Content}`;
-    
-    const byteString = atob(base64Content);
-    const ab = new ArrayBuffer(byteString.length);
-    const ia = new Uint8Array(ab);
-    for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-    }
-    const blob = new Blob([ab], { type: imgData.mimeType });
+    const bytes = await imgFile.async("uint8array");
+    const blob = new Blob([bytes as BlobPart], { type: imgData.mimeType });
     const file = new File([blob], imgData.filename, { type: imgData.mimeType, lastModified: Date.now() });
 
     loadedImages.push({
       file,
-      src: dataUri,
       mimeType: imgData.mimeType
     });
 

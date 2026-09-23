@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { readFileAsDataURL } from '../lib/imageUtils';
 import { toUploadedImage } from '../lib/importFiles';
 import { clearSession, loadSession, saveSession, updateSessionMeta } from '../lib/sessionStore';
 import type { UploadedImage } from '../types';
@@ -67,7 +66,7 @@ export function useSessionPersistence({ images, loadedFilename, driveFileName, c
         for (const page of session.pages) {
           const file = new File([page.blob], page.name, { type: page.mimeType, lastModified: page.lastModified });
           try {
-            restored.push(await toUploadedImage(file, await readFileAsDataURL(file), page.sortKey, page.mimeType));
+            restored.push(await toUploadedImage(file, page.sortKey, page.mimeType));
           } catch (err) {
             console.warn('저장된 페이지 복원 실패:', page.name, err);
           }

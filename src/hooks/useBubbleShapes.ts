@@ -20,7 +20,7 @@ export function useBubbleShapes(pages: { src: string; results: TranslationResult
   const pending = enabled
     ? pages.filter(page => page.results.length > 0 && cache.get(page.src)?.signature !== signatureOf(page.results))
     : [];
-  const pendingKey = pending.map(page => `${page.src.length}:${signatureOf(page.results)}`).join('#');
+  const pendingKey = pending.map(page => `${page.src}:${signatureOf(page.results)}`).join('#');
 
   useEffect(() => {
     if (pending.length === 0) return;

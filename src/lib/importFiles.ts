@@ -3,7 +3,7 @@ import type { Correction } from './corrections';
 import type { Glossary, TranslationCache, UploadedImage } from '../types';
 import { extractMangaZip } from './drive';
 import { basename, isImageEntryPath, mimeTypeFromPath, naturalCompare, stripArchiveExtension } from './fileImport';
-import { loadImage, readFileAsDataURL } from './imageUtils';
+import { loadImage } from './imageUtils';
 import { sanitizeResults } from './results';
 
 export interface ImportResult {
@@ -25,8 +25,20 @@ export interface ImportResult {
   jsonFailed: boolean;
 }
 
-export async function toUploadedImage(file: File, src: string, sortKey: string, mimeType: string): Promise<UploadedImage> {
-  const imageObj = await loadImage(src);
+/**
+ * 파일을 화면에 띄울 이미지로 만듭니다.
+ * 주소는 파일을 가리키는 object URL(blob:)이라, 예전처럼 base64 글자로 통째로 메모리에 올리지 않습니다.
+ * (100장이면 수백 MB가 문자열로 떠 있었음) API로 보낼 때만 그 페이지를 base64로 읽고, 작업을 닫으면 해제합니다.
+ */
+export async function toUploadedImage(file: File, sortKey: string, mimeType: string): Promise<UploadedImage> {
+  const src = URL.createObjectURL(file);
+  let imageObj: HTMLImageElement;
+  try {
+    imageObj = await loadImage(src);
+  } catch (error) {
+    URL.revokeObjectURL(src);
+    throw error;
+  }
   return {
     src,
     file,
@@ -39,12 +51,12 @@ export async function toUploadedImage(file: File, src: string, sortKey: string, 
 }
 
 /** 이미지 후보를 읽습니다. 한 장이 깨져도 나머지는 계속 읽고, 실패 수를 돌려줍니다. */
-async function loadCandidates(candidates: { file: File; sortKey: string; src?: string; mimeType?: string }[]) {
+async function loadCandidates(candidates: { file: File; sortKey: string; mimeType?: string }[]) {
   const images: UploadedImage[] = [];
   let failed = 0;
-  for (const { file, sortKey, src, mimeType } of candidates) {
+  for (const { file, sortKey, mimeType } of candidates) {
     try {
-      images.push(await toUploadedImage(file, src ?? (await readFileAsDataURL(file)), sortKey, mimeType || file.type || mimeTypeFromPath(file.name)));
+      images.push(await toUploadedImage(file, sortKey, mimeType || file.type || mimeTypeFromPath(file.name)));
     } catch (err) {
       console.warn('이미지 로드 실패:', file.name, err);
       failed++;
@@ -56,7 +68,7 @@ async function loadCandidates(candidates: { file: File; sortKey: string; src?: s
 /** 백업 ZIP(manga_data.json 포함)을 읽습니다. */
 export async function importBackupZip(zipBlob: Blob, name: string): Promise<ImportResult> {
   const { images, translations, lastReadPage, glossary, notes, corrections } = await extractMangaZip(zipBlob);
-  const loaded = await loadCandidates(images.map(img => ({ file: img.file, sortKey: img.file.name, src: img.src, mimeType: img.mimeType })));
+  const loaded = await loadCandidates(images.map(img => ({ file: img.file, sortKey: img.file.name, mimeType: img.mimeType })));
   return {
     mode: 'backup',
     images: loaded.images,
@@ -140,4 +152,11 @@ export function mergeImages<T extends { file: { name: string; size: number }; so
     if (!combined.some(e => e.file.name === image.file.name && e.file.size === image.file.size)) combined.push(image);
   }
   return combined.sort((a, b) => naturalCompare(a.sortKey, b.sortKey));
+}
+
+/** 화면에서 내린 이미지의 object URL을 해제합니다. (data: 주소는 해제할 것이 없음) */
+export function revokeImageUrls(images: { src: string }[]) {
+  images.forEach(image => {
+    if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
+  });
 }
