@@ -29,7 +29,7 @@ import { stripArchiveExtension } from './lib/fileImport';
 import { appendImages, importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { normalizeEllipsis } from './lib/ellipsis';
-import { retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
+import { rereadBubble, retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
 import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrections } from './lib/corrections';
 import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs, collectUnsummarizedPairs, recentPairLimit } from './lib/translationContext';
@@ -487,6 +487,29 @@ function App() {
     }
   };
 
+  /** 원문을 잘못 읽은 말풍선: 이미지에서 고해상도로 다시 읽고 번역 (품질 검사 재요청과 같은 경로) */
+  const handleReread = async (imgIndex: number, id: string) => {
+    const key = keyOf(imgIndex);
+    const target = translationCache[key]?.find(r => r.id === id);
+    if (!target) return;
+    setBubblePending(id, true);
+    try {
+      const { originalText, translatedText, review } = await rereadBubble(allImages[imgIndex], target.box_2d, settingsWithContext(imgIndex));
+      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText, review } : r)));
+    } catch (err: any) {
+      alert('다시 읽기 실패: ' + err.message);
+    } finally {
+      setBubblePending(id, false);
+    }
+  };
+
+  /** 원문을 직접 고친 뒤 그 원문으로 다시 번역 */
+  const handleEditOriginal = async (imgIndex: number, id: string, originalText: string) => {
+    const key = keyOf(imgIndex);
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, original_text: originalText } : r)));
+    await handleRetranslate(imgIndex, id, originalText);
+  };
+
   /** 말풍선에 넘치는 번역문을 짧게 다시 번역. 결과가 오히려 길면 바꾸지 않음 */
   const handleShorten = async (imgIndex: number, id: string, maxChars: number) => {
     const key = keyOf(imgIndex);
@@ -806,6 +829,7 @@ function App() {
                 onDelete={handleDeleteBubble}
                 onSetBubbleFit={handleSetBubbleFit}
                 onShorten={handleShorten}
+                onReread={handleReread}
                 onCreateBox={handleCreateBox}
                 onDownloadPage={handleDownloadPage}
                 footer={
@@ -841,6 +865,8 @@ function App() {
                   onDismissReview={handleDismissReview}
                   onDelete={handleDeleteBubble}
                   onRetranslate={handleRetranslate}
+                  onReread={handleReread}
+                  onEditOriginal={handleEditOriginal}
                   onAddToGlossary={(original, translated) => setGlossaryDraft({ original, translated })}
                   onReorder={handleReorder}
                   onToggleDisplayMode={handleToggleDisplayMode}

@@ -36,6 +36,8 @@ interface MangaViewerProps {
   onSetBubbleFit: (imgIndex: number, id: string, enabled: boolean) => void;
   /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역 */
   onShorten: (imgIndex: number, id: string, maxChars: number) => void;
+  /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
+  onReread: (imgIndex: number, id: string) => void;
   onCreateBox: (imgIndex: number, box: Box2d) => void;
   onDownloadPage: (imgIndex: number) => void;
   footer: ReactNode;
@@ -64,7 +66,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
   hoveredBubble, onHoverBubble, onBoxChange, onToggleDisplayMode, onSetTextDirection,
-  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onSetBubbleFit, onShorten, onCreateBox, onDownloadPage, footer,
+  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onSetBubbleFit, onShorten, onReread, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -267,6 +269,7 @@ export function MangaViewer({
                                     displayMode="tag"
                                     onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                                     onDelete={() => onDelete(imgIndex, result.id)}
+                                    onReread={() => onReread(imgIndex, result.id)}
                                   >
                                     <span className="text-[10px] font-bold text-indigo-700 bg-white/80 px-1 rounded pointer-events-none">원문 영역</span>
                                   </BoxEditor>
@@ -342,6 +345,7 @@ export function MangaViewer({
                                   displayMode="cover"
                                   onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
                                   onDelete={() => onDelete(imgIndex, result.id)}
+                                  onReread={() => onReread(imgIndex, result.id)}
                                   {...bubbleEditProps}
                                 >
                                   {null}
@@ -399,6 +403,7 @@ export function MangaViewer({
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
                                 onDelete={() => onDelete(imgIndex, result.id)}
+                                onReread={() => onReread(imgIndex, result.id)}
                                 {...bubbleEditProps}
                               >
                                 {textContent}

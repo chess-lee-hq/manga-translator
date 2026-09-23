@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ArrowUpDown, MessageCircle, Scissors, Square, Tag, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, MessageCircle, ScanText, Scissors, Square, Tag, Trash2, Undo2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface BoxEditorProps {
@@ -19,6 +19,8 @@ interface BoxEditorProps {
   /** 번역문이 넘친 항목: 박스 모서리에 주황 점 + 툴바에 "짧게 다시 번역" */
   warning?: string;
   onShorten?: () => void;
+  /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
+  onReread?: () => void;
   children: React.ReactNode;
 }
 
@@ -41,7 +43,7 @@ function ToolbarButton({ onClick, title, danger, children }: { onClick: () => vo
 export function BoxEditor({
   initialBox, onChange, displayMode, onToggleDisplayMode,
   textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition,
-  bubbleFit, onToggleBubbleFit, warning, onShorten, children,
+  bubbleFit, onToggleBubbleFit, warning, onShorten, onReread, children,
 }: BoxEditorProps) {
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
@@ -99,7 +101,7 @@ export function BoxEditor({
   const height = `${((box[2] - box[0]) / 1000) * 100}%`;
   const width = `${((box[3] - box[1]) / 1000) * 100}%`;
 
-  const hasToolbar = !!onToggleDisplayMode || !!onToggleBubbleFit || !!onToggleTextDirection || !!onShorten || !!onResetPosition || !!onDelete;
+  const hasToolbar = !!onToggleDisplayMode || !!onToggleBubbleFit || !!onToggleTextDirection || !!onShorten || !!onReread || !!onResetPosition || !!onDelete;
 
   return (
     <div
@@ -139,6 +141,11 @@ export function BoxEditor({
               <Scissors size={12} className="text-amber-300" />
             </ToolbarButton>
           )}
+          {onReread && (
+            <ToolbarButton onClick={onReread} title="이미지에서 다시 읽기 — 원문을 잘못 읽었을 때 이 말풍선만 고해상도로 다시 읽고 번역 (다른 엔진)">
+              <ScanText size={12} />
+            </ToolbarButton>
+          )}
           {onResetPosition && (
             <ToolbarButton onClick={onResetPosition} title="위치·크기를 자동 배치로 되돌리기">
               <Undo2 size={12} />
@@ -146,7 +153,7 @@ export function BoxEditor({
           )}
           {onDelete && (
             <>
-              {(onToggleDisplayMode || onToggleBubbleFit || onToggleTextDirection || onShorten || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
+              {(onToggleDisplayMode || onToggleBubbleFit || onToggleTextDirection || onShorten || onReread || onResetPosition) && <div className="w-px h-3 bg-white/25 mx-0.5" />}
               <ToolbarButton onClick={onDelete} title="이 번역 삭제하기" danger>
                 <Trash2 size={12} />
               </ToolbarButton>

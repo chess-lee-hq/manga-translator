@@ -7,7 +7,7 @@ import { sortTextByReadingOrder } from './readingOrder';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
 import { sanitizeResults } from './results';
-import { applyQualityRetry, stripTypeTags, type QualityReport } from './translationQuality';
+import { applyQualityRetry, assessCell, REVIEW_LABELS, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
 import type { BoundingBox } from './yoloPostprocess';
 
@@ -349,6 +349,36 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
 
   if (!cell) return { originalText: '...', translatedText: '' };
   return { originalText: cell.original_text || '...', translatedText: normalizeEllipsis(cell.translated_text) };
+}
+
+/**
+ * 말풍선 하나를 이미지에서 **다시 읽습니다** (대본의 "이미지에서 다시 읽기").
+ * 원문을 잘못 읽은 경우를 위한 것이라, 품질 검사 재요청과 같은 경로로 보냅니다:
+ * 2배 해상도(600px) PNG · 메인이 아닌 엔진(없으면 메인의 더 강한 모델).
+ */
+export async function rereadBubble(
+  img: UploadedImage,
+  box: Box2d,
+  settings: TranslationSettings,
+): Promise<{ originalText: string; translatedText: string; review?: string }> {
+  requireKeys(settings);
+  const imgElement = await loadImage(img.src);
+  const [ymin, xmin, ymax, xmax] = box.map((v, i) => (v / 1000) * (i % 2 === 0 ? img.height : img.width));
+  const grid = await createGridImage(
+    [{ pageId: 'reread', image: imgElement, boxes: [{ xmin, ymin, xmax, ymax, classId: 3, confidence: 1 }] }],
+    { plan: retryPlan(1), cellSize: RETRY_CELL_SIZE, format: 'png' },
+  );
+  if (!grid) throw new Error('크롭 실패');
+
+  const [cell] = await retryRequesterFor(settings)(grid, undefined);
+  if (!cell || !cell.original_text?.trim()) throw new Error('글자를 읽지 못했습니다.');
+  const cleaned = { ...cell, translated_text: stripTypeTags(cell.translated_text ?? '') };
+  const issue = assessCell(cleaned);
+  return {
+    originalText: cleaned.original_text,
+    translatedText: normalizeEllipsis(cleaned.translated_text),
+    ...(issue ? { review: REVIEW_LABELS[issue] } : {}),
+  };
 }
 
 /** 원문 한 문장만 다시 번역합니다. (메인 엔진이 처리) */

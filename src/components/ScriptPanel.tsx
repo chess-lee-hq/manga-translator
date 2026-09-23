@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpen, Check, Edit2, GripVertical, Key, Loader2, MessageSquareText, RefreshCw, Trash2, X, ZapOff } from 'lucide-react';
+import { AlertTriangle, BookOpen, Check, Edit2, GripVertical, Key, Languages, Loader2, MessageSquareText, RefreshCw, ScanText, Trash2, X, ZapOff } from 'lucide-react';
 import { useState } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { resolveDisplayMode } from '../lib/bubbleDisplay';
@@ -23,6 +23,10 @@ interface ScriptPanelProps {
   onDismissReview: (key: string, id: string) => void;
   onDelete: (imgIndex: number, id: string) => void;
   onRetranslate: (imgIndex: number, id: string, originalText: string) => void;
+  /** 원문을 잘못 읽었을 때: 이미지에서 고해상도로 다시 읽고 번역 */
+  onReread: (imgIndex: number, id: string) => void;
+  /** 원문을 직접 고치면 고친 원문으로 다시 번역 */
+  onEditOriginal: (imgIndex: number, id: string, originalText: string) => void;
   onAddToGlossary: (original: string, translated: string) => void;
   onReorder: (imgIndex: number, fromIndex: number, toIndex: number) => void;
   onToggleDisplayMode: (imgIndex: number, id: string) => void;
@@ -51,16 +55,21 @@ function renderFurigana(text: string) {
 
 export function ScriptPanel({
   images, visibleIndices, viewMode, translationCache, translatingKeys, pageErrors, hasApiKey, mainEngineLabel, autoTranslate,
-  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDismissReview, onDelete, onRetranslate, onAddToGlossary, onReorder, onToggleDisplayMode,
+  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDismissReview, onDelete, onRetranslate, onReread, onEditOriginal, onAddToGlossary, onReorder, onToggleDisplayMode,
   onRetryPage, onTranslatePage, onResumeFromEmpty,
 }: ScriptPanelProps) {
-  const [editingBubble, setEditingBubble] = useState<{ key: string; id: string } | null>(null);
+  /** field: 번역문을 고치는지, 원문을 고치는지 (원문을 고치면 저장할 때 다시 번역) */
+  const [editingBubble, setEditingBubble] = useState<{ key: string; id: string; imgIndex: number; field: 'translation' | 'original' } | null>(null);
   const [editingText, setEditingText] = useState('');
   const [draggedItem, setDraggedItem] = useState<{ imgIndex: number; itemIndex: number } | null>(null);
 
   const saveEdit = () => {
     if (!editingBubble) return;
-    onSaveEdit(editingBubble.key, editingBubble.id, editingText);
+    if (editingBubble.field === 'original') {
+      if (editingText.trim()) onEditOriginal(editingBubble.imgIndex, editingBubble.id, editingText.trim());
+    } else {
+      onSaveEdit(editingBubble.key, editingBubble.id, editingText);
+    }
     setEditingBubble(null);
   };
 
@@ -196,6 +205,9 @@ export function ScriptPanel({
                     <div className="flex flex-col flex-1">
                       {editingBubble?.id === result.id ? (
                         <div className="flex flex-col gap-2">
+                          {editingBubble.field === 'original' && (
+                            <span className="text-[11px] text-gray-500">원문(일본어) 고치기 — 저장하면 고친 원문으로 다시 번역합니다.</span>
+                          )}
                           <textarea
                             value={editingText}
                             onChange={(e) => setEditingText(e.target.value)}
@@ -272,13 +284,38 @@ export function ScriptPanel({
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            setEditingBubble({ key, id: result.id });
+                            setEditingBubble({ key, id: result.id, imgIndex, field: 'translation' });
                             setEditingText(result.translated_text);
                           }}
                           title="직접 번역 텍스트 수정하기"
                           className="p-1 hover:text-green-500 hover:bg-green-50 rounded transition-colors relative z-10"
                         >
                           <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEditingBubble({ key, id: result.id, imgIndex, field: 'original' });
+                            setEditingText(result.original_text);
+                          }}
+                          disabled={isPending}
+                          title="원문(일본어) 고치기 — 잘못 읽은 글자를 고치면 그 원문으로 다시 번역"
+                          className="p-1 hover:text-teal-600 hover:bg-teal-50 rounded transition-colors disabled:opacity-50 relative z-10"
+                        >
+                          <Languages size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onReread(imgIndex, result.id);
+                          }}
+                          disabled={isPending}
+                          title="이미지에서 다시 읽기 — 원문을 잘못 읽었을 때 이 말풍선만 고해상도로 다시 읽고 번역 (다른 엔진)"
+                          className="p-1 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors disabled:opacity-50 relative z-10"
+                        >
+                          <ScanText size={14} />
                         </button>
                         <button
                           onClick={(e) => {
