@@ -72,7 +72,8 @@ ${TRANSLATION_RULES}
 
 # 출력
 칸마다 객체 하나씩: id = 칸에 적힌 빨간 번호, jp = 일본어 원문, ko = 한국어 번역.
-글자가 없는 칸은 jp·ko를 모두 빈 문자열("")로 둬.`;
+글자가 없는 칸은 jp·ko를 모두 빈 문자열("")로 둬.
+unsure = 글자가 너무 작거나 흐리거나 잘려서 원문을 확신하지 못한 칸 번호 목록. 확신하면 빈 배열([])로 두고, 정말 애매할 때만 넣어. (그 칸은 고해상도로 다시 읽음)`;
 
 export interface GridPromptOptions extends PromptContextOptions {
   /** 격자 이미지의 칸 수 */

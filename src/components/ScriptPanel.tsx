@@ -19,6 +19,8 @@ interface ScriptPanelProps {
   onHoverBubble: (bubble: HoveredBubble | null) => void;
   pendingBubbleIds: Set<string>;
   onSaveEdit: (key: string, id: string, text: string) => void;
+  /** 검토 표시("원문 불확실" 등)를 확인했으니 지움 */
+  onDismissReview: (key: string, id: string) => void;
   onDelete: (imgIndex: number, id: string) => void;
   onRetranslate: (imgIndex: number, id: string, originalText: string) => void;
   onAddToGlossary: (original: string, translated: string) => void;
@@ -49,7 +51,7 @@ function renderFurigana(text: string) {
 
 export function ScriptPanel({
   images, visibleIndices, viewMode, translationCache, translatingKeys, pageErrors, hasApiKey, mainEngineLabel, autoTranslate,
-  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDelete, onRetranslate, onAddToGlossary, onReorder, onToggleDisplayMode,
+  hoveredBubble, onHoverBubble, pendingBubbleIds, onSaveEdit, onDismissReview, onDelete, onRetranslate, onAddToGlossary, onReorder, onToggleDisplayMode,
   onRetryPage, onTranslatePage, onResumeFromEmpty,
 }: ScriptPanelProps) {
   const [editingBubble, setEditingBubble] = useState<{ key: string; id: string } | null>(null);
@@ -225,6 +227,22 @@ export function ScriptPanel({
                           <p className="text-gray-800 font-medium leading-relaxed break-keep text-[15px]">
                             {result.translated_text}
                           </p>
+                          {result.review && (
+                            <span
+                              className="self-start mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                              title="자동 재요청 뒤에도 확신할 수 없어 한 번 확인해 보면 좋은 칸입니다. 번역을 고치거나 다시 번역하면 사라집니다."
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <AlertTriangle size={10} /> 검토: {result.review}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onDismissReview(key, result.id); }}
+                                title="확인했음 (표시 지우기)"
+                                className="ml-0.5 hover:text-amber-900"
+                              >
+                                <X size={10} />
+                              </button>
+                            </span>
+                          )}
                           {result.original_text && (
                             <p className="text-gray-400 text-[11px] mt-1.5 font-serif leading-snug tracking-wide">
                               {renderFurigana(result.original_text)}

@@ -3,8 +3,8 @@ import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import {
-  fullPageToResult, gridCellToResult, OPENAI_FULL_PAGE_SCHEMA, OPENAI_GRID_SCHEMA, OPENAI_WORK_NOTES_SCHEMA,
-  type FullPageWire, type GridCellWire,
+  fullPageToResult, gridResponseToResults, OPENAI_FULL_PAGE_SCHEMA, OPENAI_GRID_SCHEMA, OPENAI_WORK_NOTES_SCHEMA,
+  type FullPageWire, type GridResponseWire,
 } from './responseShape';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
@@ -144,7 +144,13 @@ export async function translateGridImageOpenAI(
     response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
   }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'));
 
-  return parseCells<GridCellWire>(contentOf(response)).map(gridCellToResult);
+  const content = contentOf(response);
+  if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
+  try {
+    return gridResponseToResults(parseJsonResponse<GridResponseWire>(content));
+  } catch (error: any) {
+    throw new Error('Failed to parse JSON response: ' + error.message);
+  }
 }
 
 /**

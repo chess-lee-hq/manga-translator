@@ -40,7 +40,7 @@ export function mapGridToResults(translations: GridTranslationResult[], cells: G
     const cell = cells.find(c => c.id === t.id);
     if (!cell) continue;
     used.add(t.id);
-    results.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height) });
+    results.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...(t.review ? { review: t.review } : {}) });
   }
   return results;
 }
@@ -60,7 +60,7 @@ export function mapGridToPages(
     used.add(t.id);
     const { width, height } = sizeOf(cell.pageId);
     const list = byPage.get(cell.pageId) ?? [];
-    list.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height) });
+    list.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...(t.review ? { review: t.review } : {}) });
     byPage.set(cell.pageId, list);
   }
   return byPage;
@@ -192,7 +192,7 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
 function logQualityReport(report: QualityReport) {
   const found = Object.values(report.issues).reduce((a, b) => a + (b ?? 0), 0);
   if (found === 0) return;
-  const labels: Record<string, string> = { missing: '응답 누락', empty: '빈 번역', untranslated: '미번역', japanese_left: '일본어 남음' };
+  const labels: Record<string, string> = { missing: '응답 누락', empty: '빈 번역', untranslated: '미번역', japanese_left: '일본어 남음', unsure: '원문 불확실' };
   const detail = Object.entries(report.issues).map(([k, v]) => `${labels[k]} ${v}`).join(', ');
   const outcome = report.retryFailed ? '재요청 실패, 첫 결과 유지' : `재요청 후 ${report.fixed}칸 해결`;
   console.info(`[quality] ${report.checked}칸 중 ${found}칸 문제(${detail}) → ${outcome}`);

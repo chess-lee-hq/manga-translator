@@ -39,5 +39,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
         ? Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, r.tag_scale))
         : undefined,
       fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
+      review: typeof r.review === 'string' && r.review ? r.review : undefined,
     }));
 }

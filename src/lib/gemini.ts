@@ -1,6 +1,6 @@
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
-import { fullPageToResult, gridCellToResult, type FullPageWire, type GridCellWire } from './responseShape';
+import { fullPageToResult, gridResponseToResults, type FullPageWire, type GridResponseWire } from './responseShape';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
@@ -26,6 +26,11 @@ export interface TranslationResult {
    * true면 박스를 고쳤어도 켬, false면 끔 (둥근 사각형 덮기)
    */
   fit_bubble?: boolean;
+  /**
+   * 사람이 한 번 확인해 보면 좋은 칸 (예: "원문 불확실", "일본어 남음").
+   * 자동 재요청 뒤에도 풀리지 않은 경우 남고, 번역을 직접 고치거나 다시 번역하면 지워짐
+   */
+  review?: string;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */
@@ -35,6 +40,10 @@ export interface GridTranslationResult {
   id: number;
   original_text: string;
   translated_text: string;
+  /** 모델이 원문을 확신하지 못한다고 표시한 칸 (응답의 unsure 목록) */
+  unsure?: boolean;
+  /** 품질 검사 뒤에도 남은 문제 (TranslationResult.review로 이어짐) */
+  review?: string;
 }
 
 type GeminiVersion = '3.6' | '3.7';
@@ -294,8 +303,9 @@ export async function translateGridImage(
               required: ['id', 'jp', 'ko'],
             },
           },
+          unsure: { type: Type.ARRAY, items: { type: Type.INTEGER } },
         },
-        required: ['cells'],
+        required: ['cells', 'unsure'],
       },
       temperature: 0.35,
     },
@@ -305,7 +315,7 @@ export async function translateGridImage(
   if (!text) throw new Error("No response from Gemini API");
 
   try {
-    return (parseJsonResponse<{ cells?: GridCellWire[] }>(text).cells ?? []).map(gridCellToResult);
+    return gridResponseToResults(parseJsonResponse<GridResponseWire>(text));
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }

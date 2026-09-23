@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GridCellInfo } from './imageUtils';
-import { applyQualityRetry, assessCell, pickBetter, stripTypeTags } from './translationQuality';
+import { applyQualityRetry, assessCell, pickBetter, stripTypeTags, UNSURE_RETRY_LIMIT } from './translationQuality';
+import { gridResponseToResults } from './responseShape';
 import type { BoundingBox } from './yoloPostprocess';
 
 const r = (id: number, original_text: string, translated_text: string) => ({ id, original_text, translated_text });
@@ -120,5 +121,39 @@ describe('applyQualityRetry', () => {
     );
     expect(translations).toEqual([r(1, 'あ', '가')]);
     expect(retry).not.toHaveBeenCalled();
+  });
+});
+
+describe('모델이 원문을 확신하지 못한 칸 (unsure)', () => {
+  const unsure = (id: number, jp: string, ko: string) => ({ ...r(id, jp, ko), unsure: true });
+
+  it('응답의 unsure 목록에 든 칸에만 표시를 붙인다', () => {
+    const results = gridResponseToResults({ cells: [{ id: 1, jp: 'あ', ko: '가' }, { id: 2, jp: 'い', ko: '나' }], unsure: [2] });
+    expect(results.map(x => !!x.unsure)).toEqual([false, true]);
+    expect(assessCell(results[1])).toBe('unsure');
+  });
+
+  it('불확실한 칸은 다시 읽고, 다시 읽은 결과가 멀쩡하면 그것을 쓰며 검토 표시는 남기지 않는다', async () => {
+    const retry = vi.fn(async () => [r(1, '本当', '정말')]);
+    const { translations } = await applyQualityRetry([r(1, 'あ', '가'), unsure(2, '木当', '목당')], [cell(1), cell(2)], retry);
+    expect(retry).toHaveBeenCalledWith([cell(2)]);
+    expect(translations[1]).toEqual({ id: 2, original_text: '本当', translated_text: '정말' });
+  });
+
+  it('다시 읽어도 불확실하거나 재요청이 실패하면 검토 표시를 남긴다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failing = vi.fn(async () => { throw new Error('429'); });
+    const { translations } = await applyQualityRetry([unsure(1, '木当', '목당')], [cell(1)], failing);
+    expect(translations[0].review).toBe('원문 불확실');
+    expect('unsure' in translations[0]).toBe(false);
+  });
+
+  it('불확실 칸이 많으면 일부만 다시 읽고 나머지는 검토 표시만', async () => {
+    const n = UNSURE_RETRY_LIMIT + 3;
+    const first = Array.from({ length: n }, (_, i) => unsure(i + 1, 'あ', '가'));
+    const retry = vi.fn(async (failed: GridCellInfo[]) => failed.map((_, i) => r(i + 1, 'あ', '가')));
+    const { translations } = await applyQualityRetry(first, first.map(t => cell(t.id)), retry);
+    expect(retry.mock.calls[0][0]).toHaveLength(UNSURE_RETRY_LIMIT);
+    expect(translations.filter(t => t.review).length).toBe(3);
   });
 });

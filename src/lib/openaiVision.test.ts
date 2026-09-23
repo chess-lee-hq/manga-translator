@@ -186,3 +186,18 @@ describe('추론 줄이기 (reasoning_effort)', () => {
     expect(sentBody(fetchMock, 2).reasoning_effort).toBeUndefined();
   });
 });
+
+describe('격자 응답의 unsure 목록', () => {
+  beforeEach(() => {
+    resetUsageTotals();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it('스키마가 unsure를 요구하고, 해당 칸에 표시가 붙는다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse(JSON.stringify({ cells: [{ id: 1, jp: 'あ', ko: '가' }], unsure: [1] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const results = await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
+    expect(sentBody(fetchMock).response_format.json_schema.schema.required).toEqual(['cells', 'unsure']);
+    expect(results[0].unsure).toBe(true);
+  });
+});

@@ -431,7 +431,11 @@ function App() {
     const text = normalizeEllipsis(rawText);
     const edited = translationCache[key]?.find(r => r.id === id);
     if (edited) recordCorrection(edited.original_text, edited.translated_text, text);
-    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: text } : r)));
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: text, review: undefined } : r)));
+  };
+
+  const handleDismissReview = (key: string, id: string) => {
+    updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, review: undefined } : r)));
   };
 
   /** 재번역·새 영역 번역에도 자동 번역과 같은 맥락(작품 노트·앞 대사·내 교정)을 넣음 */
@@ -456,7 +460,7 @@ function App() {
     try {
       const { originalText, translatedText } = await translateRegion(img, box, settingsWithContext(imgIndex));
       updatePageResults(key, results =>
-        results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText } : r)),
+        results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText, review: undefined } : r)),
       );
     } catch (err: any) {
       alert('새 영역 번역 실패: ' + err.message);
@@ -475,7 +479,7 @@ function App() {
     setBubblePending(id, true);
     try {
       const translated = await retranslateText(originalText, settingsWithContext(imgIndex));
-      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: translated } : r)));
+      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, translated_text: translated, review: undefined } : r)));
     } catch (err: any) {
       alert('재번역 실패: ' + err.message);
     } finally {
@@ -834,6 +838,7 @@ function App() {
                   onHoverBubble={setHoveredBubble}
                   pendingBubbleIds={pendingBubbleIds}
                   onSaveEdit={handleSaveEdit}
+                  onDismissReview={handleDismissReview}
                   onDelete={handleDeleteBubble}
                   onRetranslate={handleRetranslate}
                   onAddToGlossary={(original, translated) => setGlossaryDraft({ original, translated })}

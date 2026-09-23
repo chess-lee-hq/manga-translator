@@ -7,9 +7,24 @@ import { stripFurigana } from './prompt';
  * 기계적으로 판정할 수 있는 실패만 골라 해당 칸만 다시 요청합니다. (번역이 "어색한지" 같은 판단은 하지 않음)
  */
 
-/** 재요청 대상이 되는 문제. 숫자가 클수록 심각 */
-export type CellIssue = 'missing' | 'empty' | 'untranslated' | 'japanese_left';
-const SEVERITY: Record<CellIssue, number> = { missing: 4, empty: 3, untranslated: 2, japanese_left: 1 };
+/** 재요청 대상이 되는 문제. 숫자가 클수록 심각 (unsure = 모델 스스로 원문을 확신하지 못한 칸) */
+export type CellIssue = 'missing' | 'empty' | 'untranslated' | 'japanese_left' | 'unsure';
+const SEVERITY: Record<CellIssue, number> = { missing: 4, empty: 3, untranslated: 2, japanese_left: 1, unsure: 0.5 };
+
+/** 재요청 뒤에도 남은 문제를 사람이 볼 수 있게 붙이는 표시 */
+export const REVIEW_LABELS: Record<CellIssue, string> = {
+  missing: '응답 누락',
+  empty: '번역 비어 있음',
+  untranslated: '번역 안 됨',
+  japanese_left: '일본어 남음',
+  unsure: '원문 불확실',
+};
+
+/**
+ * 모델이 "확신 없음"으로 표시한 칸은 요청 하나당 이만큼만 자동으로 다시 읽습니다.
+ * (고해상도·다른 엔진이라 비싸므로, 모델이 지나치게 많이 표시해도 비용이 튀지 않게. 나머지는 검토 표시만)
+ */
+export const UNSURE_RETRY_LIMIT = 8;
 
 const HANGUL = /[가-힣ㄱ-ㆎ]/g;
 // 히라가나·가타카나 (장음 ー·가운뎃점 ・은 한국어 번역에도 쓰일 수 있어 제외)
@@ -38,6 +53,7 @@ export function assessCell(result: GridTranslationResult | undefined): CellIssue
   if (hangul === 0 && kana + kanji > 0) return 'untranslated';
   // 한국어 사이에 일본어가 눈에 띄게 남음
   if (kana >= 2 && kana / (kana + hangul) >= KANA_RATIO_LIMIT) return 'japanese_left';
+  if (result.unsure) return 'unsure';
   return null;
 }
 
@@ -46,12 +62,16 @@ export function stripTypeTags(text: string): string {
   return text.replace(/^\s*[[【](대사|효과음|지문|배경|지문\/배경|내레이션|생각)[\]】]\s*/, '');
 }
 
-/** 같은 칸에 대한 두 결과 중 문제가 덜한 쪽. 같으면 원래 것을 유지 */
+/**
+ * 같은 칸에 대한 두 결과 중 문제가 덜한 쪽. 같으면 원래 것을 유지.
+ * 단, 원래 것이 "원문 불확실"이었으면 고해상도로 다시 읽은 쪽이 더 믿을 만하므로 같은 수준이어도 새 결과를 씀
+ */
 export function pickBetter(current: GridTranslationResult | undefined, candidate: GridTranslationResult | undefined) {
   const rank = (r: GridTranslationResult | undefined) => {
     const issue = assessCell(r);
     return issue ? SEVERITY[issue] : 0;
   };
+  if (candidate && current?.unsure && rank(candidate) <= rank(current)) return candidate;
   return rank(candidate) < rank(current) ? candidate : current;
 }
 
@@ -82,11 +102,13 @@ export async function applyQualityRetry(
   }
 
   const report: QualityReport = { checked: cells.length, issues: {}, fixed: 0, retryFailed: false };
+  let unsureRetries = 0;
   const failed = [...cells]
     .sort((a, b) => a.id - b.id)
     .filter(cell => {
       const issue = assessCell(byId.get(cell.id));
       if (issue) report.issues[issue] = (report.issues[issue] ?? 0) + 1;
+      if (issue === 'unsure') return unsureRetries++ < UNSURE_RETRY_LIMIT;
       return issue !== null;
     });
 
@@ -109,5 +131,12 @@ export async function applyQualityRetry(
     }
   }
 
-  return { translations: [...byId.values()].sort((a, b) => a.id - b.id), report };
+  // 그래도 남은 문제는 검토 표시로 남김 (대본의 "검토" 표시·검토 목록에서 확인)
+  const translationsOut = [...byId.values()]
+    .sort((a, b) => a.id - b.id)
+    .map(({ unsure: _unsure, ...t }) => {
+      const issue = assessCell(byId.get(t.id));
+      return issue ? { ...t, review: REVIEW_LABELS[issue] } : t;
+    });
+  return { translations: translationsOut, report };
 }

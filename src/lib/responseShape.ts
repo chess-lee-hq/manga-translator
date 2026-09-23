@@ -26,11 +26,29 @@ export interface FullPageWire {
   ko: string;
 }
 
+/** 격자 응답 전체: 칸 목록 + 원문을 확신하지 못한 칸 번호 */
+export interface GridResponseWire {
+  cells?: GridCellWire[];
+  unsure?: number[];
+}
+
 export const gridCellToResult = (cell: GridCellWire): GridTranslationResult => ({
   id: cell.id,
   original_text: cell.jp ?? '',
   translated_text: cell.ko ?? '',
 });
+
+/**
+ * 격자 응답을 칸별 결과로 바꾸고, unsure에 든 칸에 표시를 붙입니다.
+ * (칸마다 불확실 여부 필드를 두면 30칸이면 30번 반복되므로, 해당 번호만 담는 목록 하나로 받음)
+ */
+export function gridResponseToResults(response: GridResponseWire): GridTranslationResult[] {
+  const unsure = new Set(Array.isArray(response.unsure) ? response.unsure : []);
+  return (response.cells ?? []).map(cell => {
+    const result = gridCellToResult(cell);
+    return unsure.has(result.id) ? { ...result, unsure: true } : result;
+  });
+}
 
 export const fullPageToResult = (item: FullPageWire): RawTranslationResult => ({
   original_text: item.jp ?? '',
@@ -61,8 +79,13 @@ export const OPENAI_GRID_SCHEMA = {
           additionalProperties: false,
         },
       },
+      unsure: {
+        type: 'array',
+        description: '글자가 작거나 흐리거나 잘려서 원문을 확신하지 못한 칸 번호 (없으면 빈 배열)',
+        items: { type: 'integer' },
+      },
     },
-    required: ['cells'],
+    required: ['cells', 'unsure'],
     additionalProperties: false,
   },
 } as const;
