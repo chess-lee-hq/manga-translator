@@ -150,7 +150,9 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
         }
       }
     };
-    const concurrency = Math.min(TRANSLATION_CONCURRENCY, groups.length);
+    // 미리 번역하는 묶음은 순서대로 하나씩: 앞 묶음의 번역이 다음 묶음의 "직전 대사" 맥락으로 들어가 말투·호칭이 이어짐
+    // (동시에 보내면 뒤 묶음은 앞 묶음 결과를 모른 채 번역됨). 보고 있는 페이지는 기다리지 않도록 동시에 처리
+    const concurrency = canBatch ? 1 : Math.min(TRANSLATION_CONCURRENCY, groups.length);
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
   };
 
