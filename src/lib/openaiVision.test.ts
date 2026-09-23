@@ -25,10 +25,10 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const results = await translateGridImageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,GRID', 1);
+    const results = await translateGridImageOpenAI('luna', 'sk-test', 'data:image/jpeg;base64,GRID', 1);
 
     const body = sentBody(fetchMock);
-    expect(body.model).toBe('gpt-5.6-terra');
+    expect(body.model).toBe('gpt-6-luna');
     expect(body.messages[0].content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
@@ -51,7 +51,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     // 응답 형태는 json_schema(strict)가 강제하므로 프롬프트에는 각 필드의 뜻만 짧게 남는다
     expect(prompt).toContain('jp = 일본어 원문');
     expect(sentBody(fetchMock).response_format.json_schema.schema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
-    expect(sentBody(fetchMock).model).toBe('gpt-5.6-sol');
+    expect(sentBody(fetchMock).model).toBe('gpt-6-sol');
   });
 
   it('cells 키가 없으면 빈 배열을 돌려준다', async () => {
@@ -74,7 +74,7 @@ describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse(JSON.stringify({ cells })));
     vi.stubGlobal('fetch', fetchMock);
 
-    const results = await translateFullPageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,PAGE');
+    const results = await translateFullPageOpenAI('luna', 'sk-test', 'data:image/jpeg;base64,PAGE');
 
     // 오른쪽 위부터 읽어야 함
     expect(results.map(r => r.translated_text)).toEqual(['오른쪽 위', '왼쪽 위']);
@@ -92,7 +92,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"notes":"- 주인공: 반말","glossary":[{"original":"雷神流","translated":"뇌신류"}]}'));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
+    const result = await summarizeWorkNotesOpenAI('luna', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
 
     expect(result).toEqual({ notes: '- 주인공: 반말', glossary: [{ original: '雷神流', translated: '뇌신류' }] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -105,13 +105,13 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
 
   it('모델이 JSON 형식을 어기면 응답 전체를 노트로 쓴다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse('- 주인공: 반말')));
-    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }])).toEqual({ notes: '- 주인공: 반말', glossary: [] });
+    expect(await summarizeWorkNotesOpenAI('luna', 'sk-test', [{ original: 'あ', translated: '가' }])).toEqual({ notes: '- 주인공: 반말', glossary: [] });
   });
 
   it('대사가 없으면 요청하지 않고 기존 노트를 유지한다', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [], '- 기존 노트')).toEqual({ notes: '- 기존 노트', glossary: [] });
+    expect(await summarizeWorkNotesOpenAI('luna', 'sk-test', [], '- 기존 노트')).toEqual({ notes: '- 기존 노트', glossary: [] });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -119,7 +119,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const fetchMock = vi.fn().mockResolvedValue(okResponse('권왕이다'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await retranslateTextOpenAI('terra', 'sk-test', '拳王だ', { glossary: { 拳王: '권왕', 南斗: '남두' } });
+    await retranslateTextOpenAI('luna', 'sk-test', '拳王だ', { glossary: { 拳王: '권왕', 南斗: '남두' } });
 
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('拳王 -> 권왕');

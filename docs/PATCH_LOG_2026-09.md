@@ -864,6 +864,27 @@ OpenAI·Gemini 모두 **앞에서부터 완전히 동일한 구간**을 캐시�
 
 ---
 
+## 추가 수정 25 — OpenAI 모델을 GPT-6로 교체 (기본 Luna / 옵션 Sol)
+
+OpenAI가 GPT를 6세대로 올렸다. 기존 5.6 Terra/Sol 구조를 그대로 이어받아 **기본을 6 Luna, 옵션을 6 Sol**로 바꿨다.
+
+| 항목 | 이전 | 이후 |
+|---|---|---|
+| 기본 모델 | `gpt-5.6-terra` | **`gpt-6-luna`** |
+| 옵션 모델 | `gpt-5.6-sol` | **`gpt-6-sol`** (이름 유지) |
+| 헤더 라벨 | "OpenAI 5.6" | "OpenAI 6" |
+| 재요청 시 보조 키 없을 때 승격 모델 | Sol | Sol (그대로) |
+
+`OpenAiVersion` 타입을 `'sol' | 'terra'` → `'luna' | 'sol'`로 바꾸고, 모델 이름 조립부(`gpt-5.6-${version}` → `gpt-6-${version}`)만 고쳤다. 재요청 로직(보조 엔진 키가 없으면 OpenAI의 "더 강한 모델"로 승격)은 그대로 Sol을 쓰므로 구조 변경 없음.
+
+기존에 저장된 값이 `terra`였던 사용자도 다음 접속 때 자동으로 새 기본값(Luna)으로 넘어간다. (`=== 'sol' ? 'sol' : 'luna'` 판정이라 `terra`·빈 값 모두 Luna로 수렴)
+
+### 검증
+- `tsc -b` 통과, `vitest` **206개** 통과(테스트 전반의 `terra` → `luna` 치환), `oxlint` 경고 13개(동일), 빌드 통과
+- 브라우저: 헤더가 "OpenAI 6" · 기본 선택 "Luna"로 뜨는 것 확인. `translateRegion` 실행 시 기본이 `gpt-6-luna`, 옵션 선택 시 `gpt-6-sol`로 정확히 나가는 것 확인
+
+---
+
 ## 이번 패치 범위 밖 (다음 후보)
 - 템플릿 잔재 정리: `src/App.css`, `src/assets/*`, 템플릿 README, `test-lint.json`, `index.html`의 `lang="en"`
 - 배포물에 WASM 27.8MB가 들어가지만 실제로는 CDN에서 받음 → 한쪽으로 통일, WebGPU·모델 양자화 검토

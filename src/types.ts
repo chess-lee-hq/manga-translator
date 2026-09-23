@@ -14,7 +14,7 @@ export interface UploadedImage {
 }
 
 export type GeminiVersion = '3.6' | '3.7';
-export type OpenAiVersion = 'sol' | 'terra';
+export type OpenAiVersion = 'luna' | 'sol';
 /** 1차 번역을 맡는 엔진. 나머지 한 쪽은 품질 검사 재요청(다시 읽기)만 담당 */
 export type MainEngine = 'openai' | 'gemini';
 export type ViewMode = '1page' | '2page';

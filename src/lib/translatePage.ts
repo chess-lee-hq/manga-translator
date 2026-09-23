@@ -108,7 +108,7 @@ interface GridPromptParts {
   label?: string;
 }
 
-function viaOpenAiGrid(apiKey: string, version: 'sol' | 'terra', parts: GridPromptParts): GridRequest {
+function viaOpenAiGrid(apiKey: string, version: 'luna' | 'sol', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
     translateGridImageOpenAI(version, apiKey, grid.dataUrl, grid.cells.length, {
       ...parts,

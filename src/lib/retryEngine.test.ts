@@ -10,7 +10,7 @@ vi.mock('./openai', () => ({ translateGridImageOpenAI, translateFullPageOpenAI: 
 const { firstRequesterFor, mergeChunkResponses, retryRequesterFor } = await import('./translatePage');
 
 const settings = (over: Partial<TranslationSettings> = {}): TranslationSettings => ({
-  mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'terra', googleKey: '', geminiVersion: '3.6', glossary: {}, ...over,
+  mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'luna', googleKey: '', geminiVersion: '3.6', glossary: {}, ...over,
 });
 const grid = { dataUrl: 'data:image/png;base64,GRID', cells: [{ id: 1, pageId: 'p', box: { xmin: 0, ymin: 0, xmax: 1, ymax: 1, confidence: 1, classId: 3 } }] };
 const answer = [{ id: 1, original_text: 'あ', translated_text: '가' }];
@@ -103,7 +103,7 @@ describe('firstRequesterFor (1차 번역은 항상 메인 엔진으로)', () => 
   it('메인이 OpenAI면 1차 요청도 OpenAI로 간다', async () => {
     translateGridImageOpenAI.mockResolvedValue(answer);
     await firstRequesterFor(settings({ googleKey: 'g-key' }))(grid, undefined);
-    expect(translateGridImageOpenAI.mock.calls[0][0]).toBe('terra');
+    expect(translateGridImageOpenAI.mock.calls[0][0]).toBe('luna');
     expect(translateGridImage).not.toHaveBeenCalled();
   });
 

@@ -53,11 +53,11 @@ const MAIN_ENGINE_STORAGE_KEY = 'manga-translator-main-engine';
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 function App() {
-  // 메인은 기본 OpenAI(Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
+  // 메인은 기본 OpenAI(Luna), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
-  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(() => (localStorage.getItem(OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'terra'));
+  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(() => (localStorage.getItem(OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'luna'));
   const [mainEngine, setMainEngine] = useState<MainEngine>(() => (localStorage.getItem(MAIN_ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'openai'));
 
   const [allImages, setAllImages] = useState<UploadedImage[]>([]);

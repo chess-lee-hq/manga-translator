@@ -10,10 +10,10 @@ import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { recordUsage } from './usageLog';
 
-type OpenAiVersion = 'sol' | 'terra';
+type OpenAiVersion = 'luna' | 'sol';
 type HttpError = Error & { status?: number; retryAfterMs?: number };
 
-const modelFor = (openAiVersion: OpenAiVersion) => `gpt-5.6-${openAiVersion}`;
+const modelFor = (openAiVersion: OpenAiVersion) => `gpt-6-${openAiVersion}`;
 
 /** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
 async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청'): Promise<any> {

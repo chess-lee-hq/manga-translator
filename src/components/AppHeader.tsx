@@ -262,12 +262,12 @@ export function AppHeader(props: AppHeaderProps) {
         <EngineSlot
           role={mainEngine === 'openai' ? 'main' : 'secondary'}
           icon={<Bot size={12} />}
-          label="OpenAI 5.6"
+          label="OpenAI 6"
           accent="green"
           version={openAiVersion}
           onVersionChange={onOpenAiVersionChange}
-          versionOptions={[['terra', 'Terra'], ['sol', 'Sol']]}
-          versionTitle="Terra: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
+          versionOptions={[['luna', 'Luna'], ['sol', 'Sol']]}
+          versionTitle="Luna: 기본값(빠르고 저렴) / Sol: 더 강한 인식·번역"
           apiKey={openaiKey}
           onApiKeyChange={onOpenaiKeyChange}
           keyPlaceholder="OpenAI Key"
