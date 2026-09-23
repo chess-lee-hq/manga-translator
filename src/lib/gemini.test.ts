@@ -1,19 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/**
+ * Gemini는 SDK 없이 REST(fetch)로 부르므로 fetch를 가로챕니다.
+ * 각 테스트는 generateContent에 "모델이 돌려줄 글"만 정해 두고, 요청 내용은 generateContent 호출 인자로 확인합니다.
+ */
 const generateContent = vi.fn();
-
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: class {
-    models = { generateContent };
-  },
-  Type: { ARRAY: 'ARRAY', OBJECT: 'OBJECT', INTEGER: 'INTEGER', STRING: 'STRING' },
-}));
+const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+  const body = JSON.parse(String(init.body));
+  const model = String(url).split('/models/')[1].split(':')[0];
+  const reply = await generateContent({ model, contents: body.contents, config: body.generationConfig, headers: init.headers, url });
+  const parts = reply?.parts ?? [{ text: reply?.text ?? '' }];
+  return new Response(JSON.stringify({ candidates: [{ content: { parts } }], usageMetadata: {} }), { status: 200 });
+});
+vi.stubGlobal('fetch', fetchMock);
 
 const { retranslateTextGemini, shortenTranslationGemini, summarizeWorkNotes, translateGridImage, translateMangaImage } = await import('./gemini');
 
 const lastRequest = () => generateContent.mock.calls.at(-1)![0];
 const imageParts = () => lastRequest().contents[0].parts.filter((p: any) => p.inlineData);
 const promptText = () => lastRequest().contents[0].parts[0].text as string;
+
+describe('Gemini REST 호출', () => {
+  beforeEach(() => {
+    generateContent.mockReset();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it('키는 주소가 아니라 x-goog-api-key 헤더로 보낸다', async () => {
+    generateContent.mockResolvedValue({ text: '번역' });
+    await retranslateTextGemini('g-key', '原文', '3.6');
+    expect(lastRequest().url).not.toContain('g-key');
+    expect((lastRequest().headers as Record<string, string>)['x-goog-api-key']).toBe('g-key');
+    expect(lastRequest().model).toBe('gemini-3.6-flash');
+  });
+
+  it('생각(thought) 파트는 답에서 뺀다', async () => {
+    generateContent.mockResolvedValue({ parts: [{ text: '속으로 생각한 내용', thought: true }, { text: '진짜 답' }] });
+    expect(await retranslateTextGemini('g-key', '原文', '3.6')).toBe('진짜 답');
+  });
+
+  it('HTTP 오류는 상태 코드가 담긴 안내로 바뀐다', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"error":{"message":"API key not valid"}}', { status: 400 }));
+    await expect(retranslateTextGemini('g-key', '原文', '3.6')).rejects.toThrow();
+  });
+});
 
 describe('translateGridImage (재인식 보조 엔진)', () => {
   beforeEach(() => {
@@ -73,7 +103,7 @@ describe('메인 엔진으로 골랐을 때만 쓰는 Gemini 함수들', () => {
     generateContent.mockResolvedValue({ text: '진심이야' });
     const result = await shortenTranslationGemini('key', '3.6', '本気か', '진심으로 하는 말이야?', 5);
     expect(result).toBe('진심이야');
-    expect(lastRequest().contents as string).toContain('5자 이내');
+    expect(promptText()).toContain('5자 이내');
   });
 
   it('summarizeWorkNotes: 노트와 단어장 후보를 함께 파싱한다', async () => {

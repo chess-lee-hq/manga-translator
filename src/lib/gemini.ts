@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { fullPageToResult, gridCellToResult, type FullPageWire, type GridCellWire } from './responseShape';
@@ -38,16 +37,57 @@ export interface GridTranslationResult {
 }
 
 type GeminiVersion = '3.6' | '3.7';
-type GenerateContentRequest = Parameters<GoogleGenAI['models']['generateContent']>[0];
 
 const modelNameFor = (geminiVersion: GeminiVersion) => (geminiVersion === '3.7' ? 'gemini-3.7-flash' : 'gemini-3.6-flash');
 
+/**
+ * Gemini REST API를 직접 부릅니다. (예전에는 @google/genai SDK를 썼지만, 쓰는 기능이 generateContent 하나뿐이라
+ * 번들이 무거워지는 SDK 대신 OpenAI 쪽과 같은 방식의 fetch 호출로 바꿈)
+ */
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+/** 응답 스키마 타입 이름 (REST API가 받는 대문자 표기) */
+const Type = { ARRAY: 'ARRAY', OBJECT: 'OBJECT', INTEGER: 'INTEGER', STRING: 'STRING' } as const;
+
+type GeminiPart = { text: string } | { inlineData: { data: string; mimeType: string } };
+
+interface GenerateContentRequest {
+  model: string;
+  /** 문자열이면 사용자 메시지 하나로 감쌈 */
+  contents: string | { role: 'user'; parts: GeminiPart[] }[];
+  /** REST의 generationConfig (temperature·responseMimeType·responseSchema 등) */
+  config?: Record<string, unknown>;
+}
+
+interface GenerateContentResponse {
+  candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; cachedContentTokenCount?: number };
+}
+
+type HttpError = Error & { status?: number; retryAfterMs?: number };
+
 /** 429(요청 한도)·5xx·네트워크 오류는 지수 백오프로 재시도하고, 최종 실패는 화면에 보여줄 안내로 바꿉니다. */
-async function generateContent(apiKey: string, request: GenerateContentRequest, label = '요청') {
+async function generateContent(apiKey: string, request: GenerateContentRequest, label = '요청'): Promise<{ text: string }> {
   assertHeaderSafeApiKey(apiKey, 'Gemini');
-  const ai = new GoogleGenAI({ apiKey });
+  const contents = typeof request.contents === 'string'
+    ? [{ role: 'user', parts: [{ text: request.contents }] }]
+    : request.contents;
   try {
-    const response = await withRetry(() => ai.models.generateContent(request), {
+    const response = await withRetry(async () => {
+      const res = await fetch(`${GEMINI_API_URL}/${request.model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({ contents, ...(request.config ? { generationConfig: request.config } : {}) }),
+      });
+      if (!res.ok) {
+        const error: HttpError = new Error(`Gemini API Error ${res.status}: ${await res.text()}`);
+        error.status = res.status;
+        const retryAfterSeconds = Number(res.headers.get('retry-after'));
+        if (retryAfterSeconds > 0) error.retryAfterMs = retryAfterSeconds * 1000;
+        throw error;
+      }
+      return res.json() as Promise<GenerateContentResponse>;
+    }, {
       onRetry: ({ attempt, delayMs, error }) => {
         console.warn(`Gemini 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
@@ -60,7 +100,9 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
       (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
       usage?.cachedContentTokenCount ?? 0,
     );
-    return response;
+    // 생각(thought) 파트는 답이 아니므로 빼고 이어 붙임
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    return { text: parts.filter(part => !part.thought).map(part => part.text ?? '').join('') };
   } catch (error) {
     throw toFriendlyError(error, 'Gemini');
   }
