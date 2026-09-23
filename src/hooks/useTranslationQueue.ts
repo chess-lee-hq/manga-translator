@@ -15,6 +15,12 @@ const TRANSLATION_CONCURRENCY = 3;
  * 지금 보고 있는 페이지는 묶지 않고 한 장씩 바로 요청해 기다리는 시간을 늘리지 않습니다.
  */
 const PRELOAD_BATCH_SIZE = 3;
+/**
+ * 한 페이지에 이 시간 이상 머물러야 뒤 페이지를 미리 번역합니다.
+ * 휙휙 넘기며 훑어볼 때 지나쳐 버릴 페이지들까지 미리 번역해 토큰을 쓰지 않도록.
+ * (보고 있는 페이지는 기다리지 않고 바로 번역)
+ */
+const PRELOAD_DWELL_MS = 2000;
 /** API 키 입력이 멈춘 뒤 이 시간이 지나야 번역을 시작 */
 const API_KEY_DEBOUNCE_MS = 800;
 
@@ -172,14 +178,27 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
 
     if (missingIndices.length === 0) return;
 
-    // 보고 있는 페이지를 먼저 한 장씩(빠른 응답) → 그 뒤 미리 받아둘 페이지를 묶음으로(토큰 절약)
+    // 보고 있는 페이지를 먼저 한 장씩(빠른 응답) → 그 페이지에 잠시 머물면 미리 받아둘 페이지를 묶음으로(토큰 절약)
     const visible = new Set(visibleIndices);
     const immediate = missingIndices.filter(i => visible.has(i));
     const preload = missingIndices.filter(i => !visible.has(i));
+    let cancelled = false;
+    let endDwell = () => {};
+    const dwell = new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, PRELOAD_DWELL_MS);
+      endDwell = () => { clearTimeout(timer); resolve(); };
+    });
     (async () => {
       if (immediate.length > 0) await translatePages(immediate);
-      if (preload.length > 0) await translatePages(preload, PRELOAD_BATCH_SIZE);
+      if (preload.length === 0) return;
+      await dwell;
+      // 그사이 다른 페이지로 넘어갔으면 그 페이지 기준으로 다시 정함
+      if (!cancelled) await translatePages(preload, PRELOAD_BATCH_SIZE);
     })();
+    return () => {
+      cancelled = true;
+      endDwell();
+    };
   }, [queue.join(','), images, credential, isCredentialSettled, autoTranslate, retryTrigger]);
 
   return {
