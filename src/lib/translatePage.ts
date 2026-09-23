@@ -1,5 +1,6 @@
 import type { Box2d, OpenAiVersion, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, shortenTranslationGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
+import type { GridEngine } from './gridLayout';
 import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
@@ -12,6 +13,7 @@ import type { BoundingBox } from './yoloPostprocess';
 
 const base64Of = (dataUrl: string) => dataUrl.split(',')[1];
 const mimeOf = (dataUrl: string) => dataUrl.slice(5, dataUrl.indexOf(';'));
+const inlineImage = (dataUrl: string) => ({ data: base64Of(dataUrl), mimeType: mimeOf(dataUrl) });
 
 /**
  * 말풍선 위치는 YOLO(브라우저 내부)가 찾고, 원문 인식·번역은 메인 엔진이 담당하므로 그 키만 있으면 됩니다.
@@ -94,7 +96,7 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
  */
 const BLANK_PAGE_DARK_RATIO = 0.0015;
 
-/** 격자 한 장을 번역 엔진에 보냅니다. */
+/** 격자(여러 장일 수 있음)를 요청 한 번으로 번역 엔진에 보냅니다. */
 type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined) => Promise<GridTranslationResult[]>;
 
 /** 프롬프트에 함께 싣는 맥락. 재요청이면 "직전 대사"는 빼서 비용을 줄입니다. */
@@ -110,7 +112,7 @@ interface GridPromptParts {
 
 function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
-    translateGridImageOpenAI(version, apiKey, grid.dataUrl, grid.cells.length, {
+    translateGridImageOpenAI(version, apiKey, grid.images, grid.cells.length, {
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
@@ -119,7 +121,7 @@ function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPrompt
 
 function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7', parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
-    translateGridImage(apiKey, base64Of(grid.dataUrl), mimeOf(grid.dataUrl), grid.cells.length, version, {
+    translateGridImage(apiKey, grid.images.map(inlineImage), grid.cells.length, version, {
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
@@ -138,10 +140,13 @@ export function firstRequesterFor(settings: TranslationSettings): GridRequest {
 /**
  * 재요청은 칸을 2배 해상도로 키워 다시 그립니다. (작은 글씨·한자 획이 뭉개져 틀리게 읽는 경우 대비)
  * OpenAI는 이미지의 짧은 변을 768px로 줄여 읽으므로, 600px 칸을 한 줄로 세워 짧은 변이 600px을 넘지 않게 하고
- * 긴 변도 2048px 안에 들도록 한 장에 최대 3칸씩 나눠 보냅니다.
+ * 긴 변도 2048px 안에 들도록 한 장에 최대 3칸씩 나눕니다. 나눈 이미지들은 요청 한 번에 함께 보냅니다.
  */
-export const RETRY_CELL_SIZE = 600;
-export const RETRY_CELLS_PER_IMAGE = 3;
+const RETRY_CELL_SIZE = 600;
+const RETRY_CELLS_PER_IMAGE = 3;
+
+/** 첫 요청 격자를 어느 엔진 기준으로 배치할지 (메인 엔진) */
+const gridEngineOf = (settings: TranslationSettings): GridEngine => (settings.mainEngine === 'gemini' ? 'gemini' : 'openai');
 
 /**
  * 재요청 엔진: 같은 모델이 같은 글자를 또 잘못 읽지 않도록 **메인이 아닌 쪽**으로 읽힙니다.
@@ -205,33 +210,24 @@ function regroupBySource(sources: GridSource[], cells: GridCellInfo[]): GridSour
 
 const countsOf = (list: GridSource[]) => (list.length > 1 ? list.map(s => s.boxes.length) : undefined);
 
-/**
- * 문제 칸들을 고해상도 격자 여러 장(장당 최대 3칸)으로 나눠 동시에 보내고,
- * 응답의 칸 번호를 문제 칸 전체 기준(1번부터)으로 이어 붙입니다.
- */
-async function requestHighResRetry(sources: GridSource[], failed: GridCellInfo[], request: GridRequest): Promise<GridTranslationResult[]> {
-  const chunks: GridCellInfo[][] = [];
-  for (let i = 0; i < failed.length; i += RETRY_CELLS_PER_IMAGE) chunks.push(failed.slice(i, i + RETRY_CELLS_PER_IMAGE));
-
-  const responses = await Promise.all(chunks.map(async chunk => {
-    const chunkSources = regroupBySource(sources, chunk);
-    const grid = await createGridImage(chunkSources, { columns: 1, cellSize: RETRY_CELL_SIZE, format: 'png' });
-    return grid ? request(grid, countsOf(chunkSources)) : [];
+/** 재요청 격자 배치: 한 장에 최대 3칸씩 세로 한 줄 */
+export function retryPlan(cellCount: number) {
+  return Array.from({ length: Math.ceil(cellCount / RETRY_CELLS_PER_IMAGE) }, (_, i) => ({
+    count: Math.min(RETRY_CELLS_PER_IMAGE, cellCount - i * RETRY_CELLS_PER_IMAGE),
+    columns: 1,
   }));
-  return mergeChunkResponses(responses, chunks.map(chunk => chunk.length));
 }
 
-/** 나눠 보낸 격자들의 응답(각각 1번부터)을 하나로 이어 번호를 다시 매깁니다. 범위를 벗어난 번호는 버립니다. */
-export function mergeChunkResponses(responses: GridTranslationResult[][], sizes: number[]): GridTranslationResult[] {
-  let offset = 0;
-  return responses.flatMap((translations, index) => {
-    const size = sizes[index];
-    const mapped = translations
-      .filter(t => Number.isInteger(t.id) && t.id >= 1 && t.id <= size)
-      .map(t => ({ ...t, id: t.id + offset }));
-    offset += size;
-    return mapped;
-  });
+/**
+ * 문제 칸들을 고해상도 격자(장당 최대 3칸)로 그려 **요청 한 번**으로 보냅니다. 칸 번호는 문제 칸 전체 기준 1번부터.
+ * (예전에는 장마다 따로 요청해 지침·단어장·작품 노트가 장 수만큼 반복됐음)
+ */
+async function requestHighResRetry(sources: GridSource[], failed: GridCellInfo[], request: GridRequest): Promise<GridTranslationResult[]> {
+  const retrySources = regroupBySource(sources, failed);
+  const grid = await createGridImage(retrySources, { plan: retryPlan(failed.length), cellSize: RETRY_CELL_SIZE, format: 'png' });
+  if (!grid) return [];
+  const translations = await request(grid, countsOf(retrySources));
+  return translations.filter(t => Number.isInteger(t.id) && t.id >= 1 && t.id <= failed.length);
 }
 
 /**
@@ -239,7 +235,7 @@ export function mergeChunkResponses(responses: GridTranslationResult[][], sizes:
  * **2배 해상도 · 다른 엔진**으로 한 번 더 요청해 더 나은 결과로 합칩니다.
  */
 async function translateGridWithQualityCheck(sources: GridSource[], settings: TranslationSettings) {
-  const grid = await createGridImage(sources);
+  const grid = await createGridImage(sources, { engine: gridEngineOf(settings) });
   if (!grid) return null;
 
   const first = await firstRequesterFor(settings)(grid, countsOf(sources));

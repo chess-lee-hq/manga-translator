@@ -1,4 +1,4 @@
-import { chooseGridColumns } from './gridLayout';
+import { planGridImages, type GridEngine, type GridImagePlan } from './gridLayout';
 import type { BoundingBox } from './yolo';
 
 export interface GridCellInfo {
@@ -20,13 +20,16 @@ export interface GridSource {
 }
 
 export interface GridResult {
-  dataUrl: string; // Base64 of the grid image
+  /** 격자 이미지(data URL). 칸이 많으면 여러 장으로 나뉘지만 칸 번호는 장을 넘어 이어지고, 요청은 한 번에 보냄 */
+  images: string[];
   cells: GridCellInfo[]; // Info to map grid cells back to original boxes
 }
 
 export interface GridImageOptions {
-  /** 열 수. 없으면 칸 수에 맞춰 비전 토큰이 가장 적은 배치를 자동 선택 */
-  columns?: number;
+  /** 이미지 장별 칸 수·열 수. 없으면 엔진에 맞춰 자동으로 정함 (gridLayout.planGridImages) */
+  plan?: GridImagePlan[];
+  /** 자동 배치 기준 엔진 (OpenAI는 이미지를 줄여 읽고 Gemini는 덜 줄이므로 유리한 배치가 다름) */
+  engine?: GridEngine;
   /** 칸 한 변 크기(px). 기본 300 — 재요청은 작은 글자·한자 획을 살리려고 2배로 키움 */
   cellSize?: number;
   /** 기본 JPEG. PNG는 용량이 크지만 가는 획 주변 번짐이 없음 */
@@ -41,22 +44,11 @@ const JPEG_QUALITY = 0.92;
 /** 칸 크기 대비 여백 비율 (300px 칸 기준 20px) */
 const CELL_PADDING_RATIO = 20 / 300;
 
-/**
- * 여러 페이지의 말풍선을 잘라 바둑판 이미지 한 장으로 붙입니다.
- * (칸마다 빨간 번호를 적어 모델이 순서대로 답하게 함)
- * 박스는 호출 전에 readingOrder로 정렬되어 있고, 페이지 순서대로 이어 붙입니다.
- * 열 수를 지정하지 않으면 칸 수에 맞춰 비전 토큰이 가장 적게 드는 배치를 자동으로 고릅니다.
- */
-export async function createGridImage(sources: GridSource[], options: GridImageOptions = {}): Promise<GridResult | null> {
-  const { cellSize = CELL_SIZE, format = 'jpeg' } = options;
+type GridEntry = { box: BoundingBox; source: GridSource };
+
+function drawGridImage(entries: GridEntry[], firstId: number, columns: number, cellSize: number, format: 'jpeg' | 'png'): string | null {
   const labelScale = cellSize / CELL_SIZE;
-  const entries = sources.flatMap(source => source.boxes.map((box, boxIndex) => ({ box, source, speaker: source.speakers?.[boxIndex] ?? null })));
-  if (entries.length === 0) return null;
-
-  const cells: GridCellInfo[] = entries.map((entry, index) => ({ id: index + 1, box: entry.box, pageId: entry.source.pageId, speaker: entry.speaker }));
-  const columns = options.columns ?? chooseGridColumns(cells.length, cellSize);
-  const rows = Math.ceil(cells.length / columns);
-
+  const rows = Math.ceil(entries.length / columns);
   const canvas = document.createElement('canvas');
   canvas.width = columns * cellSize;
   canvas.height = rows * cellSize;
@@ -93,12 +85,42 @@ export async function createGridImage(sources: GridSource[], options: GridImageO
 
     ctx.fillStyle = 'red';
     ctx.font = `bold ${Math.round(24 * labelScale)}px Arial`;
-    ctx.fillText(`#${cells[i].id}`, cellX + 10 * labelScale, cellY + 30 * labelScale);
+    ctx.fillText(`#${firstId + i}`, cellX + 10 * labelScale, cellY + 30 * labelScale);
   });
 
   // 비전 토큰은 이미지의 가로×세로로만 계산되고 파일 용량과 무관하므로, 압축 품질을 올려도 비용은 그대로다.
   // 작은 한자 획이 압축으로 뭉개지면 곧바로 품질 검사 재요청(비싼 경로)으로 이어지므로 넉넉하게 준다.
-  return { dataUrl: format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', JPEG_QUALITY), cells };
+  return format === 'png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+}
+
+/**
+ * 여러 페이지의 말풍선을 잘라 바둑판 이미지로 붙입니다.
+ * (칸마다 빨간 번호를 적어 모델이 순서대로 답하게 함)
+ * 박스는 호출 전에 readingOrder로 정렬되어 있고, 페이지 순서대로 이어 붙입니다.
+ * 배치를 지정하지 않으면 칸 수에 맞춰 칸이 너무 작아지지 않으면서 비전 토큰이 가장 적게 드는 배치를 고릅니다.
+ */
+export async function createGridImage(sources: GridSource[], options: GridImageOptions = {}): Promise<GridResult | null> {
+  const { cellSize = CELL_SIZE, format = 'jpeg', engine = 'openai' } = options;
+  const entries: GridEntry[] = sources.flatMap(source => source.boxes.map(box => ({ box, source })));
+  if (entries.length === 0) return null;
+
+  const cells: GridCellInfo[] = sources.flatMap(source => source.boxes.map((box, boxIndex) => ({
+    id: 0, box, pageId: source.pageId, speaker: source.speakers?.[boxIndex] ?? null,
+  }))).map((cell, index) => ({ ...cell, id: index + 1 }));
+
+  const plan = options.plan ?? planGridImages(entries.length, cellSize, engine);
+  const images: string[] = [];
+  let offset = 0;
+  for (const { count, columns } of plan) {
+    const slice = entries.slice(offset, offset + count);
+    if (slice.length === 0) break;
+    const dataUrl = drawGridImage(slice, offset + 1, Math.min(columns, slice.length), cellSize, format);
+    if (!dataUrl) return null;
+    images.push(dataUrl);
+    offset += slice.length;
+  }
+  if (offset < entries.length) return null;
+  return { images, cells };
 }
 
 export async function loadImage(src: string): Promise<HTMLImageElement> {

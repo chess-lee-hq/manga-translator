@@ -7,12 +7,12 @@ const translateGridImageOpenAI = vi.fn();
 vi.mock('./gemini', () => ({ translateGridImage }));
 vi.mock('./openai', () => ({ translateGridImageOpenAI, translateFullPageOpenAI: vi.fn(), retranslateTextOpenAI: vi.fn() }));
 
-const { firstRequesterFor, mergeChunkResponses, retryRequesterFor } = await import('./translatePage');
+const { firstRequesterFor, retryPlan, retryRequesterFor } = await import('./translatePage');
 
 const settings = (over: Partial<TranslationSettings> = {}): TranslationSettings => ({
   mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'terra', googleKey: '', geminiVersion: '3.6', glossary: {}, ...over,
 });
-const grid = { dataUrl: 'data:image/png;base64,GRID', cells: [{ id: 1, pageId: 'p', box: { xmin: 0, ymin: 0, xmax: 1, ymax: 1, confidence: 1, classId: 3 } }] };
+const grid = { images: ['data:image/png;base64,GRID'], cells: [{ id: 1, pageId: 'p', box: { xmin: 0, ymin: 0, xmax: 1, ymax: 1, confidence: 1, classId: 3 } }] };
 const answer = [{ id: 1, original_text: 'あ', translated_text: '가' }];
 
 describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
@@ -32,8 +32,8 @@ describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
   it('Gemini 키가 있으면 Gemini로 PNG 격자를 보내고 재요청 표시를 켠다', async () => {
     translateGridImage.mockResolvedValue(answer);
     await retryRequesterFor(settings({ googleKey: 'g-key', geminiVersion: '3.7', context: '맥락' }))(grid, [1]);
-    const [key, base64, mime, expected, version, options] = translateGridImage.mock.calls[0];
-    expect([key, base64, mime, expected, version]).toEqual(['g-key', 'GRID', 'image/png', 1, '3.7']);
+    const [key, images, expected, version, options] = translateGridImage.mock.calls[0];
+    expect([key, images, expected, version]).toEqual(['g-key', [{ data: 'GRID', mimeType: 'image/png' }], 1, '3.7']);
     expect(options.pageCellCounts).toEqual([1]);
     expect(options.retry).toBe(true);
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
@@ -49,7 +49,7 @@ describe('품질 검사 재요청 엔진 (메인 = OpenAI)', () => {
     expect(first.recentContext).toBe('## 직전까지의 번역');
 
     await retryRequesterFor(withContext)(grid, undefined);
-    const retryOptions = translateGridImage.mock.calls[0][5];
+    const retryOptions = translateGridImage.mock.calls[0][4];
     expect(retryOptions.context).toBe('## 작품 노트');
     expect(retryOptions.glossary).toEqual(withContext.glossary);
     expect(retryOptions.recentContext).toBeUndefined();
@@ -73,7 +73,7 @@ describe('품질 검사 재요청 엔진 (메인 = Gemini, 역할을 뒤집은 �
   it('OpenAI 키가 없으면 Gemini 3.7(더 강한 모델)로 다시 읽는다', async () => {
     translateGridImage.mockResolvedValue(answer);
     await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: '', googleKey: 'g-key', geminiVersion: '3.6' }))(grid, undefined);
-    expect(translateGridImage.mock.calls[0][4]).toBe('3.7');
+    expect(translateGridImage.mock.calls[0][3]).toBe('3.7');
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
   });
 
@@ -90,7 +90,7 @@ describe('품질 검사 재요청 엔진 (메인 = Gemini, 역할을 뒤집은 �
     translateGridImage.mockResolvedValue(answer);
     const result = await retryRequesterFor(settings({ mainEngine: 'gemini', openaiKey: 'sk-key', googleKey: 'g-key' }))(grid, undefined);
     expect(result).toEqual(answer);
-    expect(translateGridImage.mock.calls[0][4]).toBe('3.7');
+    expect(translateGridImage.mock.calls[0][3]).toBe('3.7');
   });
 });
 
@@ -110,21 +110,15 @@ describe('firstRequesterFor (1차 번역은 항상 메인 엔진으로)', () => 
   it('메인을 Gemini로 바꾸면 1차 요청도 Gemini로 간다 (OpenAI 키가 있어도)', async () => {
     translateGridImage.mockResolvedValue(answer);
     await firstRequesterFor(settings({ mainEngine: 'gemini', googleKey: 'g-key', geminiVersion: '3.6' }))(grid, undefined);
-    const [key, , , , version] = translateGridImage.mock.calls[0];
+    const [key, , , version] = translateGridImage.mock.calls[0];
     expect([key, version]).toEqual(['g-key', '3.6']);
     expect(translateGridImageOpenAI).not.toHaveBeenCalled();
   });
 });
 
-describe('mergeChunkResponses', () => {
-  it('나눠 보낸 격자의 칸 번호를 이어 붙이고 범위 밖 번호는 버린다', () => {
-    const merged = mergeChunkResponses(
-      [
-        [{ id: 2, original_text: 'い', translated_text: '나' }, { id: 1, original_text: 'あ', translated_text: '가' }, { id: 7, original_text: 'x', translated_text: 'x' }],
-        [{ id: 1, original_text: 'う', translated_text: '다' }],
-      ],
-      [3, 1],
-    );
-    expect(merged.map(t => [t.id, t.translated_text])).toEqual([[2, '나'], [1, '가'], [4, '다']]);
+describe('retryPlan', () => {
+  it('고해상도 재요청 칸을 한 장에 최대 3칸씩 세로 한 줄로 나눈다', () => {
+    expect(retryPlan(7)).toEqual([{ count: 3, columns: 1 }, { count: 3, columns: 1 }, { count: 1, columns: 1 }]);
+    expect(retryPlan(2)).toEqual([{ count: 2, columns: 1 }]);
   });
 });

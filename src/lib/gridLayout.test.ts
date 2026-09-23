@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { chooseGridColumns, estimateVisionTokens } from './gridLayout';
+import {
+  chooseGridColumns, estimateGeminiImageTokens, estimatePlanTokens, estimateVisionTokens, MIN_EFFECTIVE_CELL_PX, openAiDownscale, planGridImages,
+} from './gridLayout';
 
 describe('estimateVisionTokens', () => {
   it('작은 이미지는 512 타일 1개', () => {
@@ -58,5 +60,37 @@ describe('묶음 처리 토큰 절감 (추정식 기준)', () => {
     expect(batched).toBeLessThan(separate);
     // 대략 절반 이하로 떨어져야 묶는 의미가 있음
     expect(batched).toBeLessThan(separate * 0.6);
+  });
+});
+
+describe('planGridImages — 칸이 너무 작게 줄지 않는 배치', () => {
+  const effective = (count: number, columns: number) =>
+    300 * openAiDownscale(columns * 300, Math.ceil(count / columns) * 300);
+
+  it('모든 칸이 빠짐없이 배치되고, OpenAI 기준 칸이 하한보다 작아지지 않는다', () => {
+    for (let n = 1; n <= 60; n++) {
+      const plan = planGridImages(n, 300);
+      expect(plan.reduce((sum, p) => sum + p.count, 0)).toBe(n);
+      for (const { count, columns } of plan) expect(effective(count, columns)).toBeGreaterThanOrEqual(MIN_EFFECTIVE_CELL_PX);
+    }
+  });
+
+  it('칸이 적으면 예전처럼 한 장, 토큰도 그대로', () => {
+    const plan = planGridImages(6, 300);
+    expect(plan).toHaveLength(1);
+    expect(estimatePlanTokens(plan, 300)).toBe(estimateVisionTokens(2 * 300, 3 * 300));
+  });
+
+  it('30칸이면 칸당 150px대로 뭉개지던 것을 200px 이상으로 올린다', () => {
+    const oldColumns = chooseGridColumns(30, 300);
+    expect(effective(30, oldColumns)).toBeLessThan(MIN_EFFECTIVE_CELL_PX);
+    const plan = planGridImages(30, 300);
+    plan.forEach(({ count, columns }) => expect(effective(count, columns)).toBeGreaterThanOrEqual(MIN_EFFECTIVE_CELL_PX));
+  });
+
+  it('Gemini는 줄여 읽지 않으므로 항상 한 장', () => {
+    expect(planGridImages(40, 300, 'gemini')).toHaveLength(1);
+    expect(estimateGeminiImageTokens(300, 300)).toBe(258);
+    expect(estimateGeminiImageTokens(1500, 1800)).toBe(2 * 3 * 258);
   });
 });

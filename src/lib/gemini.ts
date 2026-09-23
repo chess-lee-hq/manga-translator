@@ -260,8 +260,7 @@ export interface GridRequestOptions extends PromptContextOptions {
  */
 export async function translateGridImage(
   apiKey: string,
-  gridBase64Image: string,
-  mimeType: string,
+  gridImages: { data: string; mimeType: string }[],
   expectedCells: number,
   geminiVersion: GeminiVersion = '3.6',
   options: GridRequestOptions = {},
@@ -269,9 +268,10 @@ export async function translateGridImage(
   const { pageCellCounts, label, ...promptOptions } = options;
   const prompt = buildGridPrompt({ expectedCells, pageCellCounts, ...promptOptions });
 
+  // 격자가 여러 장이어도(칸 번호는 이어짐) 한 요청에 순서대로 싣는다
   const parts = [
     { text: prompt },
-    { inlineData: { data: gridBase64Image, mimeType } },
+    ...gridImages.map(image => ({ inlineData: image })),
   ];
 
   const response = await generateContent(apiKey, {

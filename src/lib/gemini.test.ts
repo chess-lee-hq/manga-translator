@@ -56,18 +56,24 @@ describe('translateGridImage (재인식 보조 엔진)', () => {
   });
 
   it('격자 한 장만, 넘겨받은 이미지 형식 그대로 보낸다 (고해상도 재요청은 PNG)', async () => {
-    await translateGridImage('key', 'GRID', 'image/png', 1, '3.6');
+    await translateGridImage('key', [{ data: 'GRID', mimeType: 'image/png' }], 1, '3.6');
     expect(imageParts().map((p: any) => p.inlineData)).toEqual([{ data: 'GRID', mimeType: 'image/png' }]);
   });
 
+  it('격자가 여러 장이면 한 요청에 순서대로 싣는다', async () => {
+    await translateGridImage('key', [{ data: 'A', mimeType: 'image/jpeg' }, { data: 'B', mimeType: 'image/jpeg' }], 30, '3.6');
+    expect(imageParts().map((p: any) => p.inlineData.data)).toEqual(['A', 'B']);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
   it('여러 페이지에서 모은 칸이면 페이지 경계를 프롬프트에 알린다', async () => {
-    await translateGridImage('key', 'GRID', 'image/png', 3, '3.6', { pageCellCounts: [2, 1] });
+    await translateGridImage('key', [{ data: 'GRID', mimeType: 'image/png' }], 3, '3.6', { pageCellCounts: [2, 1] });
     expect(promptText()).toContain('1번째 페이지: 1~2번');
     expect(promptText()).toContain('2번째 페이지: 3~3번');
   });
 
   it('단어장과 앞 페이지 맥락을 프롬프트에 함께 싣는다 (엔진이 달라도 동일한 지침)', async () => {
-    await translateGridImage('key', 'GRID', 'image/jpeg', 2, '3.6', {
+    await translateGridImage('key', [{ data: 'GRID', mimeType: 'image/jpeg' }], 2, '3.6', {
       glossary: { 拳王: '권왕' },
       context: '# 앞 페이지 맥락\n- 주인공은 반말을 쓴다',
     });
@@ -78,7 +84,7 @@ describe('translateGridImage (재인식 보조 엔진)', () => {
   });
 
   it('번역문까지 받도록 응답 스키마를 요구한다', async () => {
-    await translateGridImage('key', 'GRID', 'image/jpeg', 1, '3.6');
+    await translateGridImage('key', [{ data: 'GRID', mimeType: 'image/jpeg' }], 1, '3.6');
     expect(lastRequest().config.responseSchema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
   });
 });

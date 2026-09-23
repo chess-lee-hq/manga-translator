@@ -89,13 +89,13 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   }
 }
 
-/** 이미지 한 장을 붙인 사용자 메시지 */
-function imageMessage(prompt: string, imageDataUrl: string) {
+/** 이미지(여러 장이면 순서대로)를 붙인 사용자 메시지 */
+function imageMessage(prompt: string, imageDataUrls: string[]) {
   return {
     role: 'user',
     content: [
       { type: 'text', text: prompt },
-      { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
+      ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
     ],
   };
 }
@@ -126,12 +126,12 @@ export interface GridRequestOptions extends PromptContextOptions {
 
 /**
  * [주력] 말풍선 격자 이미지를 OpenAI에게 직접 보여주고 원문 인식(OCR)과 번역을 한 번에 받습니다.
- * 이미지 한 장·요청 한 번으로 끝나므로 다른 엔진을 거치지 않습니다.
+ * 격자가 여러 장으로 나뉘어도(칸 번호는 이어짐) 요청은 한 번이라 지침·단어장·맥락이 한 번만 들어갑니다.
  */
 export async function translateGridImageOpenAI(
   openAiVersion: OpenAiVersion,
   apiKey: string,
-  gridDataUrl: string,
+  gridDataUrls: string[],
   expectedCells: number,
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
@@ -140,7 +140,7 @@ export async function translateGridImageOpenAI(
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(prompt, gridDataUrl)],
+    messages: [imageMessage(prompt, gridDataUrls)],
     response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
   }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'));
 
@@ -159,7 +159,7 @@ export async function translateFullPageOpenAI(
 ): Promise<RawTranslationResult[]> {
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(buildFullPagePrompt(options), pageDataUrl)],
+    messages: [imageMessage(buildFullPagePrompt(options), [pageDataUrl])],
     response_format: { type: 'json_schema', json_schema: OPENAI_FULL_PAGE_SCHEMA },
   }, '페이지 전체 번역');
 

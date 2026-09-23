@@ -28,7 +28,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const results = await translateGridImageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,GRID', 1);
+    const results = await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
 
     const body = sentBody(fetchMock);
     expect(body.model).toBe('gpt-5.6-terra');
@@ -40,11 +40,20 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     expect(getUsageTotals().gemini.calls).toBe(0);
   });
 
+  it('격자가 여러 장이면 한 요청에 순서대로 싣는다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B'], 30);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const images = sentBody(fetchMock).messages[0].content.slice(1).map((part: any) => part.image_url.url);
+    expect(images).toEqual(['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B']);
+  });
+
   it('단어장과 앞 페이지 맥락을 프롬프트에 함께 싣는다 (Gemini와 동일한 지침)', async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await translateGridImageOpenAI('sol', 'sk-test', 'data:image/jpeg;base64,GRID', 3,
+    await translateGridImageOpenAI('sol', 'sk-test', ['data:image/jpeg;base64,GRID'], 3,
       { glossary: { 拳王: '권왕' }, context: '# 앞 페이지 맥락\n- 주인공은 반말을 쓴다' });
 
     const prompt = sentPrompt(fetchMock);
@@ -64,13 +73,13 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
   ] as const)('헤더에서 고른 %s는 %s 모델로 보낸다 (세대가 섞여 있어 표로 매핑)', async (version, model) => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
     vi.stubGlobal('fetch', fetchMock);
-    await translateGridImageOpenAI(version, 'sk-test', 'data:image/jpeg;base64,GRID', 1);
+    await translateGridImageOpenAI(version, 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
     expect(sentBody(fetchMock).model).toBe(model);
   });
 
   it('cells 키가 없으면 빈 배열을 돌려준다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse('{}')));
-    expect(await translateGridImageOpenAI('sol', 'sk-test', 'data:image/jpeg;base64,GRID', 3)).toEqual([]);
+    expect(await translateGridImageOpenAI('sol', 'sk-test', ['data:image/jpeg;base64,GRID'], 3)).toEqual([]);
   });
 });
 
