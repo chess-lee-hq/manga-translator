@@ -8,6 +8,7 @@ import { ImportChoiceModal } from './components/ImportChoiceModal';
 import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
+import { ReviewListModal, type ReviewItem } from './components/ReviewListModal';
 import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
@@ -93,6 +94,7 @@ function App() {
   const [glossaryDraft, setGlossaryDraft] = useState<GlossaryDraft | null>(null);
   const [isWorkNotesOpen, setIsWorkNotesOpen] = useState(false);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const notesBusyRef = useRef(false);
@@ -550,6 +552,14 @@ function App() {
     setCurrentPageIndex(index);
   };
 
+  /** 검토 표시가 남은 말풍선 (페이지 순서) */
+  const reviewItems: ReviewItem[] = allImages.flatMap((img, imgIndex) => {
+    const key = getCacheKey(img.file);
+    return (translationCache[key] ?? [])
+      .filter(r => r.review)
+      .map(r => ({ imgIndex, key, id: r.id, review: r.review!, originalText: r.original_text, translatedText: r.translated_text }));
+  });
+
   const handlePrev = () => {
     if (currentPageIndex > 0) goToPage(getSpreadStartIndex(allImages, currentPageIndex - 1, viewMode));
   };
@@ -757,6 +767,8 @@ function App() {
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
         onClearCache={handleClearCache}
         onOpenUsage={() => setIsUsageOpen(true)}
+        reviewCount={reviewItems.length}
+        onOpenReview={() => setIsReviewOpen(true)}
         onCloseSession={handleCloseSession}
         autoTranslate={queue.autoTranslate}
         onToggleAutoTranslate={() => queue.setAutoTranslate(!queue.autoTranslate)}
@@ -914,6 +926,19 @@ function App() {
           onRemoveCorrection={removeCorrection}
           onClearCorrections={clearCorrections}
           onClose={() => setIsWorkNotesOpen(false)}
+        />
+      )}
+
+      {isReviewOpen && (
+        <ReviewListModal
+          items={reviewItems}
+          onJump={(imgIndex) => {
+            goToPage(getSpreadStartIndex(allImages, imgIndex, viewMode));
+            setScriptStyle('side');
+            setIsReviewOpen(false);
+          }}
+          onDismiss={handleDismissReview}
+          onClose={() => setIsReviewOpen(false)}
         />
       )}
 

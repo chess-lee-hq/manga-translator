@@ -1,4 +1,4 @@
-import { ArrowLeftRight, BarChart3, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 import { getUsageByModel, sumUsage } from '../lib/usageLog';
 import { formatTokens, useUsageVersion } from './UsageModal';
@@ -28,6 +28,9 @@ interface AppHeaderProps {
   onOpenWorkNotes: () => void;
   onClearCache: () => void;
   onOpenUsage: () => void;
+  /** 검토 표시가 남은 말풍선 수 (0이면 버튼 숨김) */
+  reviewCount: number;
+  onOpenReview: () => void;
   onCloseSession: () => void;
   autoTranslate: boolean;
   onToggleAutoTranslate: () => void;
@@ -122,7 +125,7 @@ export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onClearCache, onOpenUsage, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
+    onClearCache, onOpenUsage, reviewCount, onOpenReview, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
     openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
@@ -237,6 +240,11 @@ export function AppHeader(props: AppHeaderProps) {
                 </span>
               )}
             </button>
+            {reviewCount > 0 && (
+              <button onClick={onOpenReview} title={`검토 목록 — 자동으로 다시 읽어도 확신할 수 없었던 말풍선 ${reviewCount}개`} className={`${actionButton} bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100`}>
+                <AlertTriangle size={14} /> {reviewCount}
+              </button>
+            )}
             <button onClick={onOpenWorkNotes} title="작품 노트: 인물 말투·호칭을 기억해 다음 번역에 반영" className={`${actionButton} bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100`}>
               <NotebookPen size={14} /> <span className={WIDE_LABEL}>작품 노트</span>
             </button>
