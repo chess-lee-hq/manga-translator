@@ -8,6 +8,7 @@ import {
 } from './responseShape';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
+import { isUnsupportedParameterError, LOW_REASONING_EFFORT, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
 import { recordUsage } from './usageLog';
 
 type OpenAiVersion = 'terra' | 'sol' | 'luna';
@@ -31,15 +32,15 @@ const modelFor = (openAiVersion: OpenAiVersion) => OPENAI_MODELS[openAiVersion] 
 /** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
 async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청'): Promise<any> {
   assertHeaderSafeApiKey(apiKey, 'OpenAI');
-  try {
-    const response = await withRetry(async () => {
+  const model = String(body.model);
+  const send = (payload: Record<string, unknown>) => withRetry(async () => {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
@@ -57,8 +58,31 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
         console.warn(`OpenAI 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
     });
+
+  try {
+    let response;
+    if (shouldReduceReasoning(model)) {
+      // 추론 줄이기(사용량 창의 실험 옵션): 지원하지 않는 모델이면 기억해 두고 설정 없이 다시 보냄
+      try {
+        response = await send({ ...body, reasoning_effort: LOW_REASONING_EFFORT });
+      } catch (error) {
+        if (!isUnsupportedParameterError(error, 'reasoning_effort')) throw error;
+        markReasoningControlUnsupported(model);
+        response = await send(body);
+      }
+    } else {
+      response = await send(body);
+    }
     const usage = response?.usage;
-    recordUsage('openai', label, usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0, usage?.prompt_tokens_details?.cached_tokens ?? 0);
+    recordUsage({
+      provider: 'openai',
+      model,
+      label,
+      inputTokens: usage?.prompt_tokens ?? 0,
+      cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+      reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+    });
     return response;
   } catch (error) {
     throw toFriendlyError(error, 'OpenAI');

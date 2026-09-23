@@ -6,17 +6,7 @@ import {
   UNTITLED_KEY, UNTITLED_TITLE, workKeyOf,
 } from './workIdentity';
 import { loadWorkNotes, saveWorkNotes } from './workNotes';
-
-/** 테스트용 localStorage (Node에는 없음) */
-class MemoryStorage implements Storage {
-  private map = new Map<string, string>();
-  get length() { return this.map.size; }
-  clear() { this.map.clear(); }
-  getItem(key: string) { return this.map.has(key) ? this.map.get(key)! : null; }
-  key(index: number) { return [...this.map.keys()][index] ?? null; }
-  removeItem(key: string) { this.map.delete(key); }
-  setItem(key: string, value: string) { this.map.set(key, String(value)); }
-}
+import { MemoryStorage } from './testing/memoryStorage';
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', new MemoryStorage());

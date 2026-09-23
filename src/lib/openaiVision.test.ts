@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryStorage } from './testing/memoryStorage';
+
+vi.stubGlobal('localStorage', new MemoryStorage());
 import { retranslateTextOpenAI, summarizeWorkNotesOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { getUsageTotals, resetUsageTotals } from './usageLog';
 
@@ -33,7 +36,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 90 });
+    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 90, reasoningTokens: 0 });
     expect(getUsageTotals().gemini.calls).toBe(0);
   });
 
@@ -135,5 +138,42 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('拳王 -> 권왕');
     expect(prompt).not.toContain('南斗');
+  });
+});
+
+describe('추론 줄이기 (reasoning_effort)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetUsageTotals();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it('꺼져 있으면 reasoning_effort를 보내지 않고, 추론 토큰은 따로 기록한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('번역', {
+      prompt_tokens: 100, completion_tokens: 50, completion_tokens_details: { reasoning_tokens: 30 },
+    } as any));
+    vi.stubGlobal('fetch', fetchMock);
+    await retranslateTextOpenAI('terra', 'sk-test', '原文');
+    expect(sentBody(fetchMock).reasoning_effort).toBeUndefined();
+    expect(getUsageTotals().openai.reasoningTokens).toBe(30);
+  });
+
+  it('켜면 low로 보내고, 모델이 거절하면 기억해 두고 설정 없이 다시 보낸다', async () => {
+    localStorage.setItem('manga-reduce-reasoning', 'true');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 400, headers: new Headers(),
+        text: async () => '{"error":{"message":"Unsupported parameter: \'reasoning_effort\'"}}',
+      })
+      .mockResolvedValue(okResponse('번역'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await retranslateTextOpenAI('terra', 'sk-test', '原文')).toBe('번역');
+    expect(sentBody(fetchMock, 0).reasoning_effort).toBe('low');
+    expect(sentBody(fetchMock, 1).reasoning_effort).toBeUndefined();
+
+    await retranslateTextOpenAI('terra', 'sk-test', '原文');
+    expect(sentBody(fetchMock, 2).reasoning_effort).toBeUndefined();
   });
 });

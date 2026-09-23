@@ -4,6 +4,7 @@ import { fullPageToResult, gridCellToResult, type FullPageWire, type GridCellWir
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
+import { isUnsupportedParameterError, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
 import { recordUsage } from './usageLog';
 
 export interface TranslationResult {
@@ -72,12 +73,11 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
   const contents = typeof request.contents === 'string'
     ? [{ role: 'user', parts: [{ text: request.contents }] }]
     : request.contents;
-  try {
-    const response = await withRetry(async () => {
+  const send = (config: Record<string, unknown> | undefined) => withRetry(async () => {
       const res = await fetch(`${GEMINI_API_URL}/${request.model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents, ...(request.config ? { generationConfig: request.config } : {}) }),
+        body: JSON.stringify({ contents, ...(config ? { generationConfig: config } : {}) }),
       });
       if (!res.ok) {
         const error: HttpError = new Error(`Gemini API Error ${res.status}: ${await res.text()}`);
@@ -92,14 +92,33 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
         console.warn(`Gemini 요청 재시도 ${attempt}회 (${Math.round(delayMs / 1000)}초 후):`, (error as Error)?.message ?? error);
       },
     });
+
+  try {
+    let response: GenerateContentResponse;
+    if (shouldReduceReasoning(request.model)) {
+      // 추론 줄이기(사용량 창의 실험 옵션): thinking 예산 0. 지원하지 않는 모델이면 기억해 두고 설정 없이 다시 보냄
+      try {
+        response = await send({ ...request.config, thinkingConfig: { thinkingBudget: 0 } });
+      } catch (error) {
+        if (!isUnsupportedParameterError(error, 'thinking')) throw error;
+        markReasoningControlUnsupported(request.model);
+        response = await send(request.config);
+      }
+    } else {
+      response = await send(request.config);
+    }
     const usage = response.usageMetadata;
-    recordUsage(
-      'gemini',
+    const thoughts = usage?.thoughtsTokenCount ?? 0;
+    recordUsage({
+      provider: 'gemini',
+      model: request.model,
       label,
-      usage?.promptTokenCount ?? 0,
-      (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
-      usage?.cachedContentTokenCount ?? 0,
-    );
+      inputTokens: usage?.promptTokenCount ?? 0,
+      cachedInputTokens: usage?.cachedContentTokenCount ?? 0,
+      // Gemini는 생각 토큰을 답 토큰과 따로 세지만 둘 다 출력 단가로 청구되므로 출력에 합치고, 추론으로도 따로 기록
+      outputTokens: (usage?.candidatesTokenCount ?? 0) + thoughts,
+      reasoningTokens: thoughts,
+    });
     // 생각(thought) 파트는 답이 아니므로 빼고 이어 붙임
     const parts = response.candidates?.[0]?.content?.parts ?? [];
     return { text: parts.filter(part => !part.thought).map(part => part.text ?? '').join('') };

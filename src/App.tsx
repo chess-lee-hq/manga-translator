@@ -8,6 +8,7 @@ import { ImportChoiceModal } from './components/ImportChoiceModal';
 import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
+import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
 import { useGlossary } from './hooks/useGlossary';
@@ -34,6 +35,7 @@ import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
 import { clearLegacyGlossary, loadLegacyGlossary, mergeIntoStoredGlossary } from './lib/glossaryStore';
+import { setUsageWork } from './lib/usageLog';
 import { carryOverWorkData, listKnownWorks, loadWorkAliases, migrateLegacyWorkData, rememberWork, resolveWork, setWorkAlias } from './lib/workIdentity';
 import type { Box2d, GeminiVersion, HoveredBubble, MainEngine, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
@@ -88,6 +90,7 @@ function App() {
   const [pendingBubbleIds, setPendingBubbleIds] = useState<Set<string>>(() => new Set());
   const [glossaryDraft, setGlossaryDraft] = useState<GlossaryDraft | null>(null);
   const [isWorkNotesOpen, setIsWorkNotesOpen] = useState(false);
+  const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const notesBusyRef = useRef(false);
@@ -111,6 +114,11 @@ function App() {
     return identity;
   }, [rawWorkName, workAliases]);
   const workName = work.key;
+  const hasOpenWork = allImages.length > 0;
+  // 토큰 사용량을 작품별로도 쌓도록 지금 작품을 알려 줌 (아무것도 안 열었으면 세션 합계에만)
+  useEffect(() => {
+    setUsageWork(hasOpenWork ? work.key : null);
+  }, [hasOpenWork, work.key]);
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
   const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);
 
@@ -709,6 +717,7 @@ function App() {
         glossaryCandidateCount={glossaryCandidates.length}
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
         onClearCache={handleClearCache}
+        onOpenUsage={() => setIsUsageOpen(true)}
         onCloseSession={handleCloseSession}
         autoTranslate={queue.autoTranslate}
         onToggleAutoTranslate={() => queue.setAutoTranslate(!queue.autoTranslate)}
@@ -863,6 +872,10 @@ function App() {
           onClearCorrections={clearCorrections}
           onClose={() => setIsWorkNotesOpen(false)}
         />
+      )}
+
+      {isUsageOpen && (
+        <UsageModal workKey={work.key} workTitle={work.title} onClose={() => setIsUsageOpen(false)} />
       )}
 
       {pendingImport && (

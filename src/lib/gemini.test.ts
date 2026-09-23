@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryStorage } from './testing/memoryStorage';
+
+vi.stubGlobal('localStorage', new MemoryStorage());
 
 /**
  * Gemini는 SDK 없이 REST(fetch)로 부르므로 fetch를 가로챕니다.
@@ -115,5 +118,31 @@ describe('메인 엔진으로 골랐을 때만 쓰는 Gemini 함수들', () => {
   it('summarizeWorkNotes: 대사가 없으면 요청 없이 기존 노트를 그대로 돌려준다', async () => {
     expect(await summarizeWorkNotes('key', '3.6', [], '이전 노트')).toEqual({ notes: '이전 노트', glossary: [] });
     expect(generateContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('추론 줄이기 (thinkingBudget)', () => {
+  beforeEach(() => {
+    generateContent.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it('켜면 thinking 예산 0을 보내고, 거절되면 기억해 두고 설정 없이 다시 보낸다', async () => {
+    localStorage.setItem('manga-reduce-reasoning', 'true');
+    generateContent.mockResolvedValue({ text: '번역' });
+    fetchMock.mockResolvedValueOnce(new Response('{"error":{"message":"Thinking budget is not supported for this model."}}', { status: 400 }));
+
+    expect(await retranslateTextGemini('g-key', '原文', '3.6')).toBe('번역');
+    expect(lastRequest().config?.thinkingConfig).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem('manga-reasoning-unsupported')!)).toEqual(['gemini-3.6-flash']);
+  });
+
+  it('켜져 있고 지원하면 thinkingConfig를 싣는다', async () => {
+    localStorage.setItem('manga-reduce-reasoning', 'true');
+    generateContent.mockResolvedValue({ text: '번역' });
+    await retranslateTextGemini('g-key', '原文', '3.6');
+    expect(lastRequest().config.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 });

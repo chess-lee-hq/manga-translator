@@ -1,5 +1,7 @@
-import { ArrowLeftRight, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeftRight, BarChart3, BookOpen, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Trash2, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
+import { getUsageByModel, sumUsage } from '../lib/usageLog';
+import { formatTokens, useUsageVersion } from './UsageModal';
 
 interface AppHeaderProps {
   loadedFilename: string | null;
@@ -25,6 +27,7 @@ interface AppHeaderProps {
   glossaryCandidateCount: number;
   onOpenWorkNotes: () => void;
   onClearCache: () => void;
+  onOpenUsage: () => void;
   onCloseSession: () => void;
   autoTranslate: boolean;
   onToggleAutoTranslate: () => void;
@@ -119,10 +122,12 @@ export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onClearCache, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
+    onClearCache, onOpenUsage, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
     openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
+  useUsageVersion();
+  const sessionUsage = sumUsage(getUsageByModel('session'));
 
   return (
     // 한 줄에 다 들어가지 않으면 가로로 늘어나지 않고 오른쪽 묶음이 다음 줄로 내려감
@@ -249,6 +254,14 @@ export function AppHeader(props: AppHeaderProps) {
             <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
           </>
         )}
+
+        <button
+          onClick={onOpenUsage}
+          title={`토큰 사용량 — 이번 세션 ${sessionUsage.calls}회 요청, 입력 ${sessionUsage.inputTokens.toLocaleString()} / 출력 ${sessionUsage.outputTokens.toLocaleString()} 토큰`}
+          className={`${actionButton} bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100`}
+        >
+          <BarChart3 size={12} /> {sessionUsage.calls > 0 ? formatTokens(sessionUsage.inputTokens + sessionUsage.outputTokens) : <span className={WIDE_LABEL}>사용량</span>}
+        </button>
 
         <button
           onClick={onToggleAutoTranslate}
