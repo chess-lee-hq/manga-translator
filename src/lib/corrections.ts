@@ -15,7 +15,7 @@ export interface Correction {
   at: string;
 }
 
-const PREFIX = 'manga-corrections-';
+export const CORRECTIONS_PREFIX = 'manga-corrections-';
 /** 작품 하나에 보관할 최대 개수 (오래된 것부터 버림) */
 const MAX_STORED = 60;
 /** 번역 요청에 넣을 최근 교정 수 */
@@ -26,7 +26,7 @@ const MAX_FIELD_CHARS = 80;
 /** AI 번역이 아니라 화면 표시용 임시 문구 — 이걸 고친 건 교정이 아님 */
 const PLACEHOLDERS = new Set(['', '...', '번역 중...', '번역 실패', '인식된 텍스트가 없습니다.']);
 
-export const correctionsKey = (workName: string) => `${PREFIX}${workName || 'default'}`;
+export const correctionsKey = (workName: string) => `${CORRECTIONS_PREFIX}${workName || 'default'}`;
 
 function isCorrection(value: unknown): value is Correction {
   const c = value as Correction;

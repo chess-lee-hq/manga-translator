@@ -18,7 +18,7 @@ vi.mock('./imageUtils', async () => ({
 const { translatePage } = await import('./translatePage');
 
 const settings: TranslationSettings = {
-  mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'luna', googleKey: '', geminiVersion: '3.6', glossary: {},
+  mainEngine: 'openai', openaiKey: 'sk-test', openAiVersion: 'terra', googleKey: '', geminiVersion: '3.6', glossary: {},
 };
 const page = { src: 'data:image/png;base64,X', mimeType: 'image/png', width: 800, height: 1200 } as UploadedImage;
 

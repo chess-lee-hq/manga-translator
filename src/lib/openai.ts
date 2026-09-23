@@ -10,10 +10,23 @@ import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { recordUsage } from './usageLog';
 
-type OpenAiVersion = 'luna' | 'sol';
+type OpenAiVersion = 'terra' | 'sol' | 'luna';
 type HttpError = Error & { status?: number; retryAfterMs?: number };
 
-const modelFor = (openAiVersion: OpenAiVersion) => `gpt-6-${openAiVersion}`;
+/**
+ * 헤더에서 고르는 이름 → 실제 모델 ID.
+ * 세대가 섞여 있어(5.6 / 6) 이름만 이어 붙이지 않고 표로 둡니다.
+ * - terra: 기본값. 일본어 인식이 안정적
+ * - sol: 가장 강한 인식·번역 (품질 검사 재요청의 승격 대상이기도 함)
+ * - luna: 시험용. 고어체·붓글씨체 원문을 잘못 읽는 경우가 있어 지켜보는 중
+ */
+export const OPENAI_MODELS: Record<OpenAiVersion, string> = {
+  terra: 'gpt-5.6-terra',
+  sol: 'gpt-6-sol',
+  luna: 'gpt-6-luna',
+};
+
+const modelFor = (openAiVersion: OpenAiVersion) => OPENAI_MODELS[openAiVersion] ?? OPENAI_MODELS.terra;
 
 /** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
 async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청'): Promise<any> {

@@ -1,43 +1,35 @@
 import { useState } from 'react';
+import { loadGlossary, saveGlossary } from '../lib/glossaryStore';
 import type { Glossary } from '../types';
 
-const STORAGE_KEY = 'manga-glossary-current';
-
-function persist(glossary: Glossary) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(glossary));
-  } catch (err) {
-    console.warn('단어장 저장 실패:', err);
+/**
+ * 작품별 단어장. 작품이 바뀌면 같은 렌더에서 바로 그 작품의 단어장을 읽습니다. (useWorkNotes와 같은 방식)
+ * 추천 용어 "모두 추가"처럼 한 번에 여러 번 합칠 때 앞의 것이 덮이지 않도록 이전 상태를 기준으로 갱신합니다.
+ */
+export function useGlossary(workKey: string) {
+  const [state, setState] = useState(() => ({ workKey, glossary: loadGlossary(workKey) }));
+  if (state.workKey !== workKey) {
+    setState({ workKey, glossary: loadGlossary(workKey) });
   }
-}
+  const glossary = state.workKey === workKey ? state.glossary : loadGlossary(workKey);
 
-export function useGlossary() {
-  const [glossary, setGlossary] = useState<Glossary>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
+  const update = (change: (current: Glossary) => Glossary) => {
+    setState(prev => {
+      const current = prev.workKey === workKey ? prev.glossary : loadGlossary(workKey);
+      const next = change(current);
+      saveGlossary(workKey, next);
+      return { workKey, glossary: next };
+    });
+  };
+
+  /** 항목을 이 작품의 단어장에 합칩니다. 같은 원문은 새 값으로 바뀌고 나머지 기존 항목은 유지됩니다. */
+  const mergeGlossary = (entries: Glossary) => update(current => ({ ...current, ...entries }));
+
+  const removeGlossaryEntry = (original: string) => update(current => {
+    const next = { ...current };
+    delete next[original];
+    return next;
   });
-
-  /** 항목을 현재 단어장에 합칩니다. 같은 원문은 새 값으로 바뀌고 나머지 기존 항목은 유지됩니다. */
-  const mergeGlossary = (entries: Glossary) => {
-    setGlossary(prev => {
-      const next = { ...prev, ...entries };
-      persist(next);
-      return next;
-    });
-  };
-
-  const removeGlossaryEntry = (original: string) => {
-    setGlossary(prev => {
-      const next = { ...prev };
-      delete next[original];
-      persist(next);
-      return next;
-    });
-  };
 
   return { glossary, mergeGlossary, removeGlossaryEntry };
 }

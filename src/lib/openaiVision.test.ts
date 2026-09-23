@@ -25,10 +25,10 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const results = await translateGridImageOpenAI('luna', 'sk-test', 'data:image/jpeg;base64,GRID', 1);
+    const results = await translateGridImageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,GRID', 1);
 
     const body = sentBody(fetchMock);
-    expect(body.model).toBe('gpt-6-luna');
+    expect(body.model).toBe('gpt-5.6-terra');
     expect(body.messages[0].content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
@@ -52,6 +52,17 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     expect(prompt).toContain('jp = 일본어 원문');
     expect(sentBody(fetchMock).response_format.json_schema.schema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
     expect(sentBody(fetchMock).model).toBe('gpt-6-sol');
+  });
+
+  it.each([
+    ['terra', 'gpt-5.6-terra'],
+    ['sol', 'gpt-6-sol'],
+    ['luna', 'gpt-6-luna'],
+  ] as const)('헤더에서 고른 %s는 %s 모델로 보낸다 (세대가 섞여 있어 표로 매핑)', async (version, model) => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI(version, 'sk-test', 'data:image/jpeg;base64,GRID', 1);
+    expect(sentBody(fetchMock).model).toBe(model);
   });
 
   it('cells 키가 없으면 빈 배열을 돌려준다', async () => {

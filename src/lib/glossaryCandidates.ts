@@ -21,7 +21,7 @@ interface StoredCandidates {
   dismissed: string[];
 }
 
-const PREFIX = 'manga-glossary-candidates-';
+export const CANDIDATES_PREFIX = 'manga-glossary-candidates-';
 /** 한 번에 보여줄 최대 후보 수 */
 export const MAX_CANDIDATES = 12;
 /** 번역 기록에서 최소 이만큼 등장해야 후보로 인정 (모델이 지어낸 용어 걸러내기) */
@@ -30,7 +30,7 @@ const MIN_OCCURRENCES = 2;
 const CJK = /[ぁ-ゖァ-ヺ㐀-䶿一-鿿]/;
 const HANGUL = /[가-힣]/;
 
-export const candidatesKey = (workName: string) => `${PREFIX}${workName || 'default'}`;
+export const candidatesKey = (workName: string) => `${CANDIDATES_PREFIX}${workName || 'default'}`;
 
 export function loadCandidates(workName: string): StoredCandidates {
   try {

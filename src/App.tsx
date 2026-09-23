@@ -32,6 +32,8 @@ import { buildCorrectionSection, loadCorrections, mergeCorrections, saveCorrecti
 import { filterCandidates } from './lib/glossaryCandidates';
 import { buildContextInstruction, collectRecentPairs } from './lib/translationContext';
 import { saveWorkNotes } from './lib/workNotes';
+import { clearLegacyGlossary, loadLegacyGlossary, mergeIntoStoredGlossary } from './lib/glossaryStore';
+import { carryOverWorkData, listKnownWorks, loadWorkAliases, migrateLegacyWorkData, rememberWork, resolveWork, setWorkAlias } from './lib/workIdentity';
 import type { Box2d, GeminiVersion, HoveredBubble, MainEngine, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
 /** 보이는 페이지 뒤로 미리 번역해 둘 페이지 수 */
@@ -46,18 +48,29 @@ const GOOGLE_KEY_STORAGE = 'manga-translator-google-key';
 const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
 const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
-const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
+/**
+ * 고른 OpenAI 모델. 예전 키(openai-version)에는 한동안 기본값이던 6 Luna가 남아 있을 수 있어,
+ * 새 키로 옮기면서 Luna는 기본값(5.6 Terra)으로 되돌린다. Sol을 골라 뒀던 사람은 그대로 Sol.
+ */
+const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-model';
+const LEGACY_OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
+
+function loadOpenAiVersion(): OpenAiVersion {
+  const saved = localStorage.getItem(OPENAI_VERSION_STORAGE_KEY);
+  if (saved === 'terra' || saved === 'sol' || saved === 'luna') return saved;
+  return localStorage.getItem(LEGACY_OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'terra';
+}
 /** 1차 번역을 맡는 엔진(메인/서브 역할) — 기본은 OpenAI */
 const MAIN_ENGINE_STORAGE_KEY = 'manga-translator-main-engine';
 
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 function App() {
-  // 메인은 기본 OpenAI(Luna), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
+  // 메인은 기본 OpenAI(5.6 Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => (localStorage.getItem(GEMINI_VERSION_STORAGE_KEY) === '3.7' ? '3.7' : '3.6'));
-  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(() => (localStorage.getItem(OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'luna'));
+  const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(loadOpenAiVersion);
   const [mainEngine, setMainEngine] = useState<MainEngine>(() => (localStorage.getItem(MAIN_ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'openai'));
 
   const [allImages, setAllImages] = useState<UploadedImage[]>([]);
@@ -82,9 +95,23 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { glossary, mergeGlossary, removeGlossaryEntry } = useGlossary();
-  // 작품 노트는 작품(불러온 파일 이름)별로 저장
-  const workName = loadedFilename ?? allImages[0]?.file.name ?? 'default';
+  // ---------- 작품 판별 ----------
+  // 단어장·작품 노트·내가 고친 번역·단어장 후보는 모두 "작품" 단위로 저장 (lib/workIdentity.ts의 규칙)
+  // 파일 이름에서 권·화 번호를 떼어 같은 작품의 다른 권끼리 자동으로 이어지고, 단어장 창에서 직접 지정할 수도 있음
+  const [workAliases, setWorkAliases] = useState(loadWorkAliases);
+  const rawWorkName = loadedFilename ?? allImages[0]?.file.name ?? '';
+  const work = useMemo(() => {
+    const identity = resolveWork(rawWorkName, workAliases);
+    // 작품별로 나누기 전 데이터를 옮겨 둔 뒤 아래 훅들이 읽도록, 같은 렌더에서 먼저 처리 (여러 번 불러도 안전)
+    migrateLegacyWorkData(identity);
+    rememberWork(identity);
+    return identity;
+  }, [rawWorkName, workAliases]);
+  const workName = work.key;
+  // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
+  const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);
+
+  const { glossary, mergeGlossary, removeGlossaryEntry } = useGlossary(workName);
   const { notes, saveNotes } = useWorkNotes(workName);
   // 대본에서 직접 고친 번역 — 다음 번역에 교정 예시로 반영
   const { corrections, recordCorrection, removeCorrection, clearCorrections, mergeImported: mergeImportedCorrections } = useCorrections(workName);
@@ -194,16 +221,18 @@ function App() {
       setAllImages(result.images);
       setLoadedFilename(result.loadedFilename ?? null);
       setCurrentPageIndex(Math.min(result.lastReadPage || 0, Math.max(0, result.images.length - 1)));
-      // 백업의 단어장은 현재 단어장에 합침 (예전에는 통째로 덮어써서 기존 단어장이 사라졌음)
-      const glossaryCount = Object.keys(result.glossary ?? {}).length;
-      if (result.glossary && glossaryCount > 0) {
-        mergeGlossary(result.glossary);
-        info.push(`단어장 ${glossaryCount}개 항목을 현재 단어장에 합쳤습니다.`);
-      }
       // 드라이브에 저장할 때는 이 백업 이름을 기본값으로 써서 같은 파일을 계속 덮어쓰게 함
       if (result.archiveFileName) setDriveFileName(result.archiveFileName);
-      // 복원 후의 작품 이름으로 저장해야 함 (지금 훅의 workName은 아직 복원 전 작품)
-      const targetWork = result.loadedFilename ?? result.images[0]?.file.name ?? 'default';
+      // 복원 후의 작품으로 저장해야 함 (지금 훅들의 작품은 아직 복원 전 작품)
+      const targetIdentity = resolveWork(result.loadedFilename ?? result.images[0]?.file.name);
+      const targetWork = targetIdentity.key;
+      // 백업의 단어장은 그 작품의 단어장에 합침 (통째로 덮어쓰면 기존 단어장이 사라짐)
+      const glossaryCount = Object.keys(result.glossary ?? {}).length;
+      if (result.glossary && glossaryCount > 0) {
+        if (targetWork === workName) mergeGlossary(result.glossary);
+        else mergeIntoStoredGlossary(targetWork, result.glossary);
+        info.push(`단어장 ${glossaryCount}개 항목을 「${targetIdentity.title}」 단어장에 합쳤습니다.`);
+      }
       if (result.notes?.trim()) {
         if (targetWork === workName) saveNotes(result.notes.trim(), 0);
         else saveWorkNotes(targetWork, { text: result.notes.trim(), pageCount: 0, updatedAt: new Date().toISOString() });
@@ -458,6 +487,35 @@ function App() {
     if (bubble && scriptStyle === 'side') {
       document.getElementById(`script-${bubble.imageIndex}-${bubble.bubbleIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
+  };
+
+  // ---------- 작품 이름 ----------
+
+  /**
+   * 이 파일을 어느 작품으로 볼지 직접 지정합니다. 빈 값이면 파일 이름으로 자동 판별.
+   * 새 작품 쪽이 비어 있으면 지금까지의 단어장·노트·교정을 가져가고, 이미 있는 작품에 연결하면 그 작품 것을 씀.
+   */
+  const handleRenameWork = (title: string) => {
+    const trimmed = title.trim();
+    if (loadedFilename) {
+      const aliases = setWorkAlias(loadedFilename, trimmed || null);
+      carryOverWorkData(work.key, resolveWork(loadedFilename, aliases).key);
+      setWorkAliases(aliases);
+    } else {
+      // 낱장 이미지는 알아볼 파일 이름이 없으므로 작품 이름을 그대로 붙여 둠 (세션 복원 때도 유지됨)
+      carryOverWorkData(work.key, resolveWork(trimmed || allImages[0]?.file.name, workAliases).key);
+      setLoadedFilename(trimmed || null);
+    }
+  };
+
+  const handleImportLegacyGlossary = (entries: Record<string, string>) => {
+    mergeGlossary(entries);
+  };
+
+  const handleClearLegacyGlossary = () => {
+    if (!confirm('작품별로 나누기 전의 공통 단어장을 지울까요?\n(이미 각 작품 단어장으로 가져온 항목은 그대로 남습니다)')) return;
+    clearLegacyGlossary();
+    setLegacyGlossary({});
   };
 
   // ---------- 헤더 동작 ----------
@@ -745,7 +803,12 @@ function App() {
         <GlossaryModal
           glossary={glossary}
           initialDraft={glossaryDraft}
-          documentName={loadedFilename}
+          work={work}
+          knownWorks={listKnownWorks()}
+          onRenameWork={handleRenameWork}
+          legacyGlossary={Object.fromEntries(Object.entries(legacyGlossary).filter(([original]) => !(original in glossary)))}
+          onImportLegacy={handleImportLegacyGlossary}
+          onClearLegacy={handleClearLegacyGlossary}
           onMerge={mergeGlossary}
           onRemove={removeGlossaryEntry}
           candidates={glossaryCandidates}
@@ -757,7 +820,7 @@ function App() {
 
       {isWorkNotesOpen && (
         <WorkNotesModal
-          workName={workName}
+          workName={work.title}
           notes={notes}
           recentPairCount={collectRecentPairs(allImages, translationCache, allImages.length, NOTES_SOURCE_PAIRS).length}
           isRegenerating={isGeneratingNotes}

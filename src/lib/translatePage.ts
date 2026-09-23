@@ -1,4 +1,4 @@
-import type { Box2d, TranslationResult, TranslationSettings, UploadedImage } from '../types';
+import type { Box2d, OpenAiVersion, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, shortenTranslationGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import { createGridImage, loadImage, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
@@ -108,7 +108,7 @@ interface GridPromptParts {
   label?: string;
 }
 
-function viaOpenAiGrid(apiKey: string, version: 'luna' | 'sol', parts: GridPromptParts): GridRequest {
+function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPromptParts): GridRequest {
   return (grid, pageCellCounts) =>
     translateGridImageOpenAI(version, apiKey, grid.dataUrl, grid.cells.length, {
       ...parts,
@@ -169,8 +169,8 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
     };
   }
 
-  // 메인이 OpenAI일 때, 보조 키가 없으면 OpenAI Sol(더 강한 모델)로 재시도
-  const viaSol = viaOpenAiGrid(openaiKey, 'sol', { ...parts, label: '격자 재요청 (고해상도 · Sol)' });
+  // 메인이 OpenAI일 때, 보조 키가 없으면 OpenAI 6 Sol(가장 강한 모델)로 재시도
+  const viaSol = viaOpenAiGrid(openaiKey, 'sol', { ...parts, label: '격자 재요청 (고해상도 · 6 Sol)' });
   if (!googleKey) return viaSol;
 
   const viaGemini = viaGeminiGrid(googleKey, geminiVersion, { ...parts, label: '격자 재요청 (고해상도 · Gemini)' });
@@ -178,7 +178,7 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
     try {
       return await viaGemini(grid, pageCellCounts);
     } catch (error) {
-      console.warn('Gemini 재요청 실패 — OpenAI Sol로 다시 시도합니다:', (error as Error)?.message ?? error);
+      console.warn('Gemini 재요청 실패 — OpenAI 6 Sol로 다시 시도합니다:', (error as Error)?.message ?? error);
       return viaSol(grid, pageCellCounts);
     }
   };

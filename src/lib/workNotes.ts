@@ -1,5 +1,5 @@
 /** 작품별 "작품 노트"(인물·말투·호칭 요약) 저장소. 번역 기록과 마찬가지로 localStorage에 둡니다. */
-const PREFIX = 'manga-notes-';
+export const NOTES_PREFIX = 'manga-notes-';
 
 export interface WorkNotes {
   text: string;
@@ -8,7 +8,7 @@ export interface WorkNotes {
   updatedAt: string;
 }
 
-export const workNotesKey = (workName: string) => `${PREFIX}${workName || 'default'}`;
+export const workNotesKey = (workName: string) => `${NOTES_PREFIX}${workName || 'default'}`;
 
 export function loadWorkNotes(workName: string): WorkNotes | null {
   try {
