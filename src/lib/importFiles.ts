@@ -122,7 +122,18 @@ export async function importFiles(fileList: FileList | File[]): Promise<ImportRe
   return { mode: 'append', images: loaded.images, translations, loadedFilename, failedImages: loaded.failed, jsonFailed };
 }
 
-/** 기존 이미지에 새 이미지를 합칩니다. 같은 파일(이름+크기)은 건너뛰고 자연 정렬합니다. */
+/**
+ * 다른 권(압축 파일)을 지금 작업 **뒤에** 이어 붙입니다. 같은 파일(이름+크기)은 건너뜁니다.
+ * mergeImages처럼 전체를 파일 이름순으로 다시 정렬하면, 권마다 001.jpg부터 시작하는 경우
+ * 1권·2권 페이지가 번갈아 섞이므로 기존 순서를 그대로 두고 새 권은 그 뒤에 붙입니다.
+ */
+export function appendImages<T extends { file: { name: string; size: number }; sortKey: string }>(existing: T[], incoming: T[]): T[] {
+  const isDuplicate = (image: T) => existing.some(e => e.file.name === image.file.name && e.file.size === image.file.size);
+  const added = incoming.filter(image => !isDuplicate(image)).sort((a, b) => naturalCompare(a.sortKey, b.sortKey));
+  return [...existing, ...added];
+}
+
+/** 낱장 이미지를 지금 작업에 추가합니다. 같은 파일(이름+크기)은 건너뛰고 자연 정렬합니다. */
 export function mergeImages<T extends { file: { name: string; size: number }; sortKey: string }>(existing: T[], incoming: T[]): T[] {
   const combined = [...existing];
   for (const image of incoming) {

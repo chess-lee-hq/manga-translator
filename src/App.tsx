@@ -4,6 +4,7 @@ import { AppHeader } from './components/AppHeader';
 import { DriveModal } from './components/DriveModal';
 import { EmptyState } from './components/EmptyState';
 import { GlossaryModal, type GlossaryDraft } from './components/GlossaryModal';
+import { ImportChoiceModal } from './components/ImportChoiceModal';
 import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
@@ -24,7 +25,7 @@ import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
-import { importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
+import { appendImages, importBackupZip, importFiles, mergeImages, type ImportResult } from './lib/importFiles';
 import { buildTranslationQueue, getSpreadStartIndex, getVisibleIndices } from './lib/pageLayout';
 import { normalizeEllipsis } from './lib/ellipsis';
 import { retranslateText, shortenTranslation, translateRegion } from './lib/translatePage';
@@ -93,6 +94,8 @@ function App() {
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  // 작업 중에 다른 압축 파일을 열었을 때, 새로 열지 이어 붙일지 고르기 전까지 들고 있는 가져오기 결과
+  const [pendingImport, setPendingImport] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ---------- 작품 판별 ----------
@@ -211,8 +214,11 @@ function App() {
 
   // ---------- 파일 가져오기 ----------
 
-  /** 가져온 결과를 상태에 반영합니다. warnings는 문제, info는 참고 안내입니다. */
-  const applyImport = (result: ImportResult) => {
+  /**
+   * 가져온 결과를 상태에 반영합니다. warnings는 문제, info는 참고 안내입니다.
+   * placement: merge = 낱장 이미지 추가·첫 파일 열기(파일 이름순 정렬) / replace = 새로 열기 / append = 지금 작업 뒤에 이어 붙이기
+   */
+  const applyImport = (result: ImportResult, placement: 'merge' | 'replace' | 'append' = 'merge') => {
     const warnings: string[] = [];
     const info: string[] = [];
     mergeTranslations(result.translations);
@@ -243,6 +249,16 @@ function App() {
         else saveCorrections(targetWork, mergeCorrections(loadCorrections(targetWork), result.corrections));
         info.push(`내가 고친 번역 ${result.corrections.length}개를 불러왔습니다.`);
       }
+    } else if (placement === 'replace') {
+      setAllImages(result.images);
+      setLoadedFilename(result.loadedFilename ?? null);
+      setDriveFileName(null);
+      setCurrentPageIndex(0);
+      setHoveredBubble(null);
+      setIsEditingBoxes(false);
+    } else if (placement === 'append') {
+      // 작품(단어장·노트)은 지금 작품을 그대로 쓰도록 파일 이름은 바꾸지 않음
+      setAllImages(prev => appendImages(prev, result.images));
     } else {
       if (result.loadedFilename) setLoadedFilename(result.loadedFilename);
       setAllImages(prev => mergeImages(prev, result.images));
@@ -261,12 +277,25 @@ function App() {
         setError('올바른 이미지 파일이나 압축 파일(.zip, .cbz)을 업로드해주세요.');
         return;
       }
+      // 이미 작업 중인데 다른 압축 파일을 열면 섞지 않고 어떻게 할지 먼저 물어봄
+      if (result.mode === 'append' && result.loadedFilename && allImages.length > 0) {
+        setPendingImport(result);
+        return;
+      }
       const { warnings } = applyImport(result);
       if (warnings.length > 0) setError(warnings.join(' '));
     } catch (err: any) {
       console.error('파일 처리 에러:', err);
       setError(`파일을 불러오는 중 오류가 발생했습니다: ${err?.message ?? err}`);
     }
+  };
+
+  const resolvePendingImport = (placement: 'replace' | 'append' | null) => {
+    const result = pendingImport;
+    setPendingImport(null);
+    if (!result || !placement) return;
+    const { warnings } = applyImport(result, placement);
+    if (warnings.length > 0) setError(warnings.join(' '));
   };
 
   const drive = useDriveSync({
@@ -833,6 +862,19 @@ function App() {
           onRemoveCorrection={removeCorrection}
           onClearCorrections={clearCorrections}
           onClose={() => setIsWorkNotesOpen(false)}
+        />
+      )}
+
+      {pendingImport && (
+        <ImportChoiceModal
+          currentTitle={work.title}
+          currentPageCount={allImages.length}
+          incomingName={pendingImport.loadedFilename ?? ''}
+          incomingPageCount={pendingImport.images.length}
+          sameWork={resolveWork(pendingImport.loadedFilename, workAliases).key === work.key}
+          onReplace={() => resolvePendingImport('replace')}
+          onAppend={() => resolvePendingImport('append')}
+          onCancel={() => resolvePendingImport(null)}
         />
       )}
 
