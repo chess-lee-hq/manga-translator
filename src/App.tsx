@@ -10,11 +10,13 @@ import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
 import { ReviewHubModal, type ReviewItem, type TranslationChange } from './components/ReviewHubModal';
 import type { LineRef } from './lib/consistency';
+import type { PolishProposal } from './lib/polish';
 import { StorageModal } from './components/StorageModal';
 import { TranslationOptionsModal } from './components/TranslationOptionsModal';
 import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
+import { usePolishPass } from './hooks/usePolishPass';
 import { useGlossary } from './hooks/useGlossary';
 import { useGlossaryCandidates } from './hooks/useGlossaryCandidates';
 import { useCorrections } from './hooks/useCorrections';
@@ -597,6 +599,24 @@ function App() {
     }
   };
 
+  // ---------- 다듬기 (텍스트만 한 번 더 감수) ----------
+  const { polish, startPolish, removeProposals } = usePolishPass(work.key);
+
+  const handleStartPolish = (range: [number, number]) => {
+    const sources = consistencyPages.filter(page => page.imgIndex + 1 >= range[0] && page.imgIndex + 1 <= range[1]);
+    // 작품 노트·내 교정·단어장은 넣고, 직전 대사는 넣지 않음 (대사 전체를 보여주므로)
+    startPolish(sources, { ...settings, ...buildContextInstruction(notes?.text, [], corrections) }, range);
+  };
+
+  /** 제안을 적용. 그사이 직접 고친 줄은 건너뜀 */
+  const handleApplyPolish = (proposals: PolishProposal[]) => {
+    const applicable = proposals.filter(p => translationCache[p.key]?.find(r => r.id === p.id)?.translated_text.trim() === p.before);
+    handleApplyChanges(applicable.map(p => ({ key: p.key, id: p.id, translated: p.after })));
+    removeProposals(proposals.map(p => p.id));
+    const skipped = proposals.length - applicable.length;
+    if (skipped > 0) alert(`${skipped}개는 제안을 받은 뒤 번역이 바뀌어 적용하지 않았습니다.`);
+  };
+
   const consistencyPages = allImages
     .map((img, imgIndex) => ({ imgIndex, key: getCacheKey(img.file), results: translationCache[getCacheKey(img.file)] ?? [] }))
     .filter(page => page.results.length > 0);
@@ -1027,6 +1047,11 @@ function App() {
             setIsReviewOpen(false);
             setGlossaryDraft({ original, translated });
           }}
+          polish={polish}
+          mainEngineLabel={mainEngine === 'gemini' ? 'Gemini' : 'OpenAI'}
+          onStartPolish={handleStartPolish}
+          onApplyPolish={handleApplyPolish}
+          onDiscardPolish={removeProposals}
           onClose={() => setIsReviewOpen(false)}
         />
       )}

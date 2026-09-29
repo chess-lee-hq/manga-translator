@@ -1,7 +1,10 @@
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
-import { fullPageToResult, gridResponseToResults, type FullPageWire, type GridResponseWire } from './responseShape';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
+import { fullPageToResult, gridResponseToResults, type FullPageWire, type GridResponseWire, type PolishChangeWire } from './responseShape';
+import {
+  buildFullPagePrompt, buildGridPrompt, buildPolishPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt,
+  type PolishLine, type PromptContextOptions,
+} from './translationPrompt';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { isUnsupportedParameterError, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
@@ -329,4 +332,35 @@ export async function translateGridImage(
   } catch (error: any) {
     throw new Error("Failed to parse JSON response: " + error.message);
   }
+}
+
+/** 번역이 끝난 대사들을 텍스트만으로 감수해, 고칠 줄만 돌려받습니다. (다듬기 패스) */
+export async function polishTranslationsGemini(
+  apiKey: string, geminiVersion: GeminiVersion, lines: PolishLine[], options: PromptContextOptions = {},
+): Promise<PolishChangeWire[]> {
+  if (lines.length === 0) return [];
+  const response = await generateContent(apiKey, {
+    model: modelNameFor(geminiVersion),
+    contents: buildPolishPrompt(lines, options),
+    config: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          changes: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: { i: { type: Type.INTEGER }, ko: { type: Type.STRING }, why: { type: Type.STRING } },
+              required: ['i', 'ko', 'why'],
+            },
+          },
+        },
+        required: ['changes'],
+      },
+    },
+  }, `다듬기 (${lines.length}줄)`);
+  if (!response.text) throw new Error('No response from Gemini API');
+  return parseJsonResponse<{ changes?: PolishChangeWire[] }>(response.text).changes ?? [];
 }

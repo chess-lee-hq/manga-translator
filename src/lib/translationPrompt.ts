@@ -211,3 +211,43 @@ ${known.length ? `- 이미 단어장에 있는 원문은 제외: ${known.join(',
 # 반영할 대사 (원문 → 번역)
 ${pairs.map(p => `- ${p.original || '(원문 없음)'} → ${p.translated}`).join('\n')}`;
 }
+
+/** 다듬기(감수) 패스에 보내는 한 줄 */
+export interface PolishLine {
+  /** 이번 요청 안에서의 줄 번호 (1부터) */
+  i: number;
+  /** 1부터 시작하는 쪽 번호 */
+  page: number;
+  jp: string;
+  ko: string;
+}
+
+/** (A) 고정 구간 — 다듬기(감수) 패스 */
+const POLISH_STATIC = `# 역할
+너는 일본 만화 번역 감수자야. 아래는 같은 작품의 연속된 페이지 대사를 이미 한국어로 번역한 목록이야.
+페이지를 하나씩 따로 번역해서 흐름이 어긋난 곳이 있을 수 있어. 전체를 이어 읽고 꼭 필요한 줄만 고쳐.
+
+# 고칠 것
+- 같은 인물의 말투(반말/존댓말, 특징적인 어미)가 줄마다 흔들리면 맞춰.
+- 인물 사이의 호칭, 고유명사 표기가 서로 다르면 하나로 맞춰. 단어장이 있으면 단어장 표기를 따라.
+- 원문과 뜻이 명백히 다른 오역, 어색한 직역투는 자연스러운 한국어 구어체로.
+
+# 지킬 것
+- 괜찮은 줄은 절대 건드리지 마. 취향 차이만으로 바꾸지 마.
+- 말풍선에 들어가야 하니 원래 번역보다 눈에 띄게 길게 만들지 마.
+- 말줄임표는 원문의 점 개수와 상관없이 점 2개(..)로만 적어.
+
+# 출력
+changes = 고친 줄만: i = 줄 번호, ko = 고친 번역, why = 고친 이유 (15자 이내, 예: "호칭 통일", "말투 반말로"). 고칠 게 없으면 빈 배열.`;
+
+/** 번역이 끝난 대사 목록을 텍스트만으로 한 번 더 감수하는 프롬프트 (이미지 없음) */
+export function buildPolishPrompt(lines: PolishLine[], options: PromptContextOptions = {}): string {
+  const { recentContext, ...contextOptions } = options;
+  const sourceText = lines.map(line => line.jp).join('\n');
+  const tail = recentContext?.trim() ? `${recentContext.trim()}\n\n` : '';
+  const body = lines.map(line => `${line.i} | ${line.page}쪽 | ${line.jp || '(원문 없음)'} → ${line.ko}`).join('\n');
+  return `${POLISH_STATIC}
+${stableContext({ ...contextOptions, sourceText })}
+${tail}# 대사 (줄 번호 | 쪽 | 원문 → 번역)
+${body}`;
+}

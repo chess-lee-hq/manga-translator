@@ -119,6 +119,38 @@ export const OPENAI_FULL_PAGE_SCHEMA = {
   },
 } as const;
 
+/** 다듬기 응답: 고친 줄만 */
+export interface PolishChangeWire {
+  i: number;
+  ko: string;
+  why: string;
+}
+
+export const OPENAI_POLISH_SCHEMA = {
+  name: 'manga_polish_changes',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            i: { type: 'integer', description: '줄 번호' },
+            ko: { type: 'string', description: '고친 한국어 번역' },
+            why: { type: 'string', description: '고친 이유 (짧게)' },
+          },
+          required: ['i', 'ko', 'why'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['changes'],
+    additionalProperties: false,
+  },
+} as const;
+
 export const OPENAI_WORK_NOTES_SCHEMA = {
   name: 'manga_work_notes',
   strict: true,

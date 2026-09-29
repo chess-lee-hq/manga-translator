@@ -3,11 +3,14 @@ import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import {
-  fullPageToResult, gridResponseToResults, OPENAI_FULL_PAGE_SCHEMA, OPENAI_GRID_SCHEMA, OPENAI_WORK_NOTES_SCHEMA,
-  type FullPageWire, type GridResponseWire,
+  fullPageToResult, gridResponseToResults, OPENAI_FULL_PAGE_SCHEMA, OPENAI_GRID_SCHEMA, OPENAI_POLISH_SCHEMA, OPENAI_WORK_NOTES_SCHEMA,
+  type FullPageWire, type GridResponseWire, type PolishChangeWire,
 } from './responseShape';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
-import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
+import {
+  buildFullPagePrompt, buildGridPrompt, buildPolishPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt,
+  type PolishLine, type PromptContextOptions,
+} from './translationPrompt';
 import { isUnsupportedParameterError, LOW_REASONING_EFFORT, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
 import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
@@ -230,4 +233,19 @@ export async function summarizeWorkNotesOpenAI(
 
   const content = contentOf(response);
   return parseWorkNotesResponse(typeof content === 'string' ? content : '');
+}
+
+/** 번역이 끝난 대사들을 텍스트만으로 감수해, 고칠 줄만 돌려받습니다. (다듬기 패스) */
+export async function polishTranslationsOpenAI(
+  openAiVersion: OpenAiVersion, apiKey: string, lines: PolishLine[], options: PromptContextOptions = {},
+): Promise<PolishChangeWire[]> {
+  if (lines.length === 0) return [];
+  const response = await createChatCompletion(apiKey, {
+    model: modelFor(openAiVersion),
+    messages: [{ role: 'user', content: buildPolishPrompt(lines, options) }],
+    response_format: { type: 'json_schema', json_schema: OPENAI_POLISH_SCHEMA },
+  }, `다듬기 (${lines.length}줄)`);
+  const content = contentOf(response);
+  if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
+  return parseJsonResponse<{ changes?: PolishChangeWire[] }>(content).changes ?? [];
 }

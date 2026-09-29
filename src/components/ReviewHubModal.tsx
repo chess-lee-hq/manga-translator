@@ -4,6 +4,9 @@ import {
   findGlossaryMisses, findInconsistentLines, loadIgnoredOriginals, saveIgnoredOriginals,
   type ConsistencyPage, type LineRef,
 } from '../lib/consistency';
+import type { PolishState } from '../hooks/usePolishPass';
+import type { PolishProposal } from '../lib/polish';
+import { PolishPanel } from './PolishPanel';
 
 export interface ReviewItem {
   /** 0부터 시작하는 페이지 번호 */
@@ -21,7 +24,7 @@ export interface TranslationChange {
   translated: string;
 }
 
-export type ReviewTab = 'review' | 'consistency';
+export type ReviewTab = 'review' | 'consistency' | 'polish';
 
 interface ReviewHubModalProps {
   initialTab?: ReviewTab;
@@ -35,6 +38,12 @@ interface ReviewHubModalProps {
   /** 단어장을 지키도록 이 줄들만 다시 번역 (메인 엔진, 텍스트만) */
   onRetranslateLines: (refs: LineRef[]) => void;
   onAddToGlossary: (original: string, translated: string) => void;
+  /** 다듬기 탭 */
+  polish: PolishState;
+  mainEngineLabel: string;
+  onStartPolish: (range: [number, number]) => void;
+  onApplyPolish: (proposals: PolishProposal[]) => void;
+  onDiscardPolish: (ids: string[]) => void;
   onClose: () => void;
 }
 
@@ -47,9 +56,13 @@ const GLOSSARY_MAX_LENGTH = 10;
  * 검수 창: 번역을 사람이 손볼 곳을 모아 봅니다.
  * - 검토 목록: 자동 재요청 뒤에도 확신할 수 없어 "검토" 표시가 남은 말풍선
  * - 일관성 검사: 같은 원문이 다르게 번역된 곳, 단어장 표기를 지키지 않은 곳 (API 요청 없이 바로 계산)
+ * - 다듬기: 번역이 끝난 대사를 텍스트만 모아 한 번 더 감수받고 제안을 골라 적용
  */
 export function ReviewHubModal(props: ReviewHubModalProps) {
-  const { initialTab = 'review', reviewItems, pages, glossary, workKey, onJump, onDismissReview, onApplyChanges, onRetranslateLines, onAddToGlossary, onClose } = props;
+  const {
+    initialTab = 'review', reviewItems, pages, glossary, workKey, onJump, onDismissReview, onApplyChanges, onRetranslateLines, onAddToGlossary,
+    polish, mainEngineLabel, onStartPolish, onApplyPolish, onDiscardPolish, onClose,
+  } = props;
   const [tab, setTab] = useState<ReviewTab>(initialTab);
   const [ignored, setIgnored] = useState(() => loadIgnoredOriginals(workKey));
 
@@ -67,7 +80,11 @@ export function ReviewHubModal(props: ReviewHubModalProps) {
     onApplyChanges(refs.filter(r => r.translatedText.trim() !== translated).map(r => ({ key: r.key, id: r.id, translated })));
   };
 
-  const tabs: [ReviewTab, string, number][] = [['review', '검토 목록', reviewItems.length], ['consistency', '일관성 검사', consistencyCount]];
+  const tabs: [ReviewTab, string, number][] = [
+    ['review', '검토 목록', reviewItems.length],
+    ['consistency', '일관성 검사', consistencyCount],
+    ['polish', '다듬기', polish.proposals.length],
+  ];
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
@@ -121,6 +138,18 @@ export function ReviewHubModal(props: ReviewHubModalProps) {
                 </ul>
               )}
             </>
+          )}
+
+          {tab === 'polish' && (
+            <PolishPanel
+              pages={pages}
+              polish={polish}
+              mainEngineLabel={mainEngineLabel}
+              onStart={onStartPolish}
+              onApply={onApplyPolish}
+              onDiscard={onDiscardPolish}
+              onJump={onJump}
+            />
           )}
 
           {tab === 'consistency' && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGridPrompt, buildShortenPrompt, READING_RULES } from './translationPrompt';
+import { buildGridPrompt, buildPolishPrompt, buildShortenPrompt, READING_RULES } from './translationPrompt';
 
 describe('원문 읽기 규칙', () => {
   it('요미가나를 만들어 붙이라고 요구하지 않고, 인쇄된 루비는 빼라고 지시한다', () => {
@@ -62,5 +62,18 @@ describe('프롬프트 캐시 구간 (순서가 곧 비용)', () => {
     expect(commonPrefix(pageA, retry).length).toBeGreaterThan(900);
     expect(retry).toContain('재요청 안내');
     expect(retry.indexOf('재요청 안내')).toBeGreaterThan(retry.indexOf('번역 지침'));
+  });
+});
+
+describe('buildPolishPrompt', () => {
+  it('줄 번호·쪽·원문·번역을 싣고, 원문에 나온 단어장 항목만 넣는다', () => {
+    const prompt = buildPolishPrompt(
+      [{ i: 1, page: 3, jp: '晴信様', ko: '하루노부 공' }],
+      { glossary: { 晴信: '하루노부', 信玄: '신겐' }, context: '## 작품 노트\n- 반말' },
+    );
+    expect(prompt).toContain('1 | 3쪽 | 晴信様 → 하루노부 공');
+    expect(prompt).toContain('晴信 -> 하루노부');
+    expect(prompt).not.toContain('信玄');
+    expect(prompt).toContain('## 작품 노트');
   });
 });
