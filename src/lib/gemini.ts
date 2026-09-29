@@ -5,6 +5,7 @@ import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShor
 import { parseWorkNotesResponse, type WorkNotesResult } from './glossaryCandidates';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { isUnsupportedParameterError, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
+import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
 
 export interface TranslationResult {
@@ -82,7 +83,7 @@ interface GenerateContentResponse {
 type HttpError = Error & { status?: number; retryAfterMs?: number };
 
 /** 429(요청 한도)·5xx·네트워크 오류는 지수 백오프로 재시도하고, 최종 실패는 화면에 보여줄 안내로 바꿉니다. */
-async function generateContent(apiKey: string, request: GenerateContentRequest, label = '요청'): Promise<{ text: string }> {
+async function generateContent(apiKey: string, request: GenerateContentRequest, label = '요청', variant?: string): Promise<{ text: string }> {
   assertHeaderSafeApiKey(apiKey, 'Gemini');
   const contents = typeof request.contents === 'string'
     ? [{ role: 'user', parts: [{ text: request.contents }] }]
@@ -132,6 +133,7 @@ async function generateContent(apiKey: string, request: GenerateContentRequest, 
       // Gemini는 생각 토큰을 답 토큰과 따로 세지만 둘 다 출력 단가로 청구되므로 출력에 합치고, 추론으로도 따로 기록
       outputTokens: (usage?.candidatesTokenCount ?? 0) + thoughts,
       reasoningTokens: thoughts,
+      variant,
     });
     // 생각(thought) 파트는 답이 아니므로 빼고 이어 붙임
     const parts = response.candidates?.[0]?.content?.parts ?? [];
@@ -266,6 +268,8 @@ export interface GridRequestOptions extends PromptContextOptions {
   retry?: boolean;
   /** 토큰 사용량 로그에 표시할 이름 */
   label?: string;
+  /** [실험] 격자 뒤에 붙일 장면 이미지(페이지 전체 축소본) */
+  sceneImages?: { data: string; mimeType: string }[];
 }
 
 /**
@@ -279,13 +283,14 @@ export async function translateGridImage(
   geminiVersion: GeminiVersion = '3.6',
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { pageCellCounts, label, ...promptOptions } = options;
-  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, ...promptOptions });
+  const { pageCellCounts, label, sceneImages = [], ...promptOptions } = options;
+  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, sceneCount: sceneImages.length, ...promptOptions });
 
-  // 격자가 여러 장이어도(칸 번호는 이어짐) 한 요청에 순서대로 싣는다
+  // 격자가 여러 장이어도(칸 번호는 이어짐) 한 요청에 순서대로 싣고, 장면 이미지는 그 뒤에
   const parts = [
     { text: prompt },
     ...gridImages.map(image => ({ inlineData: image })),
+    ...sceneImages.map(image => ({ inlineData: image })),
   ];
 
   const response = await generateContent(apiKey, {
@@ -314,7 +319,7 @@ export async function translateGridImage(
       },
       temperature: 0.35,
     },
-  }, label ?? '격자 번역');
+  }, label ?? '격자 번역', sceneImages.length > 0 ? SCENE_USAGE_VARIANT : undefined);
 
   const text = response.text;
   if (!text) throw new Error("No response from Gemini API");

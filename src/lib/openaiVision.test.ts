@@ -3,7 +3,7 @@ import { MemoryStorage } from './testing/memoryStorage';
 
 vi.stubGlobal('localStorage', new MemoryStorage());
 import { retranslateTextOpenAI, summarizeWorkNotesOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
-import { getUsageTotals, resetUsageTotals } from './usageLog';
+import { getUsageByModel, getUsageTotals, resetUsageTotals } from './usageLog';
 
 const okResponse = (content: string, usage = { prompt_tokens: 1200, completion_tokens: 90 }) => ({
   ok: true,
@@ -199,5 +199,34 @@ describe('격자 응답의 unsure 목록', () => {
     const results = await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
     expect(sentBody(fetchMock).response_format.json_schema.schema.required).toEqual(['cells', 'unsure']);
     expect(results[0].unsure).toBe(true);
+  });
+});
+
+describe('[실험] 장면 이미지 함께 보내기', () => {
+  beforeEach(() => {
+    resetUsageTotals();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it('장면 이미지는 격자 뒤에 detail low로 붙이고, 사용량은 "모델 · 장면" 줄로 따로 집계한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1, { sceneImages: ['data:image/jpeg;base64,SCENE'] });
+
+    const content = sentBody(fetchMock).messages[0].content;
+    expect(content.slice(1).map((part: any) => [part.image_url.url, part.image_url.detail])).toEqual([
+      ['data:image/jpeg;base64,GRID', 'high'],
+      ['data:image/jpeg;base64,SCENE', 'low'],
+    ]);
+    expect(content[0].text).toContain('장면 이미지');
+    expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra · 장면']);
+  });
+
+  it('장면 이미지가 없으면 프롬프트에도 안내가 없고 모델 이름 그대로 집계한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
+    expect(sentBody(fetchMock).messages[0].content[0].text).not.toContain('장면 이미지');
+    expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra']);
   });
 });

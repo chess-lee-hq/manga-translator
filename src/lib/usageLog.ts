@@ -27,6 +27,11 @@ export interface UsageRecord {
   model: string;
   /** 로그에 표시할 요청 이름 (격자 번역, 재요청 등) */
   label: string;
+  /**
+   * 같은 모델이라도 따로 집계할 요청 방식 (예: "장면" = 장면 이미지를 함께 보낸 요청).
+   * 사용량 창에 "모델 · 방식" 줄로 나뉘어 켰을 때와 껐을 때 토큰을 비교할 수 있음
+   */
+  variant?: string;
   inputTokens: number;
   cachedInputTokens?: number;
   outputTokens: number;
@@ -67,14 +72,19 @@ function notify() {
   listeners.forEach(listener => listener());
 }
 
+/** 사용량 창의 줄 이름 → 단가를 찾을 모델 이름 */
+export const VARIANT_SEPARATOR = ' · ';
+export const baseModelOf = (usageKey: string) => usageKey.split(VARIANT_SEPARATOR)[0];
+
 export function recordUsage(record: UsageRecord) {
   const { provider, model, label } = record;
+  const key = record.variant ? `${model}${VARIANT_SEPARATOR}${record.variant}` : model;
   add(byProvider[provider], record);
-  add((sessionByModel[model] ??= emptyUsage()), record);
+  add((sessionByModel[key] ??= emptyUsage()), record);
 
   if (currentWorkKey) {
     const work = readWorkUsage(currentWorkKey);
-    add((work[model] = { ...emptyUsage(), ...work[model] }), record);
+    add((work[key] = { ...emptyUsage(), ...work[key] }), record);
     try {
       localStorage.setItem(`${WORK_USAGE_PREFIX}${currentWorkKey}`, JSON.stringify(work));
     } catch {
@@ -86,7 +96,7 @@ export function recordUsage(record: UsageRecord) {
   const cached = record.cachedInputTokens ? ` (캐시 ${record.cachedInputTokens})` : '';
   const reasoning = record.reasoningTokens ? ` (추론 ${record.reasoningTokens})` : '';
   console.debug(
-    `[tokens] ${provider} · ${model} · ${label} — 입력 ${record.inputTokens}${cached} / 출력 ${record.outputTokens}${reasoning}`
+    `[tokens] ${provider} · ${key} · ${label} — 입력 ${record.inputTokens}${cached} / 출력 ${record.outputTokens}${reasoning}`
     + ` (누적 ${total.calls}회, 입력 ${total.inputTokens} / 캐시 ${total.cachedInputTokens} / 출력 ${total.outputTokens} / 추론 ${total.reasoningTokens})`,
   );
   notify();

@@ -10,6 +10,7 @@ import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
 import { ReviewListModal, type ReviewItem } from './components/ReviewListModal';
 import { StorageModal } from './components/StorageModal';
+import { TranslationOptionsModal } from './components/TranslationOptionsModal';
 import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
@@ -101,6 +102,7 @@ function App() {
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isStorageOpen, setIsStorageOpen] = useState(false);
+  const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const notesBusyRef = useRef(false);
@@ -589,7 +591,7 @@ function App() {
   const zoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
 
   // 키보드 단축키 (← 다음 / → 이전 / +·- 확대·축소). 창이 떠 있거나 글자를 입력 중이면 무시
-  const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen || isStorageOpen;
+  const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen || isStorageOpen || isOptionsOpen;
   const shortcutRef = useRef({ enabled: false, handlePrev, handleNext, zoomIn, zoomOut });
   useEffect(() => {
     shortcutRef.current = { enabled: allImages.length > 0 && !isAnyModalOpen && !isRestoring, handlePrev, handleNext, zoomIn, zoomOut };
@@ -811,6 +813,7 @@ function App() {
         onOpenWorkNotes={() => setIsWorkNotesOpen(true)}
         onOpenStorage={() => setIsStorageOpen(true)}
         onOpenUsage={() => setIsUsageOpen(true)}
+        onOpenOptions={() => setIsOptionsOpen(true)}
         reviewCount={reviewItems.length}
         onOpenReview={() => setIsReviewOpen(true)}
         onCloseSession={handleCloseSession}
@@ -972,6 +975,8 @@ function App() {
           onClose={() => setIsWorkNotesOpen(false)}
         />
       )}
+
+      {isOptionsOpen && <TranslationOptionsModal onClose={() => setIsOptionsOpen(false)} />}
 
       {isStorageOpen && (
         <StorageModal

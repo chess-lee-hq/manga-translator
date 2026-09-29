@@ -152,3 +152,17 @@ describe('추론 줄이기 (thinkingBudget)', () => {
     expect(lastRequest().config.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 });
+
+describe('[실험] 장면 이미지 (Gemini)', () => {
+  beforeEach(() => {
+    generateContent.mockReset();
+    generateContent.mockResolvedValue({ text: '{"cells":[],"unsure":[]}' });
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it('격자 뒤에 장면 이미지를 붙이고 프롬프트에 알린다', async () => {
+    await translateGridImage('key', [{ data: 'GRID', mimeType: 'image/jpeg' }], 1, '3.6', { sceneImages: [{ data: 'SCENE', mimeType: 'image/jpeg' }] });
+    expect(imageParts().map((p: any) => p.inlineData.data)).toEqual(['GRID', 'SCENE']);
+    expect(promptText()).toContain('작은 이미지 1장');
+  });
+});

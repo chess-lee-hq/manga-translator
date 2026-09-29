@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Database, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Database, Settings2, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 import { getUsageByModel, sumUsage } from '../lib/usageLog';
 import { formatTokens, useUsageVersion } from './UsageModal';
@@ -29,6 +29,8 @@ interface AppHeaderProps {
   /** 저장소 창 (작품별 번역 기록 보기·삭제) */
   onOpenStorage: () => void;
   onOpenUsage: () => void;
+  /** 번역 옵션 창 (장면 이미지·로컬 OCR 등) */
+  onOpenOptions: () => void;
   /** 검토 표시가 남은 말풍선 수 (0이면 버튼 숨김) */
   reviewCount: number;
   onOpenReview: () => void;
@@ -126,7 +128,7 @@ export function AppHeader(props: AppHeaderProps) {
   const {
     loadedFilename, imageCount, viewMode, onToggleViewMode, scriptStyle, onScriptStyleChange, isEditingBoxes, onToggleEditingBoxes,
     scale, onZoomIn, onZoomOut, onAddFiles, exportProgress, onExportAll, isDriveSyncing, driveTargetName, onSaveToDrive, onOpenGlossary, glossaryCandidateCount, onOpenWorkNotes,
-    onOpenStorage, onOpenUsage, reviewCount, onOpenReview, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
+    onOpenStorage, onOpenUsage, onOpenOptions, reviewCount, onOpenReview, onCloseSession, autoTranslate, onToggleAutoTranslate, mainEngine, onSwapEngines,
     openAiVersion, onOpenAiVersionChange, openaiKey, onOpenaiKeyChange, geminiVersion, onGeminiVersionChange, googleKey, onGoogleKeyChange,
   } = props;
   const hasImages = imageCount > 0;
@@ -263,6 +265,10 @@ export function AppHeader(props: AppHeaderProps) {
             <div className="w-px h-5 bg-gray-300 mx-1 shrink-0"></div>
           </>
         )}
+
+        <button onClick={onOpenOptions} title="번역 옵션 (장면 이미지 함께 보내기 등)" className={`${actionButton} bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100`}>
+          <Settings2 size={12} /> <span className={WIDE_LABEL}>옵션</span>
+        </button>
 
         <button
           onClick={onOpenUsage}

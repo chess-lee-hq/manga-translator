@@ -9,6 +9,7 @@ import {
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import { buildFullPagePrompt, buildGridPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt, type PromptContextOptions } from './translationPrompt';
 import { isUnsupportedParameterError, LOW_REASONING_EFFORT, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
+import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
 
 type OpenAiVersion = 'terra' | 'sol' | 'luna';
@@ -30,7 +31,7 @@ const OPENAI_MODELS: Record<OpenAiVersion, string> = {
 const modelFor = (openAiVersion: OpenAiVersion) => OPENAI_MODELS[openAiVersion] ?? OPENAI_MODELS.terra;
 
 /** Chat Completions 호출. 429·5xx는 Retry-After 헤더를 존중하며 재시도하고, 최종 실패는 안내 메시지로 바꿉니다. */
-async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청'): Promise<any> {
+async function createChatCompletion(apiKey: string, body: Record<string, unknown>, label = '요청', variant?: string): Promise<any> {
   assertHeaderSafeApiKey(apiKey, 'OpenAI');
   const model = String(body.model);
   const send = (payload: Record<string, unknown>) => withRetry(async () => {
@@ -82,6 +83,7 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
       cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
       outputTokens: usage?.completion_tokens ?? 0,
       reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+      variant,
     });
     return response;
   } catch (error) {
@@ -89,13 +91,17 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   }
 }
 
-/** 이미지(여러 장이면 순서대로)를 붙인 사용자 메시지 */
-function imageMessage(prompt: string, imageDataUrls: string[]) {
+/**
+ * 이미지(여러 장이면 순서대로)를 붙인 사용자 메시지.
+ * lowDetailUrls(장면 이미지)는 detail "low"로 붙여 크기와 관계없이 장당 85토큰만 쓰게 함
+ */
+function imageMessage(prompt: string, imageDataUrls: string[], lowDetailUrls: string[] = []) {
   return {
     role: 'user',
     content: [
       { type: 'text', text: prompt },
       ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
+      ...lowDetailUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'low' } })),
     ],
   };
 }
@@ -122,6 +128,8 @@ export interface GridRequestOptions extends PromptContextOptions {
   retry?: boolean;
   /** 토큰 사용량 로그에 표시할 이름 */
   label?: string;
+  /** [실험] 격자 뒤에 붙일 장면 이미지(페이지 전체 축소본, data URL) */
+  sceneImages?: string[];
 }
 
 /**
@@ -135,14 +143,15 @@ export async function translateGridImageOpenAI(
   expectedCells: number,
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
-  const { pageCellCounts, label, ...promptOptions } = options;
-  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, ...promptOptions });
+  const { pageCellCounts, label, sceneImages = [], ...promptOptions } = options;
+  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, sceneCount: sceneImages.length, ...promptOptions });
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(prompt, gridDataUrls)],
+    messages: [imageMessage(prompt, gridDataUrls, sceneImages)],
     response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
-  }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'));
+  }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'),
+  sceneImages.length > 0 ? SCENE_USAGE_VARIANT : undefined);
 
   const content = contentOf(response);
   if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');

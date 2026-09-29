@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import { BarChart3, RotateCcw, X } from 'lucide-react';
 import {
-  clearWorkUsage, estimateCost, getUsageByModel, getUsageVersion, loadModelPrices, resetUsageTotals, saveModelPrices, subscribeUsage, sumUsage,
+  baseModelOf, clearWorkUsage, estimateCost, getUsageByModel, getUsageVersion, loadModelPrices, resetUsageTotals, saveModelPrices, subscribeUsage, sumUsage,
   type ModelPrice, type UsageTotals,
 } from '../lib/usageLog';
 import { isReduceReasoningEnabled, listReasoningUnsupportedModels, setReduceReasoning } from '../lib/requestTuning';
@@ -46,7 +46,8 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
   const unsupported = listReasoningUnsupportedModels();
   const reasoningHeavy = total.outputTokens > 0 && total.reasoningTokens / total.outputTokens >= REASONING_WARN_RATIO;
 
-  const costs = models.map(model => estimateCost(byModel[model], prices[model]));
+  // "모델 · 방식" 줄도 단가는 모델 단가를 씀
+  const costs = models.map(model => estimateCost(byModel[model], prices[baseModelOf(model)]));
   const knownCost = costs.filter((c): c is number => c !== null).reduce((sum, c) => sum + c, 0);
   const missingPrice = costs.some(c => c === null);
 
@@ -134,9 +135,15 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
               <tbody>
                 {models.map((model, i) => (
                   <UsageRow key={model} model={model} totals={byModel[model]} cost={costs[i]}>
-                    {priceInput(model, 'input', '입력')}
-                    {priceInput(model, 'cachedInput', '캐시')}
-                    {priceInput(model, 'output', '출력')}
+                    {baseModelOf(model) === model ? (
+                      <>
+                        {priceInput(model, 'input', '입력')}
+                        {priceInput(model, 'cachedInput', '캐시')}
+                        {priceInput(model, 'output', '출력')}
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">{baseModelOf(model)} 단가</span>
+                    )}
                   </UsageRow>
                 ))}
                 <tr className="border-t font-semibold text-gray-800">

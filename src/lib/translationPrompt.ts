@@ -84,14 +84,21 @@ export interface GridPromptOptions extends PromptContextOptions {
   speakerHint?: string;
   /** 품질 검사에 걸린 칸을 다시 보내는 요청이면 true */
   retry?: boolean;
+  /** [실험] 격자 뒤에 붙인 장면 이미지(페이지 전체 축소본) 수 */
+  sceneCount?: number;
 }
 
 /** 말풍선 격자 이미지를 읽고 번역하도록 요청하는 프롬프트 */
 export function buildGridPrompt(options: GridPromptOptions): string {
-  const { expectedCells, pageCellCounts, speakerHint = '', recentContext, retry, ...contextOptions } = options;
+  const { expectedCells, pageCellCounts, speakerHint = '', recentContext, retry, sceneCount = 0, ...contextOptions } = options;
 
   // (C) 요청마다 바뀌는 것들 — 반드시 맨 뒤
   const volatile: string[] = [];
+
+  // [실험] 장면 이미지: 고정 구간(A)에 넣으면 끄고 켤 때마다 캐시가 깨지므로 여기에 둠
+  if (sceneCount > 0) {
+    volatile.push(`# 장면 이미지\n격자 뒤에 붙은 작은 이미지 ${sceneCount}장은 페이지 전체를 줄인 것이야(페이지 순서대로). 여기서 글자는 읽지 말고, 인물의 표정·상황·누가 누구에게 말하는지를 파악해 말투와 호칭을 정하는 데만 참고해.`);
+  }
 
   // 여러 페이지를 묶어 보낼 때, 어디서 페이지가 넘어가는지 알려주면 장면 전환을 이해하고 말투를 이어감
   if (pageCellCounts && pageCellCounts.length > 1) {

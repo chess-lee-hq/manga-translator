@@ -1,6 +1,8 @@
 import type { Box2d, OpenAiVersion, TranslationResult, TranslationSettings, UploadedImage } from '../types';
 import { retranslateTextGemini, shortenTranslationGemini, translateGridImage, translateMangaImage, type GridTranslationResult, type RawTranslationResult } from './gemini';
 import type { GridEngine } from './gridLayout';
+import { makeSceneThumbnail } from './sceneThumbnail';
+import { isSceneThumbnailEnabled } from './translationOptions';
 import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
@@ -96,8 +98,11 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
  */
 const BLANK_PAGE_DARK_RATIO = 0.0015;
 
-/** 격자(여러 장일 수 있음)를 요청 한 번으로 번역 엔진에 보냅니다. */
-type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined) => Promise<GridTranslationResult[]>;
+/**
+ * 격자(여러 장일 수 있음)를 요청 한 번으로 번역 엔진에 보냅니다.
+ * scenes: [실험] 첫 요청에만 붙이는 장면 이미지(페이지 전체 축소본, data URL)
+ */
+type GridRequest = (grid: GridResult, pageCellCounts: number[] | undefined, scenes?: string[]) => Promise<GridTranslationResult[]>;
 
 /** 프롬프트에 함께 싣는 맥락. 재요청이면 "직전 대사"는 빼서 비용을 줄입니다. */
 interface GridPromptParts {
@@ -111,20 +116,22 @@ interface GridPromptParts {
 }
 
 function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPromptParts): GridRequest {
-  return (grid, pageCellCounts) =>
+  return (grid, pageCellCounts, scenes) =>
     translateGridImageOpenAI(version, apiKey, grid.images, grid.cells.length, {
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
+      ...(scenes?.length ? { sceneImages: scenes } : {}),
     });
 }
 
 function viaGeminiGrid(apiKey: string, version: '3.6' | '3.7' | '3.8', parts: GridPromptParts): GridRequest {
-  return (grid, pageCellCounts) =>
+  return (grid, pageCellCounts, scenes) =>
     translateGridImage(apiKey, grid.images.map(inlineImage), grid.cells.length, version, {
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
+      ...(scenes?.length ? { sceneImages: scenes.map(inlineImage) } : {}),
     });
 }
 
@@ -235,10 +242,15 @@ async function requestHighResRetry(sources: GridSource[], failed: GridCellInfo[]
  * **2배 해상도 · 다른 엔진**으로 한 번 더 요청해 더 나은 결과로 합칩니다.
  */
 async function translateGridWithQualityCheck(sources: GridSource[], settings: TranslationSettings) {
-  const grid = await createGridImage(sources, { engine: gridEngineOf(settings) });
+  const engine = gridEngineOf(settings);
+  const grid = await createGridImage(sources, { engine });
   if (!grid) return null;
 
-  const first = await firstRequesterFor(settings)(grid, countsOf(sources));
+  // [실험] 장면 이미지는 첫 요청에만 (재요청은 글자를 다시 읽는 게 목적이라 뺌)
+  const scenes = isSceneThumbnailEnabled()
+    ? sources.map(source => makeSceneThumbnail(source.image, engine)).filter((s): s is string => !!s)
+    : [];
+  const first = await firstRequesterFor(settings)(grid, countsOf(sources), scenes);
   const { translations, report } = await applyQualityRetry(first, grid.cells, failed =>
     requestHighResRetry(sources, failed, retryRequesterFor(settings)),
   );
