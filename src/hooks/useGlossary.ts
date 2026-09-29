@@ -25,11 +25,12 @@ export function useGlossary(workKey: string) {
   /** 항목을 이 작품의 단어장에 합칩니다. 같은 원문은 새 값으로 바뀌고 나머지 기존 항목은 유지됩니다. */
   const mergeGlossary = (entries: Glossary) => update(current => ({ ...current, ...entries }));
 
-  const removeGlossaryEntry = (original: string) => update(current => {
+  /** 여러 개를 한 번에 지움 (선택 삭제) */
+  const removeGlossaryEntries = (originals: string[]) => update(current => {
     const next = { ...current };
-    delete next[original];
+    originals.forEach(original => delete next[original]);
     return next;
   });
 
-  return { glossary, mergeGlossary, removeGlossaryEntry };
+  return { glossary, mergeGlossary, removeGlossaryEntries };
 }

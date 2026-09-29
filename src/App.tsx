@@ -149,7 +149,7 @@ function App() {
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
   const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);
 
-  const { glossary, mergeGlossary, removeGlossaryEntry } = useGlossary(workName);
+  const { glossary, mergeGlossary, removeGlossaryEntries } = useGlossary(workName);
   const { notes, saveNotes } = useWorkNotes(workName);
   // 대본에서 직접 고친 번역 — 다음 번역에 교정 예시로 반영
   const { corrections, recordCorrection, removeCorrection, clearCorrections, mergeImported: mergeImportedCorrections } = useCorrections(workName);
@@ -676,15 +676,16 @@ function App() {
    * 이 파일을 어느 작품으로 볼지 직접 지정합니다. 빈 값이면 파일 이름으로 자동 판별.
    * 새 작품 쪽이 비어 있으면 지금까지의 단어장·노트·교정을 가져가고, 이미 있는 작품에 연결하면 그 작품 것을 씀.
    */
-  const handleRenameWork = (title: string) => {
+  /** carry: 지금 단어장·노트를 새 작품으로 가져갈지 (단어장 창에서 사용자가 고름) */
+  const handleRenameWork = (title: string, carry: boolean) => {
     const trimmed = title.trim();
     if (loadedFilename) {
       const aliases = setWorkAlias(loadedFilename, trimmed || null);
-      carryOverWorkData(work.key, resolveWork(loadedFilename, aliases).key);
+      if (carry) carryOverWorkData(work.key, resolveWork(loadedFilename, aliases).key);
       setWorkAliases(aliases);
     } else {
       // 낱장 이미지는 알아볼 파일 이름이 없으므로 작품 이름을 그대로 붙여 둠 (세션 복원 때도 유지됨)
-      carryOverWorkData(work.key, resolveWork(trimmed || allImages[0]?.file.name, workAliases).key);
+      if (carry) carryOverWorkData(work.key, resolveWork(trimmed || allImages[0]?.file.name, workAliases).key);
       setLoadedFilename(trimmed || null);
     }
   };
@@ -1001,7 +1002,10 @@ function App() {
           onImportLegacy={handleImportLegacyGlossary}
           onClearLegacy={handleClearLegacyGlossary}
           onMerge={mergeGlossary}
-          onRemove={removeGlossaryEntry}
+          onRemove={removeGlossaryEntries}
+          bookOriginals={consistencyPages.flatMap(page => page.results.map(r => r.original_text))}
+          translatedPages={translatedPageCount}
+          totalPages={allImages.length}
           candidates={glossaryCandidates}
           onAcceptCandidate={(original, translated) => { mergeGlossary({ [original]: translated }); removeCandidate(original); }}
           onDismissCandidate={dismissCandidate}

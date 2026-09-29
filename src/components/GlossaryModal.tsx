@@ -1,7 +1,9 @@
-import { BookOpen, ChevronDown, ChevronUp, History, Library, Plus, Sparkles, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { BookOpen, ChevronDown, ChevronUp, History, Library, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { GlossaryCandidate } from '../lib/glossaryCandidates';
-import { UNTITLED_KEY, type WorkIdentity } from '../lib/workIdentity';
+import { hasStoredGlossary, loadGlossary } from '../lib/glossaryStore';
+import { countGlossaryUsage } from '../lib/glossaryUsage';
+import { UNTITLED_KEY, workKeyOf, type WorkIdentity } from '../lib/workIdentity';
 import type { Glossary } from '../types';
 
 export interface GlossaryDraft {
@@ -17,14 +19,22 @@ interface GlossaryModalProps {
   work: WorkIdentity;
   /** 한 번이라도 열었던 작품들 (다른 권을 같은 작품으로 연결할 때 고르는 후보) */
   knownWorks: { key: string; title: string }[];
-  /** 작품 이름을 직접 지정. 빈 값이면 파일 이름으로 자동 판별 */
-  onRenameWork: (title: string) => void;
+  /**
+   * 작품 이름을 직접 지정. 빈 값이면 파일 이름으로 자동 판별.
+   * carry: 지금 단어장·노트를 새 작품으로 가져갈지 (사용자가 고름 — 말없이 복사하지 않음)
+   */
+  onRenameWork: (title: string, carry: boolean) => void;
   /** 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 중, 이 작품에 아직 없는 것 */
   legacyGlossary: Glossary;
   onImportLegacy: (entries: Glossary) => void;
   onClearLegacy: () => void;
   onMerge: (entries: Glossary) => void;
-  onRemove: (original: string) => void;
+  /** 여러 개를 한 번에 지울 수 있음 */
+  onRemove: (originals: string[]) => void;
+  /** 지금 연 파일의 번역 기록 원문 (단어가 이 책에 몇 번 나왔는지 셈) */
+  bookOriginals: string[];
+  translatedPages: number;
+  totalPages: number;
   /** 번역 기록에서 찾은 추천 용어 */
   candidates: GlossaryCandidate[];
   onAcceptCandidate: (original: string, translated: string) => void;
@@ -32,20 +42,81 @@ interface GlossaryModalProps {
   onClose: () => void;
 }
 
-/** 이 단어장이 어느 작품 것인지, 어떻게 알아봤는지 보여 주고 작품 이름을 바꿀 수 있게 함 */
-function WorkHeader({ work, knownWorks, onRenameWork }: Pick<GlossaryModalProps, 'work' | 'knownWorks' | 'onRenameWork'>) {
+interface PendingRename {
+  /** 적용할 값 (빈 값 = 파일 이름으로 자동 인식) */
+  title: string;
+  targetTitle: string;
+  /** 이미 단어장·노트가 있는 작품인지 */
+  existing: boolean;
+  targetCount: number;
+}
+
+/**
+ * 이 단어장을 어느 작품(파일들)이 같이 쓰는지 보여 주고 작품 이름을 바꿀 수 있게 함.
+ * 이름을 바꿀 때 지금 단어장을 가져갈지 말없이 정하지 않고 물어봄
+ * (예전에는 새 이름 쪽이 비어 있으면 그냥 복사해, 다른 작품 단어가 딸려 가는 일이 있었음)
+ */
+function WorkHeader({ work, knownWorks, onRenameWork, currentCount }: Pick<GlossaryModalProps, 'work' | 'knownWorks' | 'onRenameWork'> & { currentCount: number }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<PendingRename | null>(null);
   const untitled = work.key === UNTITLED_KEY;
 
   const startEdit = () => {
     setDraft(untitled ? '' : work.title);
+    setPending(null);
     setEditing(true);
   };
-  const apply = (title: string) => {
-    onRenameWork(title);
+  const finish = (title: string, carry: boolean) => {
+    onRenameWork(title, carry);
+    setPending(null);
     setEditing(false);
   };
+  const request = (title: string) => {
+    const trimmed = title.trim();
+    const targetTitle = trimmed || work.autoTitle;
+    const targetKey = targetTitle ? workKeyOf(targetTitle) : UNTITLED_KEY;
+    // 같은 작품의 표기만 바꾸는 경우 (저장 자리가 같음)
+    if (targetKey === work.key) return finish(trimmed, false);
+    const existing = knownWorks.some(w => w.key === targetKey) || hasStoredGlossary(targetKey);
+    // 옮길 단어가 없고 새 작품이면 물어볼 것이 없음 (노트 등은 예전처럼 이어 감)
+    if (!existing && currentCount === 0) return finish(trimmed, true);
+    setPending({ title: trimmed, targetTitle: targetTitle || '이름 없는 작품', existing, targetCount: Object.keys(loadGlossary(targetKey)).length });
+  };
+
+  if (editing && pending) {
+    return (
+      <div className="mb-4 rounded-lg border border-purple-200 bg-purple-50/50 p-3 text-sm">
+        {pending.existing ? (
+          <>
+            <p className="text-gray-700 leading-relaxed">
+              「<b>{pending.targetTitle}</b>」은(는) 이미 있는 작품입니다. 이 파일을 그 작품으로 묶어 <b>그 작품의 단어장({pending.targetCount}개)·노트</b>를 함께 씁니다.
+            </p>
+            <p className="text-xs text-gray-500 mt-1">지금 「{work.title}」 단어장({currentCount}개)은 지워지지 않고 그대로 남습니다.</p>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => finish(pending.title, false)} className="px-3 py-1 bg-purple-600 text-white rounded text-xs font-medium hover:bg-purple-700">그 작품으로 묶기</button>
+              <button onClick={() => setPending(null)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">취소</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-gray-700 leading-relaxed">
+              새 작품 「<b>{pending.targetTitle}</b>」을(를) 만듭니다. 지금 「{work.title}」 단어장 <b>{currentCount}개</b>와 작품 노트를 어떻게 할까요?
+            </p>
+            <div className="flex flex-col gap-1.5 mt-3">
+              <button onClick={() => finish(pending.title, true)} className="text-left px-3 py-1.5 rounded border border-purple-200 bg-white hover:bg-purple-50 text-xs">
+                <b className="text-purple-700">가져가기</b> <span className="text-gray-500">— 같은 작품인데 이름만 바로잡는 경우</span>
+              </button>
+              <button onClick={() => finish(pending.title, false)} className="text-left px-3 py-1.5 rounded border border-gray-200 bg-white hover:bg-gray-50 text-xs">
+                <b className="text-gray-800">빈 단어장으로 시작</b> <span className="text-gray-500">— 다른 작품인 경우 (지금 단어장은 「{work.title}」에 남음)</span>
+              </button>
+              <button onClick={() => setPending(null)} className="self-start px-2 py-1 text-xs text-gray-500 hover:text-gray-700">취소</button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (editing) {
     return (
@@ -58,7 +129,7 @@ function WorkHeader({ work, knownWorks, onRenameWork }: Pick<GlossaryModalProps,
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => {
               if (e.nativeEvent.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 무시
-              if (e.key === 'Enter') apply(draft);
+              if (e.key === 'Enter') request(draft);
               if (e.key === 'Escape') setEditing(false);
             }}
             placeholder={work.autoTitle || '작품 이름 (예: 陽だまりの樹)'}
@@ -68,13 +139,13 @@ function WorkHeader({ work, knownWorks, onRenameWork }: Pick<GlossaryModalProps,
           <datalist id="glossary-known-works">
             {knownWorks.map(w => <option key={w.key} value={w.title} />)}
           </datalist>
-          <button onClick={() => apply(draft)} className="px-3 py-1 bg-purple-600 text-white rounded text-xs font-medium hover:bg-purple-700">적용</button>
+          <button onClick={() => request(draft)} className="px-3 py-1 bg-purple-600 text-white rounded text-xs font-medium hover:bg-purple-700">적용</button>
           <button onClick={() => setEditing(false)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">취소</button>
         </div>
         <p className="mt-2 text-xs text-gray-500 leading-relaxed">
-          이미 연 작품 이름을 고르면 그 작품의 단어장·노트를 함께 씁니다. 새 이름을 적으면 지금 단어장을 그 이름으로 옮깁니다.
+          같은 작품의 다른 권이면 목록에서 그 작품을 고르세요. 다른 작품이면 새 이름을 적으세요. 적용하기 전에 단어장을 어떻게 할지 물어봅니다.
           {work.manual && work.autoTitle && (
-            <> <button onClick={() => apply('')} className="text-purple-700 underline">파일 이름으로 자동 인식(「{work.autoTitle}」)으로 되돌리기</button></>
+            <> <button onClick={() => request('')} className="text-purple-700 underline">파일 이름으로 자동 인식(「{work.autoTitle}」)으로 되돌리기</button></>
           )}
         </p>
       </div>
@@ -88,12 +159,10 @@ function WorkHeader({ work, knownWorks, onRenameWork }: Pick<GlossaryModalProps,
           <Library size={14} className={untitled ? 'text-amber-600' : 'text-purple-600'} />
           <span className="truncate">「{work.title}」 단어장</span>
         </div>
-        <div className="text-xs text-gray-500 truncate" title={work.rawName}>
+        <div className="text-xs text-gray-500 truncate" title={`지금 연 파일: ${work.rawName}`}>
           {untitled
             ? '낱장 이미지라 제목을 알 수 없어요. 작품 이름을 붙이면 다른 작품과 섞이지 않습니다.'
-            : work.manual
-              ? `직접 지정한 작품 · 파일 "${work.rawName}"`
-              : `파일 "${work.rawName}"에서 자동 인식 · 같은 작품의 다른 권도 이 단어장을 씁니다`}
+            : <>이 단어장을 쓰는 파일: <b className="font-medium text-gray-700">{work.title}</b> {work.manual ? '· 직접 지정' : '· 파일 이름으로 자동 인식'}</>}
         </div>
       </div>
       <button onClick={startEdit} className={`shrink-0 text-xs font-medium ${untitled ? 'text-amber-700 hover:text-amber-900' : 'text-purple-700 hover:text-purple-900'}`}>
@@ -146,8 +215,42 @@ function LegacyGlossarySection({ legacyGlossary, onImportLegacy, onClearLegacy }
 
 export function GlossaryModal({
   glossary, initialDraft, work, knownWorks, onRenameWork, legacyGlossary, onImportLegacy, onClearLegacy,
-  onMerge, onRemove, candidates, onAcceptCandidate, onDismissCandidate, onClose,
+  onMerge, onRemove, bookOriginals, translatedPages, totalPages, candidates, onAcceptCandidate, onDismissCandidate, onClose,
 }: GlossaryModalProps) {
+  const entries = Object.entries(glossary);
+  const [query, setQuery] = useState('');
+  const [onlyUnused, setOnlyUnused] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const usage = useMemo(() => countGlossaryUsage(Object.keys(glossary), bookOriginals), [glossary, bookOriginals]);
+  const unusedCount = entries.filter(([original]) => usage[original] === 0).length;
+  const needle = query.trim().toLowerCase();
+  const visible = entries.filter(([original, translated]) =>
+    (!onlyUnused || usage[original] === 0)
+    && (!needle || original.toLowerCase().includes(needle) || translated.toLowerCase().includes(needle)));
+  const selectedVisible = visible.filter(([original]) => selected.has(original)).map(([original]) => original);
+  const allVisibleSelected = visible.length > 0 && selectedVisible.length === visible.length;
+
+  const toggleSelected = (original: string) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(original)) next.delete(original);
+    else next.add(original);
+    return next;
+  });
+  const toggleAllVisible = () => setSelected(prev => {
+    const next = new Set(prev);
+    visible.forEach(([original]) => (allVisibleSelected ? next.delete(original) : next.add(original)));
+    return next;
+  });
+  const removeSelected = () => {
+    if (selectedVisible.length === 0) return;
+    if (!confirm(`선택한 단어 ${selectedVisible.length}개를 「${work.title}」 단어장에서 지울까요?`)) return;
+    onRemove(selectedVisible);
+    setSelected(prev => {
+      const next = new Set(prev);
+      selectedVisible.forEach(original => next.delete(original));
+      return next;
+    });
+  };
   const [form, setForm] = useState<GlossaryDraft>(initialDraft);
   // 추천 용어는 추가하기 전에 번역을 고칠 수 있게 입력값을 따로 들고 있음
   const [candidateEdits, setCandidateEdits] = useState<Record<string, string>>({});
@@ -173,7 +276,7 @@ export function GlossaryModal({
           </button>
         </div>
 
-        <WorkHeader work={work} knownWorks={knownWorks} onRenameWork={onRenameWork} />
+        <WorkHeader work={work} knownWorks={knownWorks} onRenameWork={onRenameWork} currentCount={entries.length} />
 
         <div className="flex gap-2 mb-6">
           <input
@@ -249,35 +352,82 @@ export function GlossaryModal({
           </div>
         )}
 
+        {entries.length > 0 && (
+          <div className="mb-2 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="단어장에서 찾기 (원문·번역)"
+                  className="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+              <button
+                onClick={() => setOnlyUnused(v => !v)}
+                disabled={unusedCount === 0 && !onlyUnused}
+                title="지금 연 파일의 번역 기록에 한 번도 나오지 않은 단어만 보기"
+                className={`shrink-0 px-2 py-1.5 rounded border text-xs font-medium disabled:opacity-40 ${onlyUnused ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              >
+                이 책에 없는 단어 {unusedCount}
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400">
+              "이 책 N줄"은 지금 연 파일에서 번역된 {translatedPages}/{totalPages}쪽의 원문 기준입니다.
+              아직 번역 안 한 뒤쪽이나 같은 작품의 다른 권에서 쓰일 수 있으니 확인하고 지우세요.
+            </p>
+            <div className="flex items-center justify-between text-xs">
+              <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} disabled={visible.length === 0} />
+                보이는 {visible.length}개 모두 선택
+              </label>
+              <button
+                onClick={removeSelected}
+                disabled={selectedVisible.length === 0}
+                className="flex items-center gap-1 px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-40"
+              >
+                <Trash2 size={12} /> 선택 삭제 {selectedVisible.length > 0 ? selectedVisible.length : ''}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto min-h-[200px]">
-          {Object.keys(glossary).length === 0 ? (
+          {entries.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
               <BookOpen size={32} className="mb-2 opacity-50" />
               <p>이 작품에 등록된 단어가 없습니다.</p>
             </div>
+          ) : visible.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">조건에 맞는 단어가 없습니다.</p>
           ) : (
-            <div className="space-y-2">
-              {Object.entries(glossary).map(([original, translated]) => (
-                <div key={original} className="flex items-center justify-between p-3 bg-gray-50 rounded border border-gray-100 hover:border-gray-200">
-                  <div className="flex flex-col">
-                    <span className="text-xs text-gray-500 font-mono">원문</span>
-                    <span className="font-medium text-gray-800">{original}</span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex flex-col items-end">
-                      <span className="text-xs text-gray-500 font-mono">번역</span>
-                      <span className="font-bold text-purple-600">{translated}</span>
+            <div className="space-y-1.5">
+              {visible.map(([original, translated]) => {
+                const count = usage[original] ?? 0;
+                return (
+                  <div
+                    key={original}
+                    className={`flex items-center gap-3 px-3 py-2 rounded border ${selected.has(original) ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-100 hover:border-gray-200'}`}
+                  >
+                    <input type="checkbox" checked={selected.has(original)} onChange={() => toggleSelected(original)} />
+                    <div className="flex-1 min-w-0">
+                      <span className="block font-medium text-gray-800 truncate" title={original}>{original}</span>
+                      <span className={`text-[11px] ${count > 0 ? 'text-gray-400' : 'text-amber-700'}`}>
+                        {count > 0 ? `이 책 ${count}줄` : '이 책에 없음'}
+                      </span>
                     </div>
+                    <span className="font-bold text-purple-600 text-right max-w-[40%] truncate" title={translated}>{translated}</span>
                     <button
-                      onClick={() => onRemove(original)}
+                      onClick={() => onRemove([original])}
                       className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
                       title="삭제"
                     >
                       <Trash2 size={16} />
                     </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
