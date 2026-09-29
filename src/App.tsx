@@ -8,7 +8,8 @@ import { ImportChoiceModal } from './components/ImportChoiceModal';
 import { MangaViewer } from './components/MangaViewer';
 import { PageNavigator } from './components/PageNavigator';
 import { ScriptPanel } from './components/ScriptPanel';
-import { ReviewListModal, type ReviewItem } from './components/ReviewListModal';
+import { ReviewHubModal, type ReviewItem, type TranslationChange } from './components/ReviewHubModal';
+import type { LineRef } from './lib/consistency';
 import { StorageModal } from './components/StorageModal';
 import { TranslationOptionsModal } from './components/TranslationOptionsModal';
 import { UsageModal } from './components/UsageModal';
@@ -579,6 +580,27 @@ function App() {
       .map(r => ({ imgIndex, key, id: r.id, review: r.review!, originalText: r.original_text, translatedText: r.translated_text }));
   });
 
+  /** 일관성 검사·다듬기에서 번역을 한꺼번에 바꿀 때 */
+  const handleApplyChanges = (changes: TranslationChange[]) => {
+    const byKey = new Map<string, Map<string, string>>();
+    changes.forEach(change => byKey.set(change.key, (byKey.get(change.key) ?? new Map()).set(change.id, change.translated)));
+    byKey.forEach((updates, key) => {
+      updatePageResults(key, results => results.map(r => (updates.has(r.id) ? { ...r, translated_text: normalizeEllipsis(updates.get(r.id)!) } : r)));
+    });
+  };
+
+  /** 단어장 표기를 따르지 않은 줄들을 하나씩 다시 번역 (메인 엔진, 텍스트만 — 이미지 없이) */
+  const handleRetranslateLines = async (refs: LineRef[]) => {
+    for (const ref of refs) {
+      const imgIndex = allImages.findIndex(img => getCacheKey(img.file) === ref.key);
+      if (imgIndex >= 0) await handleRetranslate(imgIndex, ref.id, ref.originalText);
+    }
+  };
+
+  const consistencyPages = allImages
+    .map((img, imgIndex) => ({ imgIndex, key: getCacheKey(img.file), results: translationCache[getCacheKey(img.file)] ?? [] }))
+    .filter(page => page.results.length > 0);
+
   const handlePrev = () => {
     if (currentPageIndex > 0) goToPage(getSpreadStartIndex(allImages, currentPageIndex - 1, viewMode));
   };
@@ -988,14 +1010,23 @@ function App() {
       )}
 
       {isReviewOpen && (
-        <ReviewListModal
-          items={reviewItems}
+        <ReviewHubModal
+          reviewItems={reviewItems}
+          pages={consistencyPages}
+          glossary={glossary}
+          workKey={work.key}
           onJump={(imgIndex) => {
             goToPage(getSpreadStartIndex(allImages, imgIndex, viewMode));
             setScriptStyle('side');
             setIsReviewOpen(false);
           }}
-          onDismiss={handleDismissReview}
+          onDismissReview={handleDismissReview}
+          onApplyChanges={handleApplyChanges}
+          onRetranslateLines={handleRetranslateLines}
+          onAddToGlossary={(original, translated) => {
+            setIsReviewOpen(false);
+            setGlossaryDraft({ original, translated });
+          }}
           onClose={() => setIsReviewOpen(false)}
         />
       )}

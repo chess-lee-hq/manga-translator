@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeftRight, BarChart3, BookOpen, Database, Settings2, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeftRight, ClipboardCheck, BarChart3, BookOpen, Database, Settings2, Bot, Cloud, Cpu, Download, GripVertical, Image as ImageIcon, Key, Layers, Loader2, NotebookPen, PanelRight, Upload, X, Zap, ZapOff, ZoomIn, ZoomOut } from 'lucide-react';
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 import { getUsageByModel, sumUsage } from '../lib/usageLog';
 import { formatTokens, useUsageVersion } from './UsageModal';
@@ -31,7 +31,7 @@ interface AppHeaderProps {
   onOpenUsage: () => void;
   /** 번역 옵션 창 (장면 이미지·로컬 OCR 등) */
   onOpenOptions: () => void;
-  /** 검토 표시가 남은 말풍선 수 (0이면 버튼 숨김) */
+  /** 검토 표시가 남은 말풍선 수 (검수 버튼의 숫자) */
   reviewCount: number;
   onOpenReview: () => void;
   onCloseSession: () => void;
@@ -243,11 +243,18 @@ export function AppHeader(props: AppHeaderProps) {
                 </span>
               )}
             </button>
-            {reviewCount > 0 && (
-              <button onClick={onOpenReview} title={`검토 목록 — 자동으로 다시 읽어도 확신할 수 없었던 말풍선 ${reviewCount}개`} className={`${actionButton} bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100`}>
-                <AlertTriangle size={14} /> {reviewCount}
-              </button>
-            )}
+            <button
+              onClick={onOpenReview}
+              title={reviewCount > 0 ? `검수 — 검토 표시가 남은 말풍선 ${reviewCount}개 · 일관성 검사` : '검수 — 검토 목록 · 일관성 검사'}
+              className={`${actionButton} relative bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100`}
+            >
+              <ClipboardCheck size={14} /> <span className={WIDE_LABEL}>검수</span>
+              {reviewCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] leading-4 text-center font-bold">
+                  {reviewCount}
+                </span>
+              )}
+            </button>
             <button onClick={onOpenWorkNotes} title="작품 노트: 인물 말투·호칭을 기억해 다음 번역에 반영" className={`${actionButton} bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100`}>
               <NotebookPen size={14} /> <span className={WIDE_LABEL}>작품 노트</span>
             </button>
