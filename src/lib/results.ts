@@ -40,5 +40,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
         : undefined,
       fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
       review: typeof r.review === 'string' && r.review ? r.review : undefined,
+      ocr_text: typeof r.ocr_text === 'string' ? r.ocr_text : undefined,
     }));
 }

@@ -17,6 +17,9 @@ import { UsageModal } from './components/UsageModal';
 import { WorkNotesModal } from './components/WorkNotesModal';
 import { useDriveSync } from './hooks/useDriveSync';
 import { usePolishPass } from './hooks/usePolishPass';
+import { useOcrCrossCheck } from './hooks/useOcrCrossCheck';
+import { isOcrMismatch, OCR_MISMATCH_REVIEW } from './lib/mangaOcrText';
+import { isLocalOcrEnabled, setLocalOcrEnabled } from './lib/translationOptions';
 import { useGlossary } from './hooks/useGlossary';
 import { useGlossaryCandidates } from './hooks/useGlossaryCandidates';
 import { useCorrections } from './hooks/useCorrections';
@@ -106,6 +109,7 @@ function App() {
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isStorageOpen, setIsStorageOpen] = useState(false);
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const [localOcr, setLocalOcr] = useState(isLocalOcrEnabled);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [autoNotes, setAutoNotes] = useState(() => localStorage.getItem(AUTO_NOTES_STORAGE_KEY) !== 'false');
   const notesBusyRef = useRef(false);
@@ -405,7 +409,7 @@ function App() {
   };
 
   const handleBoxChange = (imgIndex: number, id: string, box: Box2d) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true, ocr_text: undefined } : r)));
   };
 
   /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */
@@ -519,7 +523,9 @@ function App() {
     setBubblePending(id, true);
     try {
       const { originalText, translatedText, review } = await rereadBubble(allImages[imgIndex], target.box_2d, settingsWithContext(imgIndex));
-      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText, review } : r)));
+      // 다시 읽은 원문도 로컬 OCR과 크게 다르면 표시를 남김 (둘 다 확신할 수 없는 말풍선)
+      const ocrReview = target.ocr_text && isOcrMismatch(originalText, target.ocr_text) ? OCR_MISMATCH_REVIEW : undefined;
+      updatePageResults(key, results => results.map(r => (r.id === id ? { ...r, original_text: originalText, translated_text: translatedText, review: review ?? ocrReview } : r)));
     } catch (err: any) {
       alert('다시 읽기 실패: ' + err.message);
     } finally {
@@ -579,7 +585,7 @@ function App() {
     const key = getCacheKey(img.file);
     return (translationCache[key] ?? [])
       .filter(r => r.review)
-      .map(r => ({ imgIndex, key, id: r.id, review: r.review!, originalText: r.original_text, translatedText: r.translated_text }));
+      .map(r => ({ imgIndex, key, id: r.id, review: r.review!, originalText: r.original_text, translatedText: r.translated_text, ocrText: r.ocr_text }));
   });
 
   /** 일관성 검사·다듬기에서 번역을 한꺼번에 바꿀 때 */
@@ -598,6 +604,9 @@ function App() {
       if (imgIndex >= 0) await handleRetranslate(imgIndex, ref.id, ref.originalText);
     }
   };
+
+  // ---------- 로컬 OCR 교차 검증 (번역이 끝난 페이지를 뒤에서 한 장씩) ----------
+  useOcrCrossCheck({ enabled: localOcr && isCacheReady, images: allImages, translationCache, order: translationQueue, updatePageResults });
 
   // ---------- 다듬기 (텍스트만 한 번 더 감수) ----------
   const { polish, startPolish, removeProposals } = usePolishPass(work.key);
@@ -1018,7 +1027,13 @@ function App() {
         />
       )}
 
-      {isOptionsOpen && <TranslationOptionsModal onClose={() => setIsOptionsOpen(false)} />}
+      {isOptionsOpen && (
+        <TranslationOptionsModal
+          localOcr={localOcr}
+          onLocalOcrChange={enabled => { setLocalOcrEnabled(enabled); setLocalOcr(enabled); }}
+          onClose={() => setIsOptionsOpen(false)}
+        />
+      )}
 
       {isStorageOpen && (
         <StorageModal
@@ -1041,6 +1056,7 @@ function App() {
             setIsReviewOpen(false);
           }}
           onDismissReview={handleDismissReview}
+          onReread={handleReread}
           onApplyChanges={handleApplyChanges}
           onRetranslateLines={handleRetranslateLines}
           onAddToGlossary={(original, translated) => {

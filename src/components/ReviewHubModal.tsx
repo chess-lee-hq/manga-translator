@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRight, BookOpen, Check, ClipboardCheck, EyeOff, RefreshCw, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, ClipboardCheck, EyeOff, RefreshCw, ScanText, X } from 'lucide-react';
 import {
   findGlossaryMisses, findInconsistentLines, loadIgnoredOriginals, saveIgnoredOriginals,
   type ConsistencyPage, type LineRef,
@@ -16,6 +16,8 @@ export interface ReviewItem {
   review: string;
   originalText: string;
   translatedText: string;
+  /** 로컬 OCR이 읽은 원문 (교차 검증을 한 말풍선만) */
+  ocrText?: string;
 }
 
 export interface TranslationChange {
@@ -34,6 +36,8 @@ interface ReviewHubModalProps {
   workKey: string;
   onJump: (imgIndex: number) => void;
   onDismissReview: (key: string, id: string) => void;
+  /** 이미지에서 고해상도로 다시 읽기 (다른 엔진) */
+  onReread: (imgIndex: number, id: string) => void;
   onApplyChanges: (changes: TranslationChange[]) => void;
   /** 단어장을 지키도록 이 줄들만 다시 번역 (메인 엔진, 텍스트만) */
   onRetranslateLines: (refs: LineRef[]) => void;
@@ -60,7 +64,7 @@ const GLOSSARY_MAX_LENGTH = 10;
  */
 export function ReviewHubModal(props: ReviewHubModalProps) {
   const {
-    initialTab = 'review', reviewItems, pages, glossary, workKey, onJump, onDismissReview, onApplyChanges, onRetranslateLines, onAddToGlossary,
+    initialTab = 'review', reviewItems, pages, glossary, workKey, onJump, onDismissReview, onReread, onApplyChanges, onRetranslateLines, onAddToGlossary,
     polish, mainEngineLabel, onStartPolish, onApplyPolish, onDiscardPolish, onClose,
   } = props;
   const [tab, setTab] = useState<ReviewTab>(initialTab);
@@ -128,9 +132,13 @@ export function ReviewHubModal(props: ReviewHubModalProps) {
                         <span className="inline-block mb-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">{item.review}</span>
                         <p className="text-sm text-gray-800 break-keep">{item.translatedText}</p>
                         <p className="text-[11px] text-gray-400 font-serif">{item.originalText}</p>
+                        {item.ocrText && item.ocrText !== item.originalText && (
+                          <p className="text-[11px] text-sky-600 font-serif">로컬 OCR: {item.ocrText}</p>
+                        )}
                       </div>
                       <div className="flex gap-1 shrink-0">
                         <SmallButton onClick={() => onJump(item.imgIndex)} title="이 페이지로 이동"><ArrowRight size={12} /> 이동</SmallButton>
+                        <SmallButton onClick={() => onReread(item.imgIndex, item.id)} title="이미지에서 다시 읽기 — 이 말풍선만 고해상도로 다시 읽고 번역 (다른 엔진)"><ScanText size={12} /> 다시 읽기</SmallButton>
                         <SmallButton onClick={() => onDismissReview(item.key, item.id)} title="확인했음 (표시 지우기)" tone="green"><Check size={12} /> 확인</SmallButton>
                       </div>
                     </li>

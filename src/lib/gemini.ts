@@ -35,6 +35,8 @@ export interface TranslationResult {
    * 자동 재요청 뒤에도 풀리지 않은 경우 남고, 번역을 직접 고치거나 다시 번역하면 지워짐
    */
   review?: string;
+  /** 로컬 OCR(manga-ocr)로 한 번 더 읽은 원문. 있으면 교차 검증을 마친 말풍선 (빈 문자열 = 읽은 글자 없음) */
+  ocr_text?: string;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

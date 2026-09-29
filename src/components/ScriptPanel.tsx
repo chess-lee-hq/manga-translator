@@ -229,6 +229,9 @@ export function ScriptPanel({
                               onPointerDown={(e) => e.stopPropagation()}
                             >
                               <AlertTriangle size={10} /> 검토: {result.review}
+                              {result.ocr_text && result.ocr_text !== result.original_text && (
+                                <span className="font-serif text-sky-700">· 로컬 OCR「{result.ocr_text}」</span>
+                              )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); onDismissReview(key, result.id); }}
                                 title="확인했음 (표시 지우기)"
