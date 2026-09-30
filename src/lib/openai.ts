@@ -130,10 +130,14 @@ const CACHE_BREAKPOINT = { mode: 'explicit' } as const;
  * 실측(2026-09-30, gpt-6.1-sol, Chat Completions): 이미지가 붙은 요청은 캐시에 **쓰지 않지만**, 같은 고정 부분·같은 응답 형식으로
  * 글만 보낸 요청이 써 둔 캐시는 **읽음**. 격자 번역은 전부 이미지 요청이라 아무도 캐시를 쓰지 않아 캐시가 0%였음.
  * 그래서 격자 번역 전에 글만 있는 짧은 요청을 한 번 보내 캐시를 써 둠. 캐시는 마지막 사용 후 30분 유지되므로 25분마다 다시 준비.
- * 준비했는데도 이미지 요청이 연달아 캐시를 못 읽으면 그 모델은 이번 세션에서 준비를 멈춤 (준비 요청 비용만 나가지 않게).
+ * 준비했는데도 이미지 요청이 여러 번 연달아 캐시를 못 읽으면 그 모델은 이번 세션에서 준비를 멈춤 (준비 요청 비용만 나가지 않게).
  */
 const WARM_TTL_MS = 25 * 60 * 1000;
-const WARM_GIVE_UP_AFTER_MISSES = 3;
+/**
+ * 캐시는 서버마다 따로 있어 준비해 둬도 가끔 못 읽음 (실측: 격자 번역 11번 중 7번 읽음).
+ * 몇 번 연달아 못 읽는 건 흔하므로, 정말 안 되는 경우에만 준비를 멈추도록 넉넉히 잡음
+ */
+const WARM_GIVE_UP_AFTER_MISSES = 8;
 const warmed = new Map<string, { promise: Promise<void>; lastUsed: number }>();
 const warmMisses = new Map<string, number>();
 const warmDisabled = new Set<string>();

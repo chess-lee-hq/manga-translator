@@ -398,11 +398,11 @@ describe('캐시 준비 (이미지 요청은 캐시에 쓰지 않으므로 글�
   it('준비해도 이미지 요청이 연달아 캐시를 못 읽으면 그 모델은 준비를 멈춘다', async () => {
     const fetchMock = vi.fn().mockResolvedValue(reply(0));
     vi.stubGlobal('fetch', fetchMock);
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       await translateGridImageOpenAI('luna', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: `## 노트 C${i}` });
     }
-    // 처음 3번은 준비, 그 뒤로는 안 함
-    expect(fetchMock.mock.calls.filter(isWarmup)).toHaveLength(3);
-    expect(realCalls(fetchMock)).toHaveLength(5);
+    // 처음 8번은 준비, 그 뒤로는 안 함
+    expect(fetchMock.mock.calls.filter(isWarmup)).toHaveLength(8);
+    expect(realCalls(fetchMock)).toHaveLength(10);
   });
 });
