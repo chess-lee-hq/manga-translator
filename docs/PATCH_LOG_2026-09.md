@@ -1112,7 +1112,7 @@ OpenAI가 GPT를 6세대로 올렸다. 기존 5.6 Terra/Sol 구조를 그대로 
 | 커밋 | 내용 | 되돌리기 |
 |---|---|---|
 | `1892b86` | Sol 6 → **6.1** (`gpt-6.1-sol`), 재요청 승격 대상도 6.1 Sol | `git revert 1892b86` |
-| 이 항목 다음 커밋 | 격자 프롬프트 고정 구간 보강 + `prompt_cache_key` | `git revert <해시>` |
+| `b63e86d` | 격자 프롬프트 고정 구간 보강 + `prompt_cache_key` | `git revert b63e86d` |
 
 ### 왜
 OpenAI 프롬프트 캐시는 **앞부분이 1,024토큰 이상** 이전 요청과 같아야 적용됩니다.
