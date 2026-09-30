@@ -365,22 +365,21 @@ export async function runPromptCacheDiagnostic(
   openAiVersion: OpenAiVersion,
   apiKey: string,
   stableText: string,
-  images: { small: string; large: string; scene: string },
+  images: { small: string; heavy: string },
 ) {
   const volatile = '연결 확인용 요청이야. 이미지는 무시하고 cells와 unsure를 모두 빈 배열로 답해.';
   const model = modelFor(openAiVersion);
   const schema = { response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA } };
-  const request = (gridImages: string[], sceneImages: string[] = []) =>
-    ({ model, messages: cachedPromptMessages({ stable: stableText, volatile }, gridImages, sceneImages), ...schema });
-  // 1) 글만(캐시 준비와 같은 모양)으로 캐시를 쓰고, 2~5) 이미지 조건을 하나씩 바꿔 가며 그 캐시를 읽는지 봄
-  const cases: [string, Record<string, unknown>][] = [
-    ['1 준비 (글만)', request([])],
-    ['2 작은 이미지', request([images.small])],
-    ['3 큰 이미지 (실제 격자 크기)', request([images.large])],
-    ['4 작은 이미지 + 장면(low)', request([images.small], [images.scene])],
-    ['5 큰 이미지 + 장면(low) (실제와 같은 모양)', request([images.large], [images.scene])],
-  ];
+  const request = (gridImages: string[]) => ({ model, messages: cachedPromptMessages({ stable: stableText, volatile }, gridImages), ...schema });
   const results: { name: string; usage: any }[] = [];
-  for (const [name, body] of cases) results.push({ name, usage: (await createChatCompletion(apiKey, body, `캐시 진단 ${name}`)).usage });
+  const run = async (name: string, body: Record<string, unknown>) =>
+    results.push({ name, usage: (await createChatCompletion(apiKey, body, `캐시 진단 ${name}`)).usage });
+
+  // 1) 글만으로 캐시를 쓰고 2) 작은 이미지로 읽히는지 다시 확인한 뒤,
+  // 3) 실제 격자처럼 용량이 큰 이미지 4~6) 동시에 세 개 — 실제 번역에서만 캐시를 못 읽는 원인 후보 두 가지
+  await run('1 준비 (글만)', request([]));
+  await run('2 작은 이미지', request([images.small]));
+  await run('3 용량 큰 이미지 (실제 격자처럼)', request([images.heavy]));
+  await Promise.all([4, 5, 6].map(n => run(`${n} 동시에 보냄 (${n - 3}/3)`, request([images.small]))));
   return results;
 }
