@@ -298,12 +298,21 @@ export async function polishTranslationsOpenAI(
  * 두 번째 요청의 cached_tokens가 0보다 크면 캐시 지점이 동작하는 것. 첫 요청의 prompt_tokens로 고정 부분의 실제 토큰 수도 알 수 있음
  * (브라우저 콘솔에서 __mangaCacheTest() — App.tsx)
  */
-export async function runPromptCacheDiagnostic(openAiVersion: OpenAiVersion, apiKey: string, stableText: string) {
-  const body = {
-    model: modelFor(openAiVersion),
-    messages: cachedPromptMessages({ stable: stableText, volatile: '연결 확인용 요청이야. "OK"라고만 답해.' }),
-  };
-  const usages: any[] = [];
-  for (let i = 0; i < 2; i++) usages.push((await createChatCompletion(apiKey, body, `캐시 진단 ${i + 1}/2`)).usage);
-  return usages;
+export async function runPromptCacheDiagnostic(openAiVersion: OpenAiVersion, apiKey: string, stableText: string, imageDataUrl: string) {
+  const volatile = '연결 확인용 요청이야. 이미지는 무시하고 "OK"라고만 답해. (JSON을 요구받으면 cells는 빈 배열, unsure도 빈 배열)';
+  const model = modelFor(openAiVersion);
+  const plain = { model, messages: cachedPromptMessages({ stable: stableText, volatile }) };
+  const withImage = { model, messages: cachedPromptMessages({ stable: stableText, volatile }, [imageDataUrl]) };
+  const schema = { response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA } };
+  // 같은 고정 부분으로: 기본 2번(쓰기 → 읽기) 뒤, 이미지·JSON 스키마를 붙인 요청이 그 캐시를 읽는지 하나씩 확인
+  const cases: [string, Record<string, unknown>][] = [
+    ['기본 1/2', plain],
+    ['기본 2/2', plain],
+    ['+이미지', withImage],
+    ['+JSON 스키마', { ...plain, ...schema }],
+    ['+이미지+JSON 스키마 (실제 격자 번역과 같은 모양)', { ...withImage, ...schema }],
+  ];
+  const results: { name: string; usage: any }[] = [];
+  for (const [name, body] of cases) results.push({ name, usage: (await createChatCompletion(apiKey, body, `캐시 진단 ${name}`)).usage });
+  return results;
 }

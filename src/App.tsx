@@ -155,14 +155,26 @@ function App() {
     (window as unknown as Record<string, unknown>).__mangaCacheTest = async () => {
       if (!openaiKey) return console.warn('OpenAI 키가 없습니다.');
       const stable = buildGridPromptParts({ expectedCells: 1, glossary, context: buildContextInstruction(notes?.text, [], corrections).context }).stable;
-      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 — 같은 요청을 두 번 보냅니다..`);
-      const [first, second] = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable);
-      const cached = second?.prompt_tokens_details?.cached_tokens ?? 0;
-      console.info(`[캐시 진단] 1번째 입력 ${first?.prompt_tokens}토큰 / 2번째 입력 ${second?.prompt_tokens}토큰 중 캐시 ${cached}토큰`);
-      console.info(cached > 0
-        ? '[캐시 진단] ✅ 캐시 지점이 동작합니다. 실제 번역 요청의 "고정 부분 #지문"이 요청마다 같은지 확인하세요.'
-        : `[캐시 진단] ❌ 캐시가 걸리지 않았습니다. 1번째 입력이 1,024토큰${(first?.prompt_tokens ?? 0) < 1100 ? '에 못 미쳐 고정 부분이 짧은 것' : '을 넘는데도 안 걸림 — 방식 자체를 바꿔야 함'}.`);
-      return { first, second };
+      // 작은 흰 이미지 (detail high로 붙여도 수십~백여 토큰)
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 64, 64); }
+      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 — 짧은 요청 5번을 보냅니다 (1~2센트)..`);
+      const results = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable, canvas.toDataURL('image/jpeg', 0.8));
+      const rows = results.map(({ name, usage }) => {
+        const details = usage?.prompt_tokens_details ?? {};
+        return {
+          요청: name,
+          입력: usage?.prompt_tokens,
+          캐시읽음: details.cached_tokens ?? 0,
+          캐시씀: 'cache_write_tokens' in details ? details.cache_write_tokens : '(항목 없음)',
+        };
+      });
+      console.table(rows);
+      console.info('[캐시 진단] 위 표를 캡처해 주세요. 3~5번째 요청의 "캐시읽음"이 0이면 그 조건에서 캐시가 꺼지는 것입니다.');
+      return rows;
     };
   });
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
