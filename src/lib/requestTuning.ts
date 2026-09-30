@@ -67,7 +67,7 @@ export function isUnsupportedParameterError(error: unknown, parameter: string): 
 
 /**
  * OpenAI prompt_cache_key: 앞부분이 같은 요청들에 같은 키를 달면 같은 서버로 보내져 프롬프트 캐시 적중률이 올라갑니다.
- * 같은 작품의 요청은 지침·단어장·작품 노트가 같으므로 "작품 + 이미지 여부"로 묶습니다.
+ * 같은 작품의 요청은 지침·단어장·작품 노트가 같으므로 작품 단위로 묶습니다.
  * 모델이 이 설정을 모르면(400) 기억해 두고 설정 없이 다시 보냅니다. (추론 줄이기와 같은 방식)
  */
 const CACHE_KEY_UNSUPPORTED_KEY = 'manga-cache-key-unsupported';
@@ -98,9 +98,10 @@ function loadCacheKeyUnsupported(): string[] {
 }
 
 /** 이 요청에 붙일 prompt_cache_key. 모델이 지원하지 않는다고 기억해 둔 경우 undefined */
-export function promptCacheKeyFor(model: string, kind: 'vision' | 'text'): string | undefined {
+export function promptCacheKeyFor(model: string): string | undefined {
   if (loadCacheKeyUnsupported().includes(model)) return undefined;
-  return `manga-${kind}-${shortHash(promptCacheScope ?? 'none')}`;
+  // 이미지 요청과 캐시 준비(글만) 요청이 같은 캐시를 쓰도록 작품 하나에 키 하나
+  return `manga-${shortHash(promptCacheScope ?? 'none')}`;
 }
 
 export function markPromptCacheKeyUnsupported(model: string) {

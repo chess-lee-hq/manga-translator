@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from './testing/memoryStorage';
 
 vi.stubGlobal('localStorage', new MemoryStorage());
-import { retranslateTextOpenAI, summarizeWorkNotesOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
+import { resetCacheWarmState, retranslateTextOpenAI, summarizeWorkNotesOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { setPromptCacheScope } from './requestTuning';
 import { getUsageByModel, getUsageTotals, resetUsageTotals } from './usageLog';
 
@@ -11,7 +11,10 @@ const okResponse = (content: string, usage = { prompt_tokens: 1200, completion_t
   json: async () => ({ choices: [{ message: { content } }], usage }),
 });
 
-const sentBody = (fetchMock: any, call = 0) => JSON.parse(fetchMock.mock.calls[call][1].body);
+/** 격자 번역 앞에 나가는 "캐시 준비" 요청은 빼고 본 요청만 (openai.ts ensureCacheWarm) */
+const isWarmup = (call: any[]) => String(call[1]?.body ?? '').includes('캐시 준비용 요청');
+const realCalls = (fetchMock: any) => fetchMock.mock.calls.filter((call: any[]) => !isWarmup(call));
+const sentBody = (fetchMock: any, call = 0) => JSON.parse(realCalls(fetchMock)[call][1].body);
 const sentPrompt = (fetchMock: any, call = 0) => {
   // 캐시 경계로 나눈 developer(고정)·user(매번) 메시지의 글을 이어 붙여 하나의 프롬프트로 봄
   return sentBody(fetchMock, call).messages
@@ -24,6 +27,7 @@ const userParts = (fetchMock: any, call = 0) => sentBody(fetchMock, call).messag
 describe('translateGridImageOpenAI (주력 엔진)', () => {
   beforeEach(() => {
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -40,8 +44,9 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     expect(body.messages.at(-1).content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 90, reasoningTokens: 0 });
+    expect(realCalls(fetchMock)).toHaveLength(1);
+    // 캐시 준비 요청 1번 + 본 요청 1번
+    expect(getUsageTotals().openai).toEqual({ calls: 2, inputTokens: 2400, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 180, reasoningTokens: 0 });
     expect(getUsageTotals().gemini.calls).toBe(0);
   });
 
@@ -49,7 +54,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B'], 30);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(realCalls(fetchMock)).toHaveLength(1);
     const images = userParts(fetchMock).slice(1).map((part: any) => part.image_url.url);
     expect(images).toEqual(['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B']);
   });
@@ -91,6 +96,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
 describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
   beforeEach(() => {
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -113,6 +119,7 @@ describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
 describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', () => {
   beforeEach(() => {
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -123,7 +130,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const result = await summarizeWorkNotesOpenAI('luna', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
 
     expect(result).toEqual({ notes: '- 주인공: 반말', glossary: [{ original: '雷神流', translated: '뇌신류' }] });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(realCalls(fetchMock)).toHaveLength(1);
     expect(sentBody(fetchMock).response_format.type).toBe('json_schema');
     expect(sentBody(fetchMock).response_format.json_schema.strict).toBe(true);
     const prompt = sentPrompt(fetchMock);
@@ -159,6 +166,7 @@ describe('추론 줄이기 (reasoning_effort)', () => {
   beforeEach(() => {
     localStorage.clear();
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
   });
@@ -195,6 +203,7 @@ describe('추론 줄이기 (reasoning_effort)', () => {
 describe('격자 응답의 unsure 목록', () => {
   beforeEach(() => {
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -210,6 +219,7 @@ describe('격자 응답의 unsure 목록', () => {
 describe('[실험] 장면 이미지 함께 보내기', () => {
   beforeEach(() => {
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
   });
 
@@ -224,7 +234,8 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
       ['data:image/jpeg;base64,SCENE', 'low'],
     ]);
     expect(sentPrompt(fetchMock)).toContain('장면 이미지');
-    expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra · 장면']);
+    // 캐시 준비 요청(장면 이미지 없음)은 모델 이름 줄로, 본 요청은 '· 장면' 줄로
+    expect(Object.keys(getUsageByModel('session'))).toContain('gpt-5.6-terra · 장면');
   });
 
   it('장면 이미지가 없으면 프롬프트에도 안내가 없고 모델 이름 그대로 집계한다', async () => {
@@ -240,6 +251,7 @@ describe('prompt_cache_key (같은 작품 요청을 같은 서버로)', () => {
   beforeEach(() => {
     localStorage.clear();
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
   });
@@ -256,7 +268,7 @@ describe('prompt_cache_key (같은 작품 요청을 같은 서버로)', () => {
     const keys = [0, 1, 2].map(i => sentBody(fetchMock, i).prompt_cache_key);
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
-    expect(keys[0]).toMatch(/^manga-vision-/);
+    expect(keys[0]).toMatch(/^manga-[0-9a-z]+$/);
     expect(keys[0]).not.toContain('武田');
   });
 
@@ -270,7 +282,7 @@ describe('prompt_cache_key (같은 작품 요청을 같은 서버로)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     expect(await retranslateTextOpenAI('terra', 'sk-test', '原文')).toBe('번역');
-    expect(sentBody(fetchMock, 0).prompt_cache_key).toMatch(/^manga-text-/);
+    expect(sentBody(fetchMock, 0).prompt_cache_key).toMatch(/^manga-[0-9a-z]+$/);
     expect(sentBody(fetchMock, 1).prompt_cache_key).toBeUndefined();
     await retranslateTextOpenAI('terra', 'sk-test', '原文');
     expect(sentBody(fetchMock, 2).prompt_cache_key).toBeUndefined();
@@ -281,6 +293,7 @@ describe('캐시 경계 (GPT-5.6 이후: 고정 부분 끝에만 캐시 지점)'
   beforeEach(() => {
     localStorage.clear();
     resetUsageTotals();
+    resetCacheWarmState();
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
   });
@@ -323,13 +336,14 @@ describe('캐시 경계 (GPT-5.6 이후: 고정 부분 끝에만 캐시 지점)'
       .mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1);
+    // 페이지 전체 인식은 캐시 준비 없이 바로 보냄
+    await translateFullPageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,A');
     const retried = sentBody(fetchMock, 1);
     expect(retried.prompt_cache_options).toBeUndefined();
     expect(retried.messages[0].content[0].prompt_cache_breakpoint).toBeUndefined();
     expect(retried.messages[0].role).toBe('developer');
 
-    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,B'], 1);
+    await translateFullPageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,B');
     expect(sentBody(fetchMock, 2).prompt_cache_options).toBeUndefined();
   });
 
@@ -338,7 +352,57 @@ describe('캐시 경계 (GPT-5.6 이후: 고정 부분 끝에만 캐시 지점)'
       prompt_tokens: 2000, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 1400 },
     } as any));
     vi.stubGlobal('fetch', fetchMock);
-    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1);
+    await translateFullPageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,A');
     expect(getUsageTotals().openai.cacheWriteTokens).toBe(1400);
+  });
+});
+
+describe('캐시 준비 (이미지 요청은 캐시에 쓰지 않으므로 글만 있는 요청으로 먼저 써 둠)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetUsageTotals();
+    resetCacheWarmState();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  const reply = (cached: number) => okResponse('{"cells":[],"unsure":[]}', {
+    prompt_tokens: 3000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: cached },
+  } as any);
+
+  it('같은 고정 부분이면 준비는 한 번만, 같은 고정 부분·응답 형식으로 이미지 없이 보낸다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(2300));
+    vi.stubGlobal('fetch', fetchMock);
+    const options = { glossary: { 準備: '준비' }, context: '## 노트 A' };
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1, options);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,B'], 2, options);
+
+    const warmups = fetchMock.mock.calls.filter(isWarmup).map((call: any[]) => JSON.parse(call[1].body));
+    expect(warmups).toHaveLength(1);
+    const real = sentBody(fetchMock, 0);
+    expect(warmups[0].messages[0]).toEqual(real.messages[0]);
+    expect(warmups[0].response_format).toEqual(real.response_format);
+    expect(JSON.stringify(warmups[0].messages)).not.toContain('image_url');
+    // 준비가 본 요청보다 먼저
+    expect(isWarmup(fetchMock.mock.calls[0])).toBe(true);
+  });
+
+  it('고정 부분(단어장·노트)이 바뀌면 다시 준비한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(2300));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: '## 노트 B1' });
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: '## 노트 B2' });
+    expect(fetchMock.mock.calls.filter(isWarmup)).toHaveLength(2);
+  });
+
+  it('준비해도 이미지 요청이 연달아 캐시를 못 읽으면 그 모델은 준비를 멈춘다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(0));
+    vi.stubGlobal('fetch', fetchMock);
+    for (let i = 0; i < 5; i++) {
+      await translateGridImageOpenAI('luna', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: `## 노트 C${i}` });
+    }
+    // 처음 3번은 준비, 그 뒤로는 안 함
+    expect(fetchMock.mock.calls.filter(isWarmup)).toHaveLength(3);
+    expect(realCalls(fetchMock)).toHaveLength(5);
   });
 });

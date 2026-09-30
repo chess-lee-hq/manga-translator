@@ -71,7 +71,7 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   // 추론 줄이기(사용량 창의 실험 옵션)
   if (shouldReduceReasoning(model)) optional.reasoning_effort = LOW_REASONING_EFFORT;
   // 같은 작품의 요청을 같은 서버로 보내 프롬프트 캐시 적중률을 높임
-  const cacheKey = promptCacheKeyFor(model, JSON.stringify(body.messages ?? '').includes('"image_url"') ? 'vision' : 'text');
+  const cacheKey = promptCacheKeyFor(model);
   if (cacheKey) optional.prompt_cache_key = cacheKey;
   // 캐시 지점: 자동 지점(요청 전체를 1.25배로 캐시에 씀)을 끄고, 고정 부분 끝에 찍은 지점만 씀 (cachedPromptMessages)
   let useBreakpoints = shouldUseCacheBreakpoints(model);
@@ -124,6 +124,64 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
 }
 
 const CACHE_BREAKPOINT = { mode: 'explicit' } as const;
+
+/**
+ * 캐시 준비(prewarm).
+ * 실측(2026-09-30, gpt-6.1-sol, Chat Completions): 이미지가 붙은 요청은 캐시에 **쓰지 않지만**, 같은 고정 부분·같은 응답 형식으로
+ * 글만 보낸 요청이 써 둔 캐시는 **읽음**. 격자 번역은 전부 이미지 요청이라 아무도 캐시를 쓰지 않아 캐시가 0%였음.
+ * 그래서 격자 번역 전에 글만 있는 짧은 요청을 한 번 보내 캐시를 써 둠. 캐시는 마지막 사용 후 30분 유지되므로 25분마다 다시 준비.
+ * 준비했는데도 이미지 요청이 연달아 캐시를 못 읽으면 그 모델은 이번 세션에서 준비를 멈춤 (준비 요청 비용만 나가지 않게).
+ */
+const WARM_TTL_MS = 25 * 60 * 1000;
+const WARM_GIVE_UP_AFTER_MISSES = 3;
+const warmed = new Map<string, { promise: Promise<void>; lastUsed: number }>();
+const warmMisses = new Map<string, number>();
+const warmDisabled = new Set<string>();
+
+const warmKeyOf = (model: string, stable: string) => `${model}#${shortHash(stable)}`;
+
+/** 테스트용: 캐시 준비 기록을 비움 */
+export function resetCacheWarmState() {
+  warmed.clear();
+  warmMisses.clear();
+  warmDisabled.clear();
+}
+
+async function ensureCacheWarm(apiKey: string, model: string, stable: string, responseFormat: Record<string, unknown>) {
+  if (warmDisabled.has(model) || !shouldUseCacheBreakpoints(model)) return;
+  const key = warmKeyOf(model, stable);
+  const entry = warmed.get(key);
+  if (entry && Date.now() - entry.lastUsed < WARM_TTL_MS) return entry.promise;
+
+  const promise = createChatCompletion(apiKey, {
+    model,
+    messages: cachedPromptMessages({ stable, volatile: '캐시 준비용 요청이야. cells와 unsure를 모두 빈 배열로 답해.' }),
+    response_format: responseFormat,
+  }, '캐시 준비').then(() => undefined, error => {
+    // 준비가 실패해도 번역은 그대로 진행 (캐시만 안 걸림)
+    warmed.delete(key);
+    console.warn('[cache] 캐시 준비 요청 실패:', (error as Error)?.message ?? error);
+  });
+  warmed.set(key, { promise, lastUsed: Date.now() });
+  return promise;
+}
+
+/** 이미지 요청이 준비해 둔 캐시를 읽었는지 기록 (읽었으면 수명 연장, 계속 못 읽으면 준비를 멈춤) */
+function noteWarmResult(model: string, stable: string, cachedTokens: number) {
+  const entry = warmed.get(warmKeyOf(model, stable));
+  if (!entry) return;
+  if (cachedTokens > 0) {
+    entry.lastUsed = Date.now();
+    warmMisses.set(model, 0);
+    return;
+  }
+  const misses = (warmMisses.get(model) ?? 0) + 1;
+  warmMisses.set(model, misses);
+  if (misses >= WARM_GIVE_UP_AFTER_MISSES) {
+    warmDisabled.add(model);
+    console.info(`[cache] ${model}: 캐시를 준비해도 이미지 요청이 ${misses}번 연속 캐시를 못 읽어, 이번 세션에서는 캐시 준비를 멈춥니다.`);
+  }
+}
 
 /**
  * 캐시가 걸리게 나눈 메시지 두 개.
@@ -191,13 +249,18 @@ export async function translateGridImageOpenAI(
 ): Promise<GridTranslationResult[]> {
   const { pageCellCounts, label, sceneImages = [], ...promptOptions } = options;
   const parts = buildGridPromptParts({ expectedCells, pageCellCounts, sceneCount: sceneImages.length, ...promptOptions });
+  const model = modelFor(openAiVersion);
+  const responseFormat = { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA };
 
+  // 이미지 요청은 캐시를 쓰지 않으므로, 같은 고정 부분·같은 응답 형식으로 캐시를 먼저 써 둠
+  await ensureCacheWarm(apiKey, model, parts.stable, responseFormat);
   const response = await createChatCompletion(apiKey, {
-    model: modelFor(openAiVersion),
+    model,
     messages: cachedPromptMessages(parts, gridDataUrls, sceneImages),
-    response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
+    response_format: responseFormat,
   }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'),
   sceneImages.length > 0 ? SCENE_USAGE_VARIANT : undefined);
+  noteWarmResult(model, parts.stable, response?.usage?.prompt_tokens_details?.cached_tokens ?? 0);
 
   const content = contentOf(response);
   if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
