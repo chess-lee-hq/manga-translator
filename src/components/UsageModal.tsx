@@ -54,7 +54,7 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
   const updatePrice = (model: string, field: keyof ModelPrice, raw: string) => {
     const value = raw.trim() === '' ? undefined : Number(raw);
     const current: ModelPrice = prices[model] ?? { input: NaN, output: NaN };
-    const nextPrice = { ...current, [field]: value === undefined ? (field === 'cachedInput' ? undefined : NaN) : value };
+    const nextPrice = { ...current, [field]: value === undefined ? (field === 'cachedInput' || field === 'cacheWrite' ? undefined : NaN) : value };
     const next = { ...prices, [model]: nextPrice };
     setPrices(next);
     saveModelPrices(next);
@@ -87,7 +87,7 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-sky-600">
             <BarChart3 size={22} />
@@ -125,10 +125,11 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
                   <th className="text-left py-1.5 font-medium">모델</th>
                   <th className="text-right font-medium">요청</th>
                   <th className="text-right font-medium">입력</th>
-                  <th className="text-right font-medium" title="입력 중 캐시가 걸려 할인된 비율">캐시</th>
+                  <th className="text-right font-medium" title="입력 중 캐시에서 읽어 할인된 비율 (높을수록 좋음)">캐시</th>
+                  <th className="text-right font-medium" title="입력 중 캐시에 새로 쓴 비율 (GPT-5.6 이후 1.25배 단가 — 같은 작품을 이어 읽으면 낮아져야 정상)">쓰기</th>
                   <th className="text-right font-medium" title="추론(생각) 토큰 포함">출력</th>
                   <th className="text-right font-medium" title="출력 중 추론(생각)에 쓴 비율">추론</th>
-                  <th className="text-right font-medium pl-3" title="100만 토큰당 달러: 입력 / 캐시 입력(비우면 입력 단가) / 출력">단가 $/1M (입력·캐시·출력)</th>
+                  <th className="text-right font-medium pl-3" title="100만 토큰당 달러: 입력 / 캐시 읽기(비우면 입력 단가) / 캐시 쓰기(비우면 입력 단가) / 출력">단가 $/1M (입력·캐시·쓰기·출력)</th>
                   <th className="text-right font-medium pl-2">예상 비용</th>
                 </tr>
               </thead>
@@ -139,6 +140,7 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
                       <>
                         {priceInput(model, 'input', '입력')}
                         {priceInput(model, 'cachedInput', '캐시')}
+                        {priceInput(model, 'cacheWrite', '쓰기')}
                         {priceInput(model, 'output', '출력')}
                       </>
                     ) : (
@@ -151,6 +153,7 @@ export function UsageModal({ workKey, workTitle, onClose }: UsageModalProps) {
                   <td className="text-right">{total.calls}</td>
                   <td className="text-right">{formatTokens(total.inputTokens)}</td>
                   <td className="text-right">{percent(total.cachedInputTokens, total.inputTokens)}%</td>
+                  <td className="text-right">{percent(total.cacheWriteTokens ?? 0, total.inputTokens)}%</td>
                   <td className="text-right">{formatTokens(total.outputTokens)}</td>
                   <td className="text-right">{percent(total.reasoningTokens, total.outputTokens)}%</td>
                   <td />
@@ -192,6 +195,7 @@ function UsageRow({ model, totals, cost, children }: { model: string; totals: Us
       <td className="text-right">{totals.calls}</td>
       <td className="text-right">{formatTokens(totals.inputTokens)}</td>
       <td className="text-right">{percent(totals.cachedInputTokens, totals.inputTokens)}%</td>
+      <td className="text-right">{percent(totals.cacheWriteTokens ?? 0, totals.inputTokens)}%</td>
       <td className="text-right">{formatTokens(totals.outputTokens)}</td>
       <td className="text-right">{percent(totals.reasoningTokens ?? 0, totals.outputTokens)}%</td>
       <td className="text-right pl-3 whitespace-nowrap space-x-1">{children}</td>

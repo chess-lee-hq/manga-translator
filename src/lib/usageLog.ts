@@ -20,6 +20,8 @@ export interface UsageTotals {
   outputTokens: number;
   /** outputTokens 중 추론(생각)에 쓴 분량 */
   reasoningTokens: number;
+  /** inputTokens 중 캐시에 새로 쓴 분량 (GPT-5.6 이후: 1.25배 단가) */
+  cacheWriteTokens?: number;
 }
 
 export interface UsageRecord {
@@ -34,13 +36,14 @@ export interface UsageRecord {
   variant?: string;
   inputTokens: number;
   cachedInputTokens?: number;
+  cacheWriteTokens?: number;
   outputTokens: number;
   reasoningTokens?: number;
 }
 
 const WORK_USAGE_PREFIX = 'manga-usage-work-';
 
-const emptyUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 });
+const emptyUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 });
 
 const byProvider: Record<UsageProvider, UsageTotals> = { gemini: emptyUsage(), openai: emptyUsage() };
 let sessionByModel: Record<string, UsageTotals> = {};
@@ -54,6 +57,7 @@ function add(target: UsageTotals, record: UsageRecord) {
   target.calls += 1;
   target.inputTokens += record.inputTokens;
   target.cachedInputTokens += record.cachedInputTokens ?? 0;
+  target.cacheWriteTokens = (target.cacheWriteTokens ?? 0) + (record.cacheWriteTokens ?? 0);
   target.outputTokens += record.outputTokens;
   target.reasoningTokens += record.reasoningTokens ?? 0;
 }
@@ -93,7 +97,8 @@ export function recordUsage(record: UsageRecord) {
   }
 
   const total = byProvider[provider];
-  const cached = record.cachedInputTokens ? ` (캐시 ${record.cachedInputTokens})` : '';
+  const cached = (record.cachedInputTokens ? ` (캐시 ${record.cachedInputTokens})` : '')
+    + (record.cacheWriteTokens ? ` (캐시 쓰기 ${record.cacheWriteTokens})` : '');
   const reasoning = record.reasoningTokens ? ` (추론 ${record.reasoningTokens})` : '';
   console.debug(
     `[tokens] ${provider} · ${key} · ${label} — 입력 ${record.inputTokens}${cached} / 출력 ${record.outputTokens}${reasoning}`
@@ -149,6 +154,7 @@ export function sumUsage(totals: Record<string, UsageTotals>): UsageTotals {
     cachedInputTokens: sum.cachedInputTokens + (t.cachedInputTokens ?? 0),
     outputTokens: sum.outputTokens + (t.outputTokens ?? 0),
     reasoningTokens: sum.reasoningTokens + (t.reasoningTokens ?? 0),
+    cacheWriteTokens: (sum.cacheWriteTokens ?? 0) + (t.cacheWriteTokens ?? 0),
   }), emptyUsage());
 }
 
@@ -157,6 +163,8 @@ export interface ModelPrice {
   input: number;
   /** 캐시된 입력 단가. 비우면 입력 단가로 계산 */
   cachedInput?: number;
+  /** 캐시에 새로 쓰는 입력 단가 (GPT-5.6 이후는 입력의 1.25배). 비우면 입력 단가로 계산 */
+  cacheWrite?: number;
   output: number;
 }
 
@@ -183,8 +191,10 @@ export function saveModelPrices(prices: Record<string, ModelPrice>) {
 export function estimateCost(totals: UsageTotals, price: ModelPrice | undefined): number | null {
   if (!price || !(price.input >= 0) || !(price.output >= 0)) return null;
   const cached = Math.min(totals.cachedInputTokens, totals.inputTokens);
-  const fresh = totals.inputTokens - cached;
-  return (fresh * price.input + cached * (price.cachedInput ?? price.input) + totals.outputTokens * price.output) / 1_000_000;
+  const written = Math.min(totals.cacheWriteTokens ?? 0, totals.inputTokens - cached);
+  const fresh = totals.inputTokens - cached - written;
+  return (fresh * price.input + cached * (price.cachedInput ?? price.input) + written * (price.cacheWrite ?? price.input)
+    + totals.outputTokens * price.output) / 1_000_000;
 }
 
 if (typeof window !== 'undefined') {

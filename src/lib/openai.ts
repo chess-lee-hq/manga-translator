@@ -8,12 +8,12 @@ import {
 } from './responseShape';
 import { assertHeaderSafeApiKey, toFriendlyError, withRetry } from './retry';
 import {
-  buildFullPagePrompt, buildGridPrompt, buildPolishPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt,
-  type PolishLine, type PromptContextOptions,
+  buildFullPagePromptParts, buildGridPromptParts, buildPolishPromptParts, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt,
+  type PolishLine, type PromptContextOptions, type PromptParts,
 } from './translationPrompt';
 import {
-  isUnsupportedParameterError, LOW_REASONING_EFFORT, markPromptCacheKeyUnsupported, markReasoningControlUnsupported, promptCacheKeyFor,
-  shouldReduceReasoning,
+  isUnsupportedParameterError, LOW_REASONING_EFFORT, markCacheBreakpointsUnsupported, markPromptCacheKeyUnsupported, markReasoningControlUnsupported,
+  promptCacheKeyFor, shouldReduceReasoning, shouldUseCacheBreakpoints,
 } from './requestTuning';
 import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
@@ -73,6 +73,8 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   // 같은 작품의 요청을 같은 서버로 보내 프롬프트 캐시 적중률을 높임
   const cacheKey = promptCacheKeyFor(model, JSON.stringify(body.messages ?? '').includes('"image_url"') ? 'vision' : 'text');
   if (cacheKey) optional.prompt_cache_key = cacheKey;
+  // 캐시 지점: 자동 지점(요청 전체를 1.25배로 캐시에 씀)을 끄고, 고정 부분 끝에 찍은 지점만 씀 (cachedPromptMessages)
+  let useBreakpoints = shouldUseCacheBreakpoints(model);
   const markUnsupported: Record<string, (model: string) => void> = {
     reasoning_effort: markReasoningControlUnsupported,
     prompt_cache_key: markPromptCacheKeyUnsupported,
@@ -81,10 +83,18 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   try {
     let response;
     for (;;) {
+      const payload = useBreakpoints
+        ? { ...body, ...optional, prompt_cache_options: { mode: 'explicit' } }
+        : { ...body, ...optional, messages: withoutBreakpoints(body.messages) };
       try {
-        response = await send({ ...body, ...optional });
+        response = await send(payload);
         break;
       } catch (error) {
+        if (useBreakpoints && ['prompt_cache_options', 'prompt_cache_breakpoint'].some(name => isUnsupportedParameterError(error, name))) {
+          markCacheBreakpointsUnsupported(model);
+          useBreakpoints = false;
+          continue;
+        }
         const rejected = Object.keys(optional).find(name => isUnsupportedParameterError(error, name));
         if (!rejected) throw error;
         markUnsupported[rejected](model);
@@ -98,6 +108,7 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
       label,
       inputTokens: usage?.prompt_tokens ?? 0,
       cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      cacheWriteTokens: usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
       outputTokens: usage?.completion_tokens ?? 0,
       reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? 0,
       variant,
@@ -108,19 +119,33 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
   }
 }
 
+const CACHE_BREAKPOINT = { mode: 'explicit' } as const;
+
 /**
- * 이미지(여러 장이면 순서대로)를 붙인 사용자 메시지.
- * lowDetailUrls(장면 이미지)는 detail "low"로 붙여 크기와 관계없이 장당 85토큰만 쓰게 함
+ * 캐시가 걸리게 나눈 메시지 두 개.
+ * - developer: 고정 부분(지침·단어장·작품 노트) + 끝에 캐시 지점 → 같은 작품에서는 처음 한 번만 1.25배로 쓰고 이후 0.1배로 읽음
+ * - user: 매번 바뀌는 부분 + 이미지 → 캐시에 쓰지 않아 정가(1배)
  */
-function imageMessage(prompt: string, imageDataUrls: string[], lowDetailUrls: string[] = []) {
-  return {
-    role: 'user',
-    content: [
-      { type: 'text', text: prompt },
-      ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
-      ...lowDetailUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'low' } })),
-    ],
-  };
+function cachedPromptMessages(parts: PromptParts, imageDataUrls: string[] = [], lowDetailUrls: string[] = []) {
+  return [
+    { role: 'developer', content: [{ type: 'text', text: parts.stable, prompt_cache_breakpoint: CACHE_BREAKPOINT }] },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: parts.volatile || '위 지침대로 처리해.' },
+        ...imageDataUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
+        ...lowDetailUrls.map(url => ({ type: 'image_url', image_url: { url, detail: 'low' } })),
+      ],
+    },
+  ];
+}
+
+/** 캐시 지점 설정을 모르는 모델용: 메시지 모양은 그대로 두고 지점 표시만 뺌 */
+function withoutBreakpoints(messages: unknown): unknown {
+  if (!Array.isArray(messages)) return messages;
+  return messages.map(message => (Array.isArray(message?.content)
+    ? { ...message, content: message.content.map(({ prompt_cache_breakpoint: _drop, ...part }: Record<string, unknown>) => part) }
+    : message));
 }
 
 /** 응답 형태는 json_schema(strict)로 강제되므로, 여기서는 파싱만 합니다. */
@@ -161,11 +186,11 @@ export async function translateGridImageOpenAI(
   options: GridRequestOptions = {},
 ): Promise<GridTranslationResult[]> {
   const { pageCellCounts, label, sceneImages = [], ...promptOptions } = options;
-  const prompt = buildGridPrompt({ expectedCells, pageCellCounts, sceneCount: sceneImages.length, ...promptOptions });
+  const parts = buildGridPromptParts({ expectedCells, pageCellCounts, sceneCount: sceneImages.length, ...promptOptions });
 
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(prompt, gridDataUrls, sceneImages)],
+    messages: cachedPromptMessages(parts, gridDataUrls, sceneImages),
     response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA },
   }, label ?? (pageCellCounts && pageCellCounts.length > 1 ? `격자 번역 (${pageCellCounts.length}장 묶음)` : '격자 번역'),
   sceneImages.length > 0 ? SCENE_USAGE_VARIANT : undefined);
@@ -191,7 +216,7 @@ export async function translateFullPageOpenAI(
 ): Promise<RawTranslationResult[]> {
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [imageMessage(buildFullPagePrompt(options), [pageDataUrl])],
+    messages: cachedPromptMessages(buildFullPagePromptParts(options), [pageDataUrl]),
     response_format: { type: 'json_schema', json_schema: OPENAI_FULL_PAGE_SCHEMA },
   }, '페이지 전체 번역');
 
@@ -256,7 +281,7 @@ export async function polishTranslationsOpenAI(
   if (lines.length === 0) return [];
   const response = await createChatCompletion(apiKey, {
     model: modelFor(openAiVersion),
-    messages: [{ role: 'user', content: buildPolishPrompt(lines, options) }],
+    messages: cachedPromptMessages(buildPolishPromptParts(lines, options)),
     response_format: { type: 'json_schema', json_schema: OPENAI_POLISH_SCHEMA },
   }, `다듬기 (${lines.length}줄)`);
   const content = contentOf(response);

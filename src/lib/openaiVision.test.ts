@@ -13,9 +13,13 @@ const okResponse = (content: string, usage = { prompt_tokens: 1200, completion_t
 
 const sentBody = (fetchMock: any, call = 0) => JSON.parse(fetchMock.mock.calls[call][1].body);
 const sentPrompt = (fetchMock: any, call = 0) => {
-  const content = sentBody(fetchMock, call).messages[0].content;
-  return Array.isArray(content) ? content[0].text : content;
+  // 캐시 경계로 나눈 developer(고정)·user(매번) 메시지의 글을 이어 붙여 하나의 프롬프트로 봄
+  return sentBody(fetchMock, call).messages
+    .map((message: any) => (Array.isArray(message.content) ? message.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n') : message.content))
+    .join('\n');
 };
+/** 이미지가 붙는 마지막 user 메시지 */
+const userParts = (fetchMock: any, call = 0) => sentBody(fetchMock, call).messages.at(-1).content;
 
 describe('translateGridImageOpenAI (주력 엔진)', () => {
   beforeEach(() => {
@@ -33,11 +37,11 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
 
     const body = sentBody(fetchMock);
     expect(body.model).toBe('gpt-5.6-terra');
-    expect(body.messages[0].content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
+    expect(body.messages.at(-1).content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, outputTokens: 90, reasoningTokens: 0 });
+    expect(getUsageTotals().openai).toEqual({ calls: 1, inputTokens: 1200, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 90, reasoningTokens: 0 });
     expect(getUsageTotals().gemini.calls).toBe(0);
   });
 
@@ -46,7 +50,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B'], 30);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const images = sentBody(fetchMock).messages[0].content.slice(1).map((part: any) => part.image_url.url);
+    const images = userParts(fetchMock).slice(1).map((part: any) => part.image_url.url);
     expect(images).toEqual(['data:image/jpeg;base64,A', 'data:image/jpeg;base64,B']);
   });
 
@@ -214,12 +218,12 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1, { sceneImages: ['data:image/jpeg;base64,SCENE'] });
 
-    const content = sentBody(fetchMock).messages[0].content;
+    const content = userParts(fetchMock);
     expect(content.slice(1).map((part: any) => [part.image_url.url, part.image_url.detail])).toEqual([
       ['data:image/jpeg;base64,GRID', 'high'],
       ['data:image/jpeg;base64,SCENE', 'low'],
     ]);
-    expect(content[0].text).toContain('장면 이미지');
+    expect(sentPrompt(fetchMock)).toContain('장면 이미지');
     expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra · 장면']);
   });
 
@@ -227,7 +231,7 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
-    expect(sentBody(fetchMock).messages[0].content[0].text).not.toContain('장면 이미지');
+    expect(sentPrompt(fetchMock)).not.toContain('장면 이미지');
     expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra']);
   });
 });
@@ -270,5 +274,71 @@ describe('prompt_cache_key (같은 작품 요청을 같은 서버로)', () => {
     expect(sentBody(fetchMock, 1).prompt_cache_key).toBeUndefined();
     await retranslateTextOpenAI('terra', 'sk-test', '原文');
     expect(sentBody(fetchMock, 2).prompt_cache_key).toBeUndefined();
+  });
+});
+
+describe('캐시 경계 (GPT-5.6 이후: 고정 부분 끝에만 캐시 지점)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetUsageTotals();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it('지침·단어장·노트는 developer 메시지 끝에 캐시 지점, 매번 바뀌는 글과 이미지는 user 메시지, 자동 지점은 끔', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 2, {
+      glossary: { 拳王: '권왕' }, context: '## 작품 노트\n- 반말', recentContext: '## 직전까지의 번역\n- あ → 가',
+    });
+    const body = sentBody(fetchMock);
+    expect(body.prompt_cache_options).toEqual({ mode: 'explicit' });
+    const [developer, user] = body.messages;
+    expect(developer.role).toBe('developer');
+    expect(developer.content[0].prompt_cache_breakpoint).toEqual({ mode: 'explicit' });
+    expect(developer.content[0].text).toContain('拳王 -> 권왕');
+    expect(developer.content[0].text).toContain('## 작품 노트');
+    expect(developer.content[0].text).not.toContain('직전까지의 번역');
+    expect(user.role).toBe('user');
+    expect(user.content[0].text).toContain('직전까지의 번역');
+    expect(user.content[0].text).toContain('정확히 2개');
+    expect(user.content[1].image_url.url).toBe('data:image/jpeg;base64,GRID');
+  });
+
+  it('같은 작품이면 developer 메시지가 글자 하나까지 같다 (그래야 캐시를 다시 씀)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    const shared = { glossary: { 拳王: '권왕' }, context: '## 작품 노트' };
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 3, { ...shared, recentContext: '- 1', pageCellCounts: [1, 2] });
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,B'], 5, { ...shared, recentContext: '- 2', sceneImages: ['data:image/jpeg;base64,S'] });
+    expect(sentBody(fetchMock, 1).messages[0]).toEqual(sentBody(fetchMock, 0).messages[0]);
+  });
+
+  it('모델이 캐시 지점 설정을 거절하면 기억해 두고 빼서 다시 보낸다', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 400, headers: new Headers(),
+        text: async () => '{"error":{"message":"Unknown parameter: prompt_cache_options"}}',
+      })
+      .mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1);
+    const retried = sentBody(fetchMock, 1);
+    expect(retried.prompt_cache_options).toBeUndefined();
+    expect(retried.messages[0].content[0].prompt_cache_breakpoint).toBeUndefined();
+    expect(retried.messages[0].role).toBe('developer');
+
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,B'], 1);
+    expect(sentBody(fetchMock, 2).prompt_cache_options).toBeUndefined();
+  });
+
+  it('캐시에 새로 쓴 토큰을 따로 기록한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}', {
+      prompt_tokens: 2000, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 1400 },
+    } as any));
+    vi.stubGlobal('fetch', fetchMock);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1);
+    expect(getUsageTotals().openai.cacheWriteTokens).toBe(1400);
   });
 });

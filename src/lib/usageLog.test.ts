@@ -31,8 +31,8 @@ describe('recordUsage', () => {
     record('gpt-5.6-terra', 300, 100, { cached: 200 });
 
     expect(getUsageTotals()).toEqual({
-      gemini: { calls: 2, inputTokens: 1500, cachedInputTokens: 0, outputTokens: 70, reasoningTokens: 10 },
-      openai: { calls: 1, inputTokens: 300, cachedInputTokens: 200, outputTokens: 100, reasoningTokens: 0 },
+      gemini: { calls: 2, inputTokens: 1500, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 70, reasoningTokens: 10 },
+      openai: { calls: 1, inputTokens: 300, cachedInputTokens: 200, cacheWriteTokens: 0, outputTokens: 100, reasoningTokens: 0 },
     });
   });
 
@@ -41,7 +41,7 @@ describe('recordUsage', () => {
     record('gpt-6.1-sol', 200, 20, { reasoning: 5 });
     const byModel = getUsageByModel('session');
     expect(Object.keys(byModel).sort()).toEqual(['gpt-5.6-terra', 'gpt-6.1-sol']);
-    expect(sumUsage(byModel)).toEqual({ calls: 2, inputTokens: 300, cachedInputTokens: 0, outputTokens: 30, reasoningTokens: 5 });
+    expect(sumUsage(byModel)).toEqual({ calls: 2, inputTokens: 300, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 30, reasoningTokens: 5 });
   });
 
   it('작품이 정해져 있으면 작품별 누적을 localStorage에 남기고, 세션을 초기화해도 유지된다', () => {
@@ -61,7 +61,7 @@ describe('recordUsage', () => {
   it('초기화하면 0으로 돌아간다', () => {
     record('gpt-5.6-terra', 10, 5);
     resetUsageTotals();
-    expect(getUsageTotals().openai).toEqual({ calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0 });
+    expect(getUsageTotals().openai).toEqual({ calls: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 });
   });
 });
 
@@ -75,5 +75,13 @@ describe('estimateCost', () => {
   it('캐시 단가가 없으면 입력 단가를 쓰고, 단가가 없으면 null', () => {
     expect(estimateCost(totals, { input: 1, output: 1 })).toBeCloseTo(1.1);
     expect(estimateCost(totals, undefined)).toBeNull();
+  });
+});
+
+describe('estimateCost — 캐시 쓰기', () => {
+  it('캐시에 새로 쓴 입력은 쓰기 단가로 계산한다', () => {
+    const totals = { calls: 1, inputTokens: 1_000_000, cachedInputTokens: 500_000, cacheWriteTokens: 200_000, outputTokens: 0, reasoningTokens: 0 };
+    // 새 입력 30만 × $2 + 캐시 읽기 50만 × $0.2 + 캐시 쓰기 20만 × $2.5
+    expect(estimateCost(totals, { input: 2, cachedInput: 0.2, cacheWrite: 2.5, output: 12 })).toBeCloseTo(0.6 + 0.1 + 0.5);
   });
 });

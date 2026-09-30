@@ -113,3 +113,33 @@ export function markPromptCacheKeyUnsupported(model: string) {
   }
   console.info(`[cache] ${model}은(는) prompt_cache_key를 지원하지 않아 앞으로 이 모델에는 보내지 않습니다.`);
 }
+
+/**
+ * GPT-5.6 이후 모델의 캐시 지점 제어 (prompt_cache_options.mode = explicit + prompt_cache_breakpoint).
+ * 기본(implicit)은 "마지막 user 메시지 끝"에 캐시 지점을 잡아, 이미지까지 포함한 요청 전체를 1.25배 단가로 캐시에 쓰고
+ * 다음 요청(다른 이미지)은 그걸 다시 쓰지 못함. 그래서 고정 부분(지침·단어장·노트) 끝에만 지점을 찍고 자동 지점은 끔.
+ * 모델이 모르는 설정이면(400) 기억해 두고 빼서 다시 보냄.
+ */
+const BREAKPOINT_UNSUPPORTED_KEY = 'manga-cache-breakpoint-unsupported';
+
+function loadList(key: string): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((m): m is string => typeof m === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export const shouldUseCacheBreakpoints = (model: string) => !loadList(BREAKPOINT_UNSUPPORTED_KEY).includes(model);
+
+export function markCacheBreakpointsUnsupported(model: string) {
+  const list = loadList(BREAKPOINT_UNSUPPORTED_KEY);
+  if (list.includes(model)) return;
+  try {
+    localStorage.setItem(BREAKPOINT_UNSUPPORTED_KEY, JSON.stringify([...list, model]));
+  } catch {
+    // 기억 못 해도 이번 요청은 설정 없이 다시 보냄
+  }
+  console.info(`[cache] ${model}은(는) 캐시 지점 설정을 지원하지 않아 앞으로 이 모델에는 보내지 않습니다.`);
+}

@@ -125,8 +125,25 @@ export interface GridPromptOptions extends PromptContextOptions {
   sceneCount?: number;
 }
 
+/**
+ * 프롬프트를 캐시 경계에서 나눈 두 부분.
+ * - stable: 고정 + 준고정 구간 (지침·단어장·작품 노트) — OpenAI에는 developer 메시지로 보내고 끝에 캐시 지점을 찍음
+ * - volatile: 매번 바뀌는 구간 (직전 대사·페이지 구분·칸 수 등) — user 메시지로, 캐시에 쓰지 않음
+ * 한 문자열로 합치면(joinPromptParts) 예전과 글자 하나까지 같은 프롬프트가 됨 (Gemini는 합친 것을 씀)
+ */
+export interface PromptParts {
+  stable: string;
+  volatile: string;
+}
+
+export const joinPromptParts = ({ stable, volatile }: PromptParts) => (volatile ? `${stable}\n${volatile}` : stable);
+
 /** 말풍선 격자 이미지를 읽고 번역하도록 요청하는 프롬프트 */
 export function buildGridPrompt(options: GridPromptOptions): string {
+  return joinPromptParts(buildGridPromptParts(options));
+}
+
+export function buildGridPromptParts(options: GridPromptOptions): PromptParts {
   const { expectedCells, pageCellCounts, speakerHint = '', recentContext, retry, sceneCount = 0, ...contextOptions } = options;
 
   // (C) 요청마다 바뀌는 것들 — 반드시 맨 뒤
@@ -153,7 +170,7 @@ export function buildGridPrompt(options: GridPromptOptions): string {
   if (retry) volatile.push(RETRY_INSTRUCTION.trim());
   volatile.push(`1번부터 ${expectedCells}번까지 빠짐없이, 정확히 ${expectedCells}개를 순서대로 출력해.`);
 
-  return `${GRID_STATIC}\n${stableContext(contextOptions)}\n${volatile.join('\n\n')}`;
+  return { stable: `${GRID_STATIC}\n${stableContext(contextOptions)}`, volatile: volatile.join('\n\n') };
 }
 
 /** (A) 고정 구간 — 말풍선을 찾지 못해 페이지 전체를 읽어야 할 때 */
@@ -174,9 +191,12 @@ ${TRANSLATION_RULES}
 
 /** 말풍선을 찾지 못해 페이지 전체를 읽어야 할 때 쓰는 프롬프트 (좌표까지 모델이 찍어야 함) */
 export function buildFullPagePrompt(options: PromptContextOptions = {}): string {
+  return joinPromptParts(buildFullPagePromptParts(options));
+}
+
+export function buildFullPagePromptParts(options: PromptContextOptions = {}): PromptParts {
   const { recentContext, ...contextOptions } = options;
-  const tail = recentContext?.trim() ? `\n${recentContext.trim()}` : '';
-  return `${FULL_PAGE_STATIC}\n${stableContext(contextOptions)}${tail}`;
+  return { stable: `${FULL_PAGE_STATIC}\n${stableContext(contextOptions)}`, volatile: recentContext?.trim() ?? '' };
 }
 
 /** (A) 고정 구간 — 한 문장 재번역 */
@@ -279,12 +299,16 @@ changes = 고친 줄만: i = 줄 번호, ko = 고친 번역, why = 고친 이유
 
 /** 번역이 끝난 대사 목록을 텍스트만으로 한 번 더 감수하는 프롬프트 (이미지 없음) */
 export function buildPolishPrompt(lines: PolishLine[], options: PromptContextOptions = {}): string {
+  return joinPromptParts(buildPolishPromptParts(lines, options));
+}
+
+export function buildPolishPromptParts(lines: PolishLine[], options: PromptContextOptions = {}): PromptParts {
   const { recentContext, ...contextOptions } = options;
   const sourceText = lines.map(line => line.jp).join('\n');
   const tail = recentContext?.trim() ? `${recentContext.trim()}\n\n` : '';
   const body = lines.map(line => `${line.i} | ${line.page}쪽 | ${line.jp || '(원문 없음)'} → ${line.ko}`).join('\n');
-  return `${POLISH_STATIC}
-${stableContext({ ...contextOptions, sourceText })}
-${tail}# 대사 (줄 번호 | 쪽 | 원문 → 번역)
-${body}`;
+  return {
+    stable: `${POLISH_STATIC}\n${stableContext({ ...contextOptions, sourceText })}`,
+    volatile: `${tail}# 대사 (줄 번호 | 쪽 | 원문 → 번역)\n${body}`,
+  };
 }
