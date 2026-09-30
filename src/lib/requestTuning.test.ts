@@ -22,7 +22,7 @@ describe('추론 줄이기 설정', () => {
     markReasoningControlUnsupported('gpt-5.6-terra');
     markReasoningControlUnsupported('gpt-5.6-terra');
     expect(shouldReduceReasoning('gpt-5.6-terra')).toBe(false);
-    expect(shouldReduceReasoning('gpt-6-sol')).toBe(true);
+    expect(shouldReduceReasoning('gpt-6.1-sol')).toBe(true);
     expect(listReasoningUnsupportedModels()).toEqual(['gpt-5.6-terra']);
   });
 

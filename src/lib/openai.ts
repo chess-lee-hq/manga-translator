@@ -27,7 +27,7 @@ type HttpError = Error & { status?: number; retryAfterMs?: number };
  */
 const OPENAI_MODELS: Record<OpenAiVersion, string> = {
   terra: 'gpt-5.6-terra',
-  sol: 'gpt-6-sol',
+  sol: 'gpt-6.1-sol',
   luna: 'gpt-6-luna',
 };
 

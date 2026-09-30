@@ -23,7 +23,7 @@
 
 헤더의 ⇄ 버튼으로 메인·서브를 바꿀 수 있습니다.
 
-- OpenAI: 5.6 Terra(기본) / 6 Sol(가장 강함, 재시도 승격 대상) / 6 Luna(시험용)
+- OpenAI: 5.6 Terra(기본) / 6.1 Sol(가장 강함, 재시도 승격 대상) / 6 Luna(시험용)
 - Gemini: 3.6 Flash / 3.7 Flash (SDK 없이 REST로 호출)
 
 ## 주요 기능

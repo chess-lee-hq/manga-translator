@@ -26,7 +26,7 @@ describe('rereadBubble — 말풍선 하나를 이미지에서 다시 읽기', (
     createGridImage.mockClear();
   });
 
-  it('2배 해상도 PNG 한 칸으로, 재요청 엔진(보조 키가 없으면 6 Sol)에 보낸다', async () => {
+  it('2배 해상도 PNG 한 칸으로, 재요청 엔진(보조 키가 없으면 6.1 Sol)에 보낸다', async () => {
     translateGridImageOpenAI.mockResolvedValue([{ id: 1, original_text: '本当か', translated_text: '정말이야?' }]);
     const result = await rereadBubble(page, [100, 100, 200, 300], settings);
     expect(result).toEqual({ originalText: '本当か', translatedText: '정말이야?' });

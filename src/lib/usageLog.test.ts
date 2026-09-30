@@ -38,9 +38,9 @@ describe('recordUsage', () => {
 
   it('모델별로 나눠 쌓고, 합계를 낼 수 있다', () => {
     record('gpt-5.6-terra', 100, 10);
-    record('gpt-6-sol', 200, 20, { reasoning: 5 });
+    record('gpt-6.1-sol', 200, 20, { reasoning: 5 });
     const byModel = getUsageByModel('session');
-    expect(Object.keys(byModel).sort()).toEqual(['gpt-5.6-terra', 'gpt-6-sol']);
+    expect(Object.keys(byModel).sort()).toEqual(['gpt-5.6-terra', 'gpt-6.1-sol']);
     expect(sumUsage(byModel)).toEqual({ calls: 2, inputTokens: 300, cachedInputTokens: 0, outputTokens: 30, reasoningTokens: 5 });
   });
 
