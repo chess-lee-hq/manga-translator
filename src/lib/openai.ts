@@ -102,6 +102,8 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
       }
     }
     const usage = response?.usage;
+    // 캐시 진단용: OpenAI가 돌려준 사용량 원본 (필드 이름이 모델 세대마다 달라 그대로 남김. 토큰 수만 있고 내용은 없음)
+    console.info(`[openai usage] ${model} · ${label}`, JSON.stringify(usage));
     recordUsage({
       provider: 'openai',
       model,
