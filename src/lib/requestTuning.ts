@@ -79,7 +79,7 @@ export function setPromptCacheScope(workKey: string | null) {
 }
 
 /** 작품 이름을 그대로 보내지 않도록 짧은 해시로 (FNV-1a 32비트) */
-function shortHash(text: string): string {
+export function shortHash(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);

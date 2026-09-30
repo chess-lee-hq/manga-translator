@@ -13,7 +13,7 @@ import {
 } from './translationPrompt';
 import {
   isUnsupportedParameterError, LOW_REASONING_EFFORT, markCacheBreakpointsUnsupported, markPromptCacheKeyUnsupported, markReasoningControlUnsupported,
-  promptCacheKeyFor, shouldReduceReasoning, shouldUseCacheBreakpoints,
+  promptCacheKeyFor, shortHash, shouldReduceReasoning, shouldUseCacheBreakpoints,
 } from './requestTuning';
 import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
@@ -102,8 +102,10 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
       }
     }
     const usage = response?.usage;
-    // 캐시 진단용: OpenAI가 돌려준 사용량 원본 (필드 이름이 모델 세대마다 달라 그대로 남김. 토큰 수만 있고 내용은 없음)
-    console.info(`[openai usage] ${model} · ${label}`, JSON.stringify(usage));
+    // 캐시 진단용: OpenAI가 돌려준 사용량 원본 + 캐시 지점 앞 고정 부분의 길이·지문 (요청마다 지문이 같아야 캐시가 걸림)
+    const stable = (body.messages as any[] | undefined)?.find(m => m?.role === 'developer')?.content?.[0]?.text;
+    const stableNote = typeof stable === 'string' ? ` · 고정 부분 ${stable.length}자 #${shortHash(stable)}` : '';
+    console.info(`[openai usage] ${model} · ${label}${stableNote}`, JSON.stringify(usage));
     recordUsage({
       provider: 'openai',
       model,
@@ -289,4 +291,19 @@ export async function polishTranslationsOpenAI(
   const content = contentOf(response);
   if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
   return parseJsonResponse<{ changes?: PolishChangeWire[] }>(content).changes ?? [];
+}
+
+/**
+ * [진단] 캐시가 실제로 걸리는지 확인: 같은 고정 부분(캐시 지점 포함)으로 짧은 요청을 두 번 보내 사용량을 돌려줍니다.
+ * 두 번째 요청의 cached_tokens가 0보다 크면 캐시 지점이 동작하는 것. 첫 요청의 prompt_tokens로 고정 부분의 실제 토큰 수도 알 수 있음
+ * (브라우저 콘솔에서 __mangaCacheTest() — App.tsx)
+ */
+export async function runPromptCacheDiagnostic(openAiVersion: OpenAiVersion, apiKey: string, stableText: string) {
+  const body = {
+    model: modelFor(openAiVersion),
+    messages: cachedPromptMessages({ stable: stableText, volatile: '연결 확인용 요청이야. "OK"라고만 답해.' }),
+  };
+  const usages: any[] = [];
+  for (let i = 0; i < 2; i++) usages.push((await createChatCompletion(apiKey, body, `캐시 진단 ${i + 1}/2`)).usage);
+  return usages;
 }

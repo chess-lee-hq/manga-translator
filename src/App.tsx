@@ -31,7 +31,8 @@ import { resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './lib/bubbleDi
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
 import { summarizeWorkNotes } from './lib/gemini';
-import { summarizeWorkNotesOpenAI } from './lib/openai';
+import { runPromptCacheDiagnostic, summarizeWorkNotesOpenAI } from './lib/openai';
+import { buildGridPromptParts } from './lib/translationPrompt';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
@@ -148,6 +149,22 @@ function App() {
     setUsageWork(hasOpenWork ? work.key : null);
     setPromptCacheScope(hasOpenWork ? work.key : null);
   }, [hasOpenWork, work.key]);
+
+  // [진단] 브라우저 콘솔에서 __mangaCacheTest() — 지금 작품의 격자 번역 고정 부분으로 OpenAI 캐시가 걸리는지 확인 (요청 2번, 1센트 미만)
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__mangaCacheTest = async () => {
+      if (!openaiKey) return console.warn('OpenAI 키가 없습니다.');
+      const stable = buildGridPromptParts({ expectedCells: 1, glossary, context: buildContextInstruction(notes?.text, [], corrections).context }).stable;
+      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 — 같은 요청을 두 번 보냅니다..`);
+      const [first, second] = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable);
+      const cached = second?.prompt_tokens_details?.cached_tokens ?? 0;
+      console.info(`[캐시 진단] 1번째 입력 ${first?.prompt_tokens}토큰 / 2번째 입력 ${second?.prompt_tokens}토큰 중 캐시 ${cached}토큰`);
+      console.info(cached > 0
+        ? '[캐시 진단] ✅ 캐시 지점이 동작합니다. 실제 번역 요청의 "고정 부분 #지문"이 요청마다 같은지 확인하세요.'
+        : `[캐시 진단] ❌ 캐시가 걸리지 않았습니다. 1번째 입력이 1,024토큰${(first?.prompt_tokens ?? 0) < 1100 ? '에 못 미쳐 고정 부분이 짧은 것' : '을 넘는데도 안 걸림 — 방식 자체를 바꿔야 함'}.`);
+      return { first, second };
+    };
+  });
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
   const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);
 
