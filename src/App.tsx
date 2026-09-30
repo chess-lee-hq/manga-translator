@@ -155,14 +155,19 @@ function App() {
     (window as unknown as Record<string, unknown>).__mangaCacheTest = async () => {
       if (!openaiKey) return console.warn('OpenAI 키가 없습니다.');
       const stable = buildGridPromptParts({ expectedCells: 1, glossary, context: buildContextInstruction(notes?.text, [], corrections).context }).stable;
-      // 작은 흰 이미지 (detail high로 붙여도 수십~백여 토큰)
-      const canvas = document.createElement('canvas');
-      canvas.width = 64;
-      canvas.height = 64;
-      const ctx = canvas.getContext('2d');
-      if (ctx) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 64, 64); }
-      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 — 짧은 요청 5번을 보냅니다 (1~2센트)..`);
-      const results = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable, canvas.toDataURL('image/jpeg', 0.8));
+      // 흰 이미지: 작은 것 / 실제 격자 크기 / 장면 이미지 크기
+      const blank = (width: number, height: number) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height); }
+        return canvas.toDataURL('image/jpeg', 0.8);
+      };
+      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 — 짧은 요청 5번을 보냅니다 (2~3센트)..`);
+      const results = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable, {
+        small: blank(64, 64), large: blank(900, 3000), scene: blank(341, 512),
+      });
       const rows = results.map(({ name, usage }) => {
         const details = usage?.prompt_tokens_details ?? {};
         return {
@@ -173,7 +178,7 @@ function App() {
         };
       });
       console.table(rows);
-      console.info('[캐시 진단] 위 표를 캡처해 주세요. 3~5번째 요청의 "캐시읽음"이 0이면 그 조건에서 캐시가 꺼지는 것입니다.');
+      console.info('[캐시 진단] 위 표를 캡처해 주세요. 2~5번 중 "캐시읽음"이 0인 조건이 캐시를 끊는 원인입니다.');
       return rows;
     };
   });
