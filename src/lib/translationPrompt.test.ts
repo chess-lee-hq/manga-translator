@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { encode } from 'gpt-tokenizer/encoding/o200k_base';
 import { buildGridPrompt, buildPolishPrompt, buildShortenPrompt, READING_RULES } from './translationPrompt';
 
 describe('원문 읽기 규칙', () => {
@@ -75,5 +76,15 @@ describe('buildPolishPrompt', () => {
     expect(prompt).toContain('晴信 -> 하루노부');
     expect(prompt).not.toContain('信玄');
     expect(prompt).toContain('## 작품 노트');
+  });
+});
+
+describe('격자 프롬프트 고정 구간 길이 (OpenAI 프롬프트 캐시)', () => {
+  it('단어장·노트가 없어도 요청마다 같은 앞부분이 1,024토큰을 넉넉히 넘는다 (그보다 짧으면 캐시가 전혀 안 걸림)', () => {
+    const first = buildGridPrompt({ expectedCells: 10 });
+    const second = buildGridPrompt({ expectedCells: 12, recentContext: '## 직전까지의 번역\n- あ → 가', pageCellCounts: [6, 6], sceneCount: 2 });
+    let shared = 0;
+    while (shared < first.length && first[shared] === second[shared]) shared++;
+    expect(encode(first.slice(0, shared)).length).toBeGreaterThanOrEqual(1100);
   });
 });

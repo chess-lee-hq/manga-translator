@@ -11,7 +11,10 @@ import {
   buildFullPagePrompt, buildGridPrompt, buildPolishPrompt, buildRetranslatePrompt, buildShortenPrompt, buildWorkNotesPrompt,
   type PolishLine, type PromptContextOptions,
 } from './translationPrompt';
-import { isUnsupportedParameterError, LOW_REASONING_EFFORT, markReasoningControlUnsupported, shouldReduceReasoning } from './requestTuning';
+import {
+  isUnsupportedParameterError, LOW_REASONING_EFFORT, markPromptCacheKeyUnsupported, markReasoningControlUnsupported, promptCacheKeyFor,
+  shouldReduceReasoning,
+} from './requestTuning';
 import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
 
@@ -63,19 +66,30 @@ async function createChatCompletion(apiKey: string, body: Record<string, unknown
       },
     });
 
+  // 모델에 따라 모를 수 있는 선택 설정들. 모델이 거절하면(400) 그 설정만 기억해 두고 빼서 다시 보냄
+  const optional: Record<string, unknown> = {};
+  // 추론 줄이기(사용량 창의 실험 옵션)
+  if (shouldReduceReasoning(model)) optional.reasoning_effort = LOW_REASONING_EFFORT;
+  // 같은 작품의 요청을 같은 서버로 보내 프롬프트 캐시 적중률을 높임
+  const cacheKey = promptCacheKeyFor(model, JSON.stringify(body.messages ?? '').includes('"image_url"') ? 'vision' : 'text');
+  if (cacheKey) optional.prompt_cache_key = cacheKey;
+  const markUnsupported: Record<string, (model: string) => void> = {
+    reasoning_effort: markReasoningControlUnsupported,
+    prompt_cache_key: markPromptCacheKeyUnsupported,
+  };
+
   try {
     let response;
-    if (shouldReduceReasoning(model)) {
-      // 추론 줄이기(사용량 창의 실험 옵션): 지원하지 않는 모델이면 기억해 두고 설정 없이 다시 보냄
+    for (;;) {
       try {
-        response = await send({ ...body, reasoning_effort: LOW_REASONING_EFFORT });
+        response = await send({ ...body, ...optional });
+        break;
       } catch (error) {
-        if (!isUnsupportedParameterError(error, 'reasoning_effort')) throw error;
-        markReasoningControlUnsupported(model);
-        response = await send(body);
+        const rejected = Object.keys(optional).find(name => isUnsupportedParameterError(error, name));
+        if (!rejected) throw error;
+        markUnsupported[rejected](model);
+        delete optional[rejected];
       }
-    } else {
-      response = await send(body);
     }
     const usage = response?.usage;
     recordUsage({

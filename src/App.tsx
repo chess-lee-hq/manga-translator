@@ -46,6 +46,7 @@ import { saveWorkNotes } from './lib/workNotes';
 import { clearLegacyGlossary, loadLegacyGlossary, mergeIntoStoredGlossary } from './lib/glossaryStore';
 import { shortcutFor } from './lib/keyboardShortcuts';
 import { setUsageWork } from './lib/usageLog';
+import { setPromptCacheScope } from './lib/requestTuning';
 import { carryOverWorkData, listKnownWorks, loadWorkAliases, migrateLegacyWorkData, rememberWork, resolveWork, setWorkAlias } from './lib/workIdentity';
 import type { Box2d, GeminiVersion, HoveredBubble, MainEngine, OpenAiVersion, ScriptStyle, TranslationSettings, UploadedImage, ViewMode } from './types';
 
@@ -145,6 +146,7 @@ function App() {
   // 토큰 사용량을 작품별로도 쌓도록 지금 작품을 알려 줌 (아무것도 안 열었으면 세션 합계에만)
   useEffect(() => {
     setUsageWork(hasOpenWork ? work.key : null);
+    setPromptCacheScope(hasOpenWork ? work.key : null);
   }, [hasOpenWork, work.key]);
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
   const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);

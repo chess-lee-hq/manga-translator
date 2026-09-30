@@ -3,6 +3,7 @@ import { MemoryStorage } from './testing/memoryStorage';
 
 vi.stubGlobal('localStorage', new MemoryStorage());
 import { retranslateTextOpenAI, summarizeWorkNotesOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
+import { setPromptCacheScope } from './requestTuning';
 import { getUsageByModel, getUsageTotals, resetUsageTotals } from './usageLog';
 
 const okResponse = (content: string, usage = { prompt_tokens: 1200, completion_tokens: 90 }) => ({
@@ -228,5 +229,46 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
     expect(sentBody(fetchMock).messages[0].content[0].text).not.toContain('장면 이미지');
     expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra']);
+  });
+});
+
+describe('prompt_cache_key (같은 작품 요청을 같은 서버로)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetUsageTotals();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it('같은 작품이면 같은 키, 다른 작품이면 다른 키를 보낸다 (작품 이름은 그대로 보내지 않음)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[],"unsure":[]}'));
+    vi.stubGlobal('fetch', fetchMock);
+    setPromptCacheScope('武田信玄');
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1);
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,B'], 1);
+    setPromptCacheScope('陽だまりの樹');
+    await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,C'], 1);
+
+    const keys = [0, 1, 2].map(i => sentBody(fetchMock, i).prompt_cache_key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(keys[0]).toMatch(/^manga-vision-/);
+    expect(keys[0]).not.toContain('武田');
+  });
+
+  it('모델이 거절하면 기억해 두고 빼서 다시 보낸다', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 400, headers: new Headers(),
+        text: async () => '{"error":{"message":"Unrecognized request argument supplied: prompt_cache_key"}}',
+      })
+      .mockResolvedValue(okResponse('번역'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await retranslateTextOpenAI('terra', 'sk-test', '原文')).toBe('번역');
+    expect(sentBody(fetchMock, 0).prompt_cache_key).toMatch(/^manga-text-/);
+    expect(sentBody(fetchMock, 1).prompt_cache_key).toBeUndefined();
+    await retranslateTextOpenAI('terra', 'sk-test', '原文');
+    expect(sentBody(fetchMock, 2).prompt_cache_key).toBeUndefined();
   });
 });
