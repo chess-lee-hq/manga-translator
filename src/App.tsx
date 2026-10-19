@@ -88,7 +88,8 @@ function App() {
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => {
     const saved = localStorage.getItem(GEMINI_VERSION_STORAGE_KEY);
-    return saved === '3.7' || saved === '3.8' ? saved : '3.6';
+    // 3.7 Flash는 2026-10-08 단종(요청이 3.8로 자동 전환) → 3.7을 골라 뒀던 설정은 3.8로
+    return saved === '3.7' || saved === '3.8' ? '3.8' : '3.6';
   });
   const [openAiVersion, setOpenAiVersion] = useState<OpenAiVersion>(loadOpenAiVersion);
   const [mainEngine, setMainEngine] = useState<MainEngine>(() => (localStorage.getItem(MAIN_ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'openai'));
