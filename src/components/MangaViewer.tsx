@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, t
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
-import { BUBBLE_FIT, bubbleCapacity, planBubble, type BubblePlan } from '../lib/bubbleLayout';
+import { BUBBLE_FIT, bubbleCapacity, planBubble, uniformFontTargets, type BubblePlan } from '../lib/bubbleLayout';
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
@@ -99,16 +99,16 @@ export function MangaViewer({
     scriptStyle === 'overlay',
   );
   /** 덮는 말풍선의 배치 (말풍선 모양 → 타원 → 네모 상자). 모양·글·페이지 크기·설정이 같으면 재사용 */
-  const planFor = (result: TranslationResult, detection: BubbleDetection | undefined, pageWidth: number, pageHeight: number): BubblePlan => {
+  const planFor = (result: TranslationResult, detection: BubbleDetection | undefined, pageWidth: number, pageHeight: number, maxFont: number): BubblePlan => {
     if (!detection) return { kind: 'box' };
     let byKey = bubblePlanCache.get(detection);
     if (!byKey) {
       byKey = new Map();
       bubblePlanCache.set(detection, byKey);
     }
-    const key = `${fontVersion}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
+    const key = `${fontVersion}|${maxFont.toFixed(2)}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
     if (!byKey.has(key)) {
-      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, BUBBLE_FIT.maxFontPx * scale));
+      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, maxFont));
     }
     return byKey.get(key)!;
   };
@@ -178,7 +178,17 @@ export function MangaViewer({
                 const modeOf = (result: TranslationResult) => effectiveDisplayMode(result, detectionOf(img.src, result));
                 // 작은 딱지 위치는 이미지 저장과 같은 계산(lib/bubbleDisplay.ts)으로 페이지 px 기준 배치
                 const tagLayouts = scriptStyle === 'overlay' ? layoutTags(results, pageWidth, pageHeight, scale, measureText, modeOf) : {};
-                if (scriptStyle === 'overlay') logPlacement(img.src, imgIndex, results, r => detectionOf(img.src, r), modeOf, r => planFor(r, detectionOf(img.src, r), pageWidth, pageHeight));
+                // 글자 크기: 페이지 기준 크기 하나로 통일하고, 원문이 확실히 큰(작은) 대사만 따라감 (원문 크기를 못 재면 예전 최대 22px)
+                const fontTargets = scriptStyle === 'overlay'
+                  ? uniformFontTargets(
+                    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: detectionOf(img.src, r)?.glyph })),
+                    pageHeight,
+                    BUBBLE_FIT.minFontPx * scale,
+                    BUBBLE_FIT.maxEmphasisPx * scale,
+                  )
+                  : new Map<string, number>();
+                const maxFontOf = (r: TranslationResult) => fontTargets.get(r.id) ?? BUBBLE_FIT.maxFontPx * scale;
+                if (scriptStyle === 'overlay') logPlacement(img.src, imgIndex, results, r => detectionOf(img.src, r), modeOf, r => planFor(r, detectionOf(img.src, r), pageWidth, pageHeight, maxFontOf(r)));
 
                 return (
                   <div key={imgIndex} className="relative shadow-2xl bg-white select-none flex-shrink-0 group">
@@ -336,7 +346,7 @@ export function MangaViewer({
                           // 원본 말풍선 모양(또는 테두리를 못 딴 말풍선은 원문 글자만 지우고 타원)에 맞춰 넣기 — 가로 → 홀쭉하면 세로 → 안 되면 넘침 표시
                           const detection = detectionOf(img.src, result);
                           const fitWanted = wantsBubbleFit(result);
-                          const plan = planFor(result, detection, pageWidth, pageHeight);
+                          const plan = planFor(result, detection, pageWidth, pageHeight, maxFontOf(result));
                           const bubbleLayout = plan.kind === 'fit' ? plan.fit : null;
                           const area = plan.kind === 'fit' ? plan.area : detection?.shape ?? null;
                           // 최소 글자로도 안 들어가 말풍선 밖으로 넘침 → 표시만 하고 "짧게 다시 번역"은 사용자가 직접 (자동 재요청 없음)

@@ -1,5 +1,5 @@
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
-import { BUBBLE_FIT, fillOutline, planBubble, type BubbleFit } from './bubbleLayout';
+import { BUBBLE_FIT, fillOutline, planBubble, uniformFontTargets, type BubbleFit } from './bubbleLayout';
 import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
@@ -193,11 +193,20 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
 
   const modeOf = (result: TranslationResult) => effectiveDisplayMode(result, shapes[result.id]);
 
+  // 글자 크기: 화면과 같은 규칙으로 페이지 기준 크기 하나에 통일 (원문이 확실히 큰 대사만 크게)
+  const fontTargets = uniformFontTargets(
+    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: shapes[r.id]?.glyph })),
+    height,
+    BUBBLE_FIT.minFontPx * options.viewScale * cssPx,
+    BUBBLE_FIT.maxEmphasisPx * options.viewScale * cssPx,
+  );
+  const bubbleMaxFont = (result: TranslationResult) => fontTargets.get(result.id) ?? BUBBLE_FIT.maxFontPx * options.viewScale * cssPx;
+
   // 1) 원문을 덮는 말풍선
   for (const result of results) {
     if (modeOf(result) === 'tag') continue;
 
-    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, BUBBLE_FIT.maxFontPx * options.viewScale * cssPx);
+    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, bubbleMaxFont(result));
     if (plan.kind === 'fit') {
       drawBubbleFit(ctx, plan.fit, setFont);
       for (const extra of plan.more ?? []) drawBubbleFit(ctx, extra.fit, setFont);

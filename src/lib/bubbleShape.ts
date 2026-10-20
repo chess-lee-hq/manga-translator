@@ -65,10 +65,14 @@ export interface BubbleLobe {
   box: PixelBox;
 }
 
-export type BubbleDetection =
+export type BubbleDetection = (
   /** lobes: 글자 영역 하나가 잘록하게 이어진 말풍선 두 칸에 걸쳐 있음 (읽는 순서: 오른쪽→왼쪽, 위→아래) */
   | { shape: BubbleShape; failure?: undefined; lobes?: BubbleLobe[] }
-  | { shape: null; failure: BubbleFailure };
+  | { shape: null; failure: BubbleFailure }
+) & {
+  /** 원문 글자 한 자의 크기 (페이지 높이 기준 0~1000). 번역문 글자 크기를 원본에 맞추는 데 씀 */
+  glyph?: number;
+};
 
 /** 말풍선이 아예 없는 글자로 보는 실패 (덮지 않고 옆에 작게 붙임) */
 export const NO_BUBBLE_FAILURES: ReadonlySet<BubbleFailure> = new Set(['not-paper', 'leak', 'no-enclosure']);
@@ -586,6 +590,53 @@ function closeGaps(white: Uint8Array, gw: number, gh: number, radius: number): U
   return out;
 }
 
+/** 원문 글자 판정 밝기 (이보다 어두우면 획) */
+const GLYPH_INK_LUMA = 140;
+
+/**
+ * 원문 글자 한 자의 크기(px)를 잽니다. 글자 영역의 획을 세로·가로로 투영해 생기는 덩어리(세로쓰기는 줄, 가로쓰기는 행)의
+ * 폭이 곧 글자 크기. 문장부호·탁점 같은 작은 덩어리는 빼고 가운데값. 못 재면 null
+ */
+export function estimateGlyphSize(region: PixelRegion, box: PixelBox): number | null {
+  const x0 = Math.max(0, Math.floor(box.xmin - region.x));
+  const y0 = Math.max(0, Math.floor(box.ymin - region.y));
+  const x1 = Math.min(region.width, Math.ceil(box.xmax - region.x));
+  const y1 = Math.min(region.height, Math.ceil(box.ymax - region.y));
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < 4 || h < 4) return null;
+  const cols = new Uint32Array(w);
+  const rows = new Uint32Array(h);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      if (lumaAt(region.data, (y * region.width + x) * 4) >= GLYPH_INK_LUMA) continue;
+      cols[x - x0]++;
+      rows[y - y0]++;
+    }
+  }
+  const runs = (profile: Uint32Array) => {
+    // 획 몇 점짜리 잡티는 무시
+    const peak = Math.max(...profile);
+    const out: number[] = [];
+    let start = -1;
+    for (let i = 0; i <= profile.length; i++) {
+      const on = i < profile.length && profile[i] > peak * 0.02;
+      if (on && start < 0) start = i;
+      if (!on && start >= 0) {
+        out.push(i - start);
+        start = -1;
+      }
+    }
+    return out;
+  };
+  // 세로로 긴 글자 영역은 세로쓰기(줄 폭), 가로로 길면 가로쓰기(행 높이), 비슷하면 둘 다
+  const groups = h > w * 1.2 ? runs(cols) : w > h * 1.2 ? runs(rows) : [...runs(cols), ...runs(rows)];
+  const big = Math.max(0, ...groups);
+  const sizes = groups.filter(g => g >= 3 && g >= big * 0.4).sort((a, b) => a - b);
+  if (sizes.length === 0) return null;
+  return sizes[Math.floor(sizes.length / 2)];
+}
+
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */
 function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
   const width = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
@@ -634,7 +685,8 @@ export function detectPageBubbleShapes(
         if (retry.shape || (retry.failure !== 'leak' && retry.failure !== 'too-big')) detection = retry;
       }
     }
-    shapes[result.id] = detection;
+    const glyph = region ? estimateGlyphSize(region, boxes[i]) : null;
+    shapes[result.id] = glyph ? { ...detection, glyph: (glyph / height) * 1000 } : detection;
   });
   return shapes;
 }

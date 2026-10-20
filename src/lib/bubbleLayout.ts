@@ -22,6 +22,8 @@ export const BUBBLE_FIT = {
    * 큰 말풍선에서도 글자가 꽉 차지 않고 말풍선마다 크기가 비슷하게 (단행본처럼 여백이 남음)
    */
   maxFontPx: 22,
+  /** 원문 글자 크기를 따를 때의 상한 (특대 글씨 강조용) */
+  maxEmphasisPx: 48,
   /**
    * 단행본처럼 좁게 쌓기: 한 줄을 이 글자 수(글자 크기 배수) 안으로 줄바꿈한 배치를 먼저 찾음.
    * 그러려면 글자가 narrowMinScale배까지만 작아져도 됨 — 그보다 더 줄여야 하면 넓게 쓰는 예전 배치로
@@ -33,6 +35,8 @@ export const BUBBLE_FIT = {
   /** 말풍선 테두리와 글자 사이 여백 (글자 크기 대비) */
   insetXEm: 0.5,
   insetYEm: 0.4,
+  /** 최소 글자로도 안 들어갈 때 넘침으로 넘기기 전에 여백을 이만큼으로 줄여 한 번 더 (좁은 말풍선) */
+  tightInsetScale: 0.3,
   /** 글자 크기를 몇 단계로 나눠 시도할지 */
   fontSteps: 24,
   /** 가로로 안 들어갈 때 세로쓰기를 시도할 만큼 홀쭉한 말풍선 (높이 ÷ 너비) */
@@ -161,10 +165,12 @@ function tryFit(
   allowBreakWord: boolean,
   /** 한 줄 폭 상한 (단행본처럼 좁게 쌓을 때) */
   maxLineWidth = Infinity,
+  /** 테두리 여백 배율 (넘침 직전 마지막 시도에서 줄임) */
+  insetScale = 1,
 ): BubbleLine[] | null {
   const lineHeight = fontSize * lineHeightEm;
-  const insetX = fontSize * BUBBLE_FIT.insetXEm;
-  const insetY = fontSize * BUBBLE_FIT.insetYEm;
+  const insetX = fontSize * BUBBLE_FIT.insetXEm * insetScale;
+  const insetY = fontSize * BUBBLE_FIT.insetYEm * insetScale;
   const innerTop = shape.top + insetY;
   const innerBottom = shape.top + shape.rows.length * shape.rowHeight - insetY;
   const maxLines = Math.floor((innerBottom - innerTop) / lineHeight);
@@ -267,6 +273,14 @@ export function layoutBubbleText(
   for (const allowBreakWord of allowBreakWords ? [false, true] : [false]) {
     const fit = attempt(base, allowBreakWord);
     if (fit) return { ...fit, fill: fillOf(base), overflow: false };
+  }
+
+  // 3) 최소 글자로 여백만 줄이면 말풍선 안에 들어가는 좁은 말풍선 (넘침 표시를 띄우지 않도록)
+  {
+    for (const allowBreakWord of allowBreakWords ? [false, true] : [false]) {
+      const lines = tryFit(trimmed, base, minFont, BUBBLE_FIT.lineHeights[1], measureFast, allowBreakWord, Infinity, BUBBLE_FIT.tightInsetScale);
+      if (lines) return { fontSize: minFont, lineHeight: minFont * BUBBLE_FIT.lineHeights[1], lines, fill: fillOf(base), overflow: false };
+    }
   }
   return null;
 }
@@ -396,11 +410,11 @@ function columnRun(shape: PxShape, x0: number, x1: number): [number, number] | n
   return [shape.top + first * shape.rowHeight, shape.top + (last + 1) * shape.rowHeight];
 }
 
-function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: number): Omit<BubbleVerticalLayout, 'fill' | 'overflow'> | null {
+function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: number, insetScale = 1): Omit<BubbleVerticalLayout, 'fill' | 'overflow'> | null {
   const cellHeight = fontSize * VERTICAL_TEXT.cellHeight;
   const columnWidth = fontSize * VERTICAL_TEXT.columnWidth;
-  const insetX = fontSize * BUBBLE_FIT.insetXEm;
-  const insetY = fontSize * BUBBLE_FIT.insetYEm;
+  const insetX = fontSize * BUBBLE_FIT.insetXEm * insetScale;
+  const insetY = fontSize * BUBBLE_FIT.insetYEm * insetScale;
   const totalUnits = paragraphs.reduce((sum, cells) => sum + columnUnits(cells), 0);
   const { width } = shapeExtent(shape);
   const maxColumns = Math.max(1, Math.floor((width - insetX * 2) / columnWidth));
@@ -462,7 +476,9 @@ export function layoutBubbleVertical(
     const fit = tryFitVertical(paragraphs, base, fontSize);
     if (fit) return { ...fit, fill: fillOf(base), overflow: false };
   }
-  return null;
+  // 좁은 말풍선: 최소 글자에서 여백만 줄여 한 번 더
+  const tight = tryFitVertical(paragraphs, base, minFont, BUBBLE_FIT.tightInsetScale);
+  return tight ? { ...tight, fill: fillOf(base), overflow: false } : null;
 }
 
 /** 모양이 홀쭉한지 (가로로 안 들어갈 때 세로쓰기를 시도할 대상) */
@@ -550,6 +566,44 @@ export type BubblePlan =
   }
   /** 모양을 쓸 대상이 아님 (직접 옮긴 박스, 맞춤을 끈 박스, 모양 계산 전) → 네모 상자 */
   | { kind: 'box' };
+
+/**
+ * 페이지 안에서 번역문 글자 크기를 통일하는 규칙. 단행본처럼 기준 크기 하나로 쓰고, 원문 글자가 확실히 크거나 작은 대사만 따라 바꿈
+ */
+export const UNIFORM_FONT = {
+  /** 원문 글자 크기가 페이지 기준(가운데값)의 이 범위 안이면 기준 크기로 통일 */
+  sameLow: 0.8,
+  sameHigh: 1.25,
+  /** 기준과 다른 대사도 이 배율 안에서만 (아주 작은 글씨·특대 글씨가 극단으로 가지 않게) */
+  minRatio: 0.75,
+  maxRatio: 2.5,
+  /** 원문 글자 한 자 크기 대비 번역문 글자 크기 (한글은 같은 크기면 비슷한 칸을 차지) */
+  koreanScale: 1,
+} as const;
+
+/**
+ * 페이지 글자 영역마다 번역문 글자 크기 목표 (그리는 좌표계 px). 원문 크기를 못 잰 항목은 기준 크기, 아무것도 못 재면 빈 맵.
+ * 목표는 "최대" 크기 — 말풍선에 안 들어가면 그만큼만 줄어듦
+ */
+export function uniformFontTargets(
+  items: { id: string; glyph?: number }[],
+  pageHeight: number,
+  minFont: number,
+  maxFont: number,
+): Map<string, number> {
+  const targets = new Map<string, number>();
+  const glyphs = items.map(i => i.glyph).filter((g): g is number => !!g && g > 0).sort((a, b) => a - b);
+  if (glyphs.length === 0) return targets;
+  const base = glyphs[Math.floor(glyphs.length / 2)];
+  const toPx = (glyph: number) => Math.min(maxFont, Math.max(minFont, (glyph / 1000) * pageHeight * UNIFORM_FONT.koreanScale));
+  for (const item of items) {
+    const ratio = item.glyph ? item.glyph / base : 1;
+    const same = ratio >= UNIFORM_FONT.sameLow && ratio <= UNIFORM_FONT.sameHigh;
+    const clamped = Math.min(UNIFORM_FONT.maxRatio, Math.max(UNIFORM_FONT.minRatio, ratio));
+    targets.set(item.id, toPx(base * (same ? 1 : clamped)));
+  }
+  return targets;
+}
 
 /** 번역문을 나눌 수 있는 자리: 문장부호(. ! ? … ~ 。) 뒤, 줄바꿈 */
 const SENTENCE_END = /[.!?…~。！？]+["'」』)\]]*\s*|\n+/g;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, splitTranslation, wrapToWidths } from './bubbleLayout';
-import { detectBubble, detectBubbleShape, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
+import { bubbleCapacity, uniformFontTargets, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, splitTranslation, wrapToWidths } from './bubbleLayout';
+import { detectBubble, detectBubbleShape, estimateGlyphSize, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
 const H = 600;
@@ -60,7 +60,8 @@ function canvas(fill = 255) {
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others).failure;
   const full = (box: PixelBox, others: PixelBox[] = []) =>
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others);
-  return { ellipse, disc, rect, text, detect, why, full };
+  const glyph = (box: PixelBox) => estimateGlyphSize(region(searchRegionFor(box, W, H)), box);
+  return { ellipse, disc, rect, text, detect, why, full, glyph };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -302,7 +303,8 @@ describe('layoutBubbleText', () => {
     // 흰색은 찾은 말풍선 모양 그대로 (넓히지 않음)
     expect(exact.fill.rows).toHaveLength(shape.rows.length);
     expect(exact.fill.top).toBeCloseTo((shape.top / 1000) * H);
-    expect(layoutBubbleText('가'.repeat(capacity + 6), shape, W, H, measure, 20, 20)).toBeNull();
+    // 여백을 줄여도 안 들어가면 null (넘침 처리는 호출하는 쪽)
+    expect(layoutBubbleText('가'.repeat(capacity * 2), shape, W, H, measure, 20, 20)).toBeNull();
   });
 
   it('넘치면 최소 글자로 위아래로 넘치게 두되 흰색은 말풍선 안쪽만', () => {
@@ -363,6 +365,31 @@ describe('세로쓰기로 말풍선 안에 넣기', () => {
   it('넓적한 말풍선은 가로쓰기 그대로', () => {
     const wide = ellipseShapeForBox([450, 350, 550, 650], 1000, 1000);
     expect(fitIntoShape('짧은 대사', wide, 1000, 1000, measure, 12, 20)?.direction).toBe('horizontal');
+  });
+});
+
+describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => {
+  it('세로쓰기 글자 영역에서 글자 한 자 크기(줄 폭)를 잰다', () => {
+    const c = canvas(255);
+    c.text(textBox); // 16px 글자
+    expect(c.glyph(textBox)).toBe(16);
+  });
+
+  it('원문 크기가 기준과 비슷하면 모두 같은 크기, 확실히 큰 대사만 크게', () => {
+    const targets = uniformFontTargets(
+      [{ id: 'a', glyph: 20 }, { id: 'b', glyph: 22 }, { id: 'c', glyph: 18 }, { id: 'big', glyph: 40 }, { id: 'unknown' }],
+      1000, 10, 60,
+    );
+    // 기준 = 가운데값 22
+    expect(targets.get('a')).toBe(22);
+    expect(targets.get('b')).toBe(22);
+    expect(targets.get('c')).toBe(22);
+    expect(targets.get('unknown')).toBe(22);
+    expect(targets.get('big')).toBe(40);
+  });
+
+  it('원문 크기를 하나도 못 재면 비워 둠 (예전 기본 크기 사용)', () => {
+    expect(uniformFontTargets([{ id: 'a' }], 1000, 10, 60).size).toBe(0);
   });
 });
 
