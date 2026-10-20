@@ -2,6 +2,8 @@ import { fillOutline, type BubbleFit } from '../lib/bubbleLayout';
 import { OVERLAY_STYLE } from '../lib/overlayLayout';
 import { VerticalGlyph } from './VerticalBubbleText';
 
+const HALO = '0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff';
+
 interface BubbleFitTextProps {
   fit: BubbleFit;
   pageWidth: number;
@@ -9,7 +11,7 @@ interface BubbleFitTextProps {
 }
 
 /**
- * 말풍선 모양(또는 타원)대로 원문을 흰색으로 지우고 번역문을 놓습니다.
+ * 말풍선 안쪽(테두리를 못 땄으면 원문 글자 영역만)을 흰색으로 지우고 번역문을 놓습니다.
  * 가로쓰기는 줄마다 그 높이의 폭에 맞춰, 세로쓰기는 열마다 그 위치의 높이에 맞춰 배치된 결과(lib/bubbleLayout.ts)를 그대로 그림.
  * 이미지 저장(lib/exportCanvas.ts)도 같은 배치 결과를 씁니다.
  */
@@ -20,6 +22,8 @@ export function BubbleFitText({ fit, pageWidth, pageHeight }: BubbleFitTextProps
     fontSize: fit.layout.fontSize,
     fontWeight: OVERLAY_STYLE.fontWeight,
     letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
+    // 흰색 밖으로 넘친 글자(넘침·테두리 못 딴 말풍선)도 그림 위에서 읽히도록 흰 테두리 (흰 바탕 위에선 안 보임)
+    textShadow: HALO,
   };
 
   return (

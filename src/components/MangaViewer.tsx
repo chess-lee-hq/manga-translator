@@ -4,7 +4,7 @@ import { getCacheKey } from '../hooks/useTranslationCache';
 import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
 import { BUBBLE_FIT, bubbleCapacity, planBubble, type BubblePlan } from '../lib/bubbleLayout';
-import type { BubbleDetection } from '../lib/bubbleShape';
+import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { BubbleFitText } from './BubbleFitText';
 import { VerticalBubbleText } from './VerticalBubbleText';
@@ -48,6 +48,13 @@ interface MangaViewerProps {
 const bubblePlanCache = new WeakMap<BubbleDetection, Map<string, BubblePlan>>();
 /** 페이지마다 마지막으로 남긴 배치 요약 (같은 내용을 반복해서 찍지 않게) */
 const loggedPlacement = new Map<string, string>();
+
+/** "넘침" 표시 위치: 말풍선 오른쪽 위 바깥 (넘친 글자는 가운데 세로로 늘어나므로 가리지 않음) */
+function overflowBadgePosition(area: BubbleShape | null, boxRight: number, boxTop: number) {
+  if (!area) return { left: `${boxRight / 10}%`, top: `${boxTop / 10}%` };
+  const right = Math.max(...area.rows.map(r => (r ? r[1] : 0)));
+  return { left: `${right / 10}%`, top: `${area.top / 10}%` };
+}
 
 interface DrawingBox {
   imgIndex: number;
@@ -323,29 +330,43 @@ export function MangaViewer({
                             );
                           }
 
-                          // 원본 말풍선 모양(또는 테두리를 못 딴 말풍선은 타원)에 맞춰 넣기 — 가로 → 홀쭉하면 세로 → 안 되면 둥근 사각형
+                          // 원본 말풍선 모양(또는 테두리를 못 딴 말풍선은 원문 글자만 지우고 타원)에 맞춰 넣기 — 가로 → 홀쭉하면 세로 → 안 되면 넘침 표시
                           const detection = detectionOf(img.src, result);
-                          const shape = detection?.shape ?? null;
                           const fitWanted = wantsBubbleFit(result);
                           const plan = planFor(result, detection, pageWidth, pageHeight);
                           const bubbleLayout = plan.kind === 'fit' ? plan.fit : null;
-                          // 말풍선을 찾았는데 번역문이 길어 넘쳤거나 흰 영역을 넓혀야 했던 경우 → 영역 수정에서 표시하고 "짧게 다시 번역" 제안
-                          const overflowNote = fitWanted && shape
-                            ? (!bubbleLayout ? '번역문이 길어 말풍선에 다 들어가지 않아 네모 상자로 표시 중' : bubbleLayout.layout.expanded ? '번역문이 길어 흰 영역을 말풍선 밖으로 조금 넓혔음' : null)
-                            : null;
-                          const bubbleEditProps = shape ? {
+                          const area = plan.kind === 'fit' ? plan.area : detection?.shape ?? null;
+                          // 최소 글자로도 안 들어가 말풍선 밖으로 넘침 → 표시만 하고 "짧게 다시 번역"은 사용자가 직접 (자동 재요청 없음)
+                          const shorten = area ? () => onShorten(
+                            imgIndex,
+                            result.id,
+                            bubbleCapacity(result.translated_text, area, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale),
+                          ) : undefined;
+                          const overflowNote = bubbleLayout?.layout.overflow ? '번역문이 길어 말풍선 밖으로 넘침' : null;
+                          const bubbleEditProps = area ? {
                             bubbleFit: fitWanted,
                             onToggleBubbleFit: () => onSetBubbleFit(imgIndex, result.id, !fitWanted),
                             warning: overflowNote ?? undefined,
-                            onShorten: overflowNote ? () => onShorten(
-                              imgIndex,
-                              result.id,
-                              bubbleCapacity(result.translated_text, shape, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale),
-                            ) : undefined,
+                            onShorten: overflowNote ? shorten : undefined,
                           } : {};
 
                           if (bubbleLayout) {
-                            const fitted = <BubbleFitText fit={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />;
+                            const fitted = (
+                              <>
+                                <BubbleFitText fit={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />
+                                {overflowNote && !isEditingBoxes && (
+                                  <button
+                                    type="button"
+                                    onClick={shorten}
+                                    className="absolute -translate-y-1/2 px-1 rounded bg-amber-400/90 text-[10px] font-bold text-amber-950 shadow hover:bg-amber-500"
+                                    style={{ ...overflowBadgePosition(plan.kind === 'fit' ? plan.area : null, right0, top0), zIndex: 25 }}
+                                    title={`${overflowNote} — 누르면 말풍선에 맞게 짧게 다시 번역합니다 (요청 1번)`}
+                                  >
+                                    넘침
+                                  </button>
+                                )}
+                              </>
+                            );
                             if (!isEditingBoxes) return <Fragment key={result.id}>{fitted}</Fragment>;
                             return (
                               <Fragment key={result.id}>
@@ -485,19 +506,23 @@ function logPlacement(
   planOf: (result: TranslationResult) => BubblePlan,
 ) {
   if (results.length === 0 || results.some(r => !detectionOf(r))) return;
-  const counts = { 말풍선가로: 0, 말풍선세로: 0, 타원: 0, 네모상자: 0, 말풍선없음옆에: 0, 효과음등작게: 0 };
+  const counts = { 말풍선가로: 0, 말풍선세로: 0, 원문만지움: 0, 넘침: 0, 네모상자: 0, 말풍선없음옆에: 0, 효과음등작게: 0 };
   const failures: Record<string, number> = {};
   for (const result of results) {
     const detection = detectionOf(result)!;
     if (!detection.shape) failures[detection.failure] = (failures[detection.failure] ?? 0) + 1;
     if (modeOf(result) === 'tag') {
-      if (!result.display_mode && !detection.shape && (detection.failure === 'not-paper' || detection.failure === 'leak')) counts.말풍선없음옆에++;
+      if (!result.display_mode && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure)) counts.말풍선없음옆에++;
       else counts.효과음등작게++;
       continue;
     }
     const plan = planOf(result);
-    if (plan.kind === 'box') counts.네모상자++;
-    else if (plan.source === 'ellipse') counts.타원++;
+    if (plan.kind === 'box') {
+      counts.네모상자++;
+      continue;
+    }
+    if (plan.fit.layout.overflow) counts.넘침++;
+    if (plan.source === 'erase') counts.원문만지움++;
     else if (plan.fit.direction === 'vertical') counts.말풍선세로++;
     else counts.말풍선가로++;
   }

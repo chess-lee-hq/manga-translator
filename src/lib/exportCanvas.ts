@@ -122,8 +122,14 @@ function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (
   const metrics = ctx.measureText('가');
   const ascent = metrics.fontBoundingBoxAscent || layout.fontSize * 0.88;
   const descent = metrics.fontBoundingBoxDescent || layout.fontSize * 0.12;
+  // 흰색 밖으로 넘친 글자도 그림 위에서 읽히도록 흰 테두리 먼저 (화면의 text-shadow와 같은 역할)
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = layout.fontSize * 0.2;
+  ctx.lineJoin = 'round';
   for (const line of layout.lines) {
-    ctx.fillText(line.text, line.cx, line.top + (layout.lineHeight - (ascent + descent)) / 2 + ascent);
+    const baseline = line.top + (layout.lineHeight - (ascent + descent)) / 2 + ascent;
+    ctx.strokeText(line.text, line.cx, baseline);
+    ctx.fillText(line.text, line.cx, baseline);
   }
 }
 

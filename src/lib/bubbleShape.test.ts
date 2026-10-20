@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleText, layoutBubbleVertical, planBubble, wrapToWidths } from './bubbleLayout';
+import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, wrapToWidths } from './bubbleLayout';
 import { detectBubble, detectBubbleShape, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
@@ -23,6 +23,10 @@ function canvas(fill = 255) {
         }
       }
     }
+  };
+  /** 테두리 없이 안쪽만 칠한 타원 (붙은 말풍선의 겹친 테두리를 지울 때) */
+  const disc = (cx: number, cy: number, rx: number, ry: number, v: number) => {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) set(x, y, v);
   };
   const rect = (x0: number, y0: number, x1: number, y1: number, v: number) => {
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) set(x, y, v);
@@ -50,11 +54,11 @@ function canvas(fill = 255) {
     }
     return { data, width: w, height: h, x: rect.xmin, y: rect.ymin };
   };
-  const detect = (box: PixelBox, others: { x: number; y: number }[] = []) =>
-    detectBubbleShape(region(searchRegionFor(box, W, H)), box, W, H, others);
-  const why = (box: PixelBox, others: { x: number; y: number }[] = []) =>
+  const detect = (box: PixelBox, others: PixelBox[] = [], wide = false) =>
+    detectBubbleShape(region(searchRegionFor(box, W, H, wide)), box, W, H, others);
+  const why = (box: PixelBox, others: PixelBox[] = []) =>
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others).failure;
-  return { ellipse, rect, text, detect, why };
+  return { ellipse, disc, rect, text, detect, why };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -98,12 +102,62 @@ describe('detectBubbleShape', () => {
     expect(c.detect(textBox)).toBeNull();
   });
 
-  it('다른 말풍선의 글자가 같은 영역에 들어오면(붙은 말풍선) 포기한다', () => {
+  it('두 말풍선이 이어져 한 영역이면(붙은 말풍선) 대사마다 자기 쪽 말풍선 모양으로 나눈다', () => {
+    const c = canvas(130);
+    c.ellipse(230, 300, 90, 80, 255, 0);
+    c.ellipse(370, 300, 90, 80, 255, 0);
+    c.disc(230, 300, 90, 80, 255);
+    c.disc(370, 300, 90, 80, 255);
+    const left: PixelBox = { xmin: 205, ymin: 260, xmax: 255, ymax: 340 };
+    const right: PixelBox = { xmin: 345, ymin: 260, xmax: 395, ymax: 340 };
+    c.text(left);
+    c.text(right);
+    const px = (v: number) => (v / 1000) * W;
+    const extent = (shape: BubbleShape) => {
+      const rows = shape.rows.filter((r): r is [number, number] => !!r);
+      return { min: px(Math.min(...rows.map(r => r[0]))), max: px(Math.max(...rows.map(r => r[1]))) };
+    };
+
+    const a = c.detect(left, [right], true)!;
+    const b = c.detect(right, [left], true)!;
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    // 왼쪽 몫은 왼쪽 말풍선 끝(140)부터 이어진 목(300) 근처까지, 오른쪽 말풍선 안으로 들어가지 않음
+    expect(extent(a).min).toBeLessThan(150);
+    expect(extent(a).max).toBeLessThan(320);
+    expect(extent(b).min).toBeGreaterThan(280);
+    expect(extent(b).max).toBeGreaterThan(450);
+    expect(px(a.centerX)).toBeLessThan(260);
+    expect(px(b.centerX)).toBeGreaterThan(340);
+  });
+
+  it('밝은 회색 컷 바탕(종이색과 비슷)으로 번져도 컷 전체가 아니라 말풍선 안쪽만 찾는다', () => {
+    const c = canvas(200);
+    // 컷 테두리로 닫힌 밝은 회색 바탕 + 그 안의 흰 말풍선. 글자 영역이 말풍선보다 커서 시작점 일부가 바탕에 걸림
+    c.rect(90, 90, 510, 96, 0);
+    c.rect(90, 504, 510, 510, 0);
+    c.rect(90, 90, 96, 510, 0);
+    c.rect(504, 90, 510, 510, 0);
+    c.ellipse(300, 300, 70, 100, 255, 0);
+    c.text({ xmin: 270, ymin: 250, xmax: 330, ymax: 350 });
+    const px = (v: number) => (v / 1000) * W;
+    const widthOf = (shape: BubbleShape) => {
+      const rows = shape.rows.filter((r): r is [number, number] => !!r);
+      return px(Math.max(...rows.map(r => r[1]))) - px(Math.min(...rows.map(r => r[0])));
+    };
+    // 검출 박스가 말풍선보다 커서 테두리선이 박스 안에 들어와도 말풍선 모양 그대로 (테두리선은 글자로 치지 않음)
+    const loose = c.detect({ xmin: 220, ymin: 200, xmax: 380, ymax: 400 })!;
+    expect(loose).not.toBeNull();
+    expect(widthOf(loose)).toBeLessThan(150);
+    const inner = c.detect({ xmin: 270, ymin: 250, xmax: 330, ymax: 350 })!;
+    expect(widthOf(inner)).toBeLessThan(150);
+  });
+
+  it('멀리 있는 다른 글자는 영향을 주지 않는다', () => {
     const c = canvas(130);
     c.ellipse(300, 300, 90, 120, 255, 0);
     c.text(textBox);
-    expect(c.detect(textBox, [{ x: 300, y: 205 }])).toBeNull();
-    expect(c.detect(textBox, [{ x: 500, y: 300 }])).not.toBeNull();
+    expect(c.detect(textBox, [{ xmin: 480, ymin: 280, xmax: 520, ymax: 320 }])).not.toBeNull();
   });
 
   it('글자가 테두리에 걸쳐 흰색으로 다 못 덮으면 포기한다', () => {
@@ -132,12 +186,7 @@ describe('detectBubble — 못 찾은 이유', () => {
     expect(plain.why(textBox)).toBe('leak');
   });
 
-  it('붙은 말풍선은 merged, 테두리에 걸친 글자는 uncovered-ink (말풍선은 있음)', () => {
-    const c = canvas(130);
-    c.ellipse(300, 300, 90, 120, 255, 0);
-    c.text(textBox);
-    expect(c.why(textBox, [{ x: 300, y: 205 }])).toBe('merged');
-
+  it('테두리에 걸친 글자는 uncovered-ink (말풍선은 있음)', () => {
     const d = canvas(130);
     d.ellipse(300, 300, 50, 70, 255, 0);
     const wide: PixelBox = { xmin: 240, ymin: 250, xmax: 360, ymax: 350 };
@@ -186,7 +235,7 @@ describe('layoutBubbleText', () => {
   it('짧은 번역은 최대 글자 크기로 말풍선 가운데에, 가운데 줄이 가장 넓게', () => {
     const layout = layoutBubbleText('안녕하세요 반갑습니다 오늘도 잘 부탁해요', shape, W, H, measure, 10, 28);
     expect(layout).not.toBeNull();
-    expect(layout!.expanded).toBe(false);
+    expect(layout!.overflow).toBe(false);
     const centers = layout!.lines.map(l => l.cx);
     centers.forEach(cx => expect(cx).toBeCloseTo(300, -1));
     // 모든 줄이 말풍선 안쪽 폭 안에 들어감
@@ -198,7 +247,7 @@ describe('layoutBubbleText', () => {
     }
   });
 
-  it('최소 글자 크기 아래로는 줄이지 않고, 넘치면 흰 영역을 조금 넓히고, 그래도 안 되면 null', () => {
+  it('최소 글자 크기 아래로는 줄이지 않고, 흰 영역도 넓히지 않으며, 안 들어가면 null', () => {
     const long = '가'.repeat(30);
     const fitted = layoutBubbleText(long, shape, W, H, measure, 20, 40)!;
     expect(fitted.fontSize).toBeGreaterThanOrEqual(20);
@@ -206,11 +255,22 @@ describe('layoutBubbleText', () => {
     const capacity = bubbleCapacity('가'.repeat(400), shape, W, H, measure, 20);
     expect(capacity).toBeGreaterThan(20);
     const exact = layoutBubbleText('가'.repeat(capacity), shape, W, H, measure, 20, 20)!;
-    expect(exact.expanded).toBe(false);
-    const overflow = layoutBubbleText('가'.repeat(capacity + 6), shape, W, H, measure, 20, 20)!;
+    expect(exact.overflow).toBe(false);
+    // 흰색은 찾은 말풍선 모양 그대로 (넓히지 않음)
+    expect(exact.fill.rows).toHaveLength(shape.rows.length);
+    expect(exact.fill.top).toBeCloseTo((shape.top / 1000) * H);
+    expect(layoutBubbleText('가'.repeat(capacity + 6), shape, W, H, measure, 20, 20)).toBeNull();
+  });
+
+  it('넘치면 최소 글자로 위아래로 넘치게 두되 흰색은 말풍선 안쪽만', () => {
+    const capacity = bubbleCapacity('가'.repeat(400), shape, W, H, measure, 20);
+    const overflow = layoutBubbleOverflow('가'.repeat(capacity * 2), shape, W, H, measure, 20)!;
+    expect(overflow.overflow).toBe(true);
     expect(overflow.fontSize).toBe(20);
-    expect(overflow.expanded).toBe(true);
-    expect(layoutBubbleText('가'.repeat(capacity * 3), shape, W, H, measure, 20, 20)).toBeNull();
+    expect(overflow.lines.map(l => l.text).join('')).toBe('가'.repeat(capacity * 2));
+    const bubbleTop = (shape.top / 1000) * H;
+    expect(overflow.lines[0].top).toBeLessThan(bubbleTop);
+    expect(overflow.fill.top).toBeCloseTo(bubbleTop);
   });
 
   it('채우기 외곽선은 닫힌 다각형 (왼쪽 위→아래, 오른쪽 아래→위)', () => {
@@ -252,9 +312,23 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     box_2d: [440, 420, 560, 580] as [number, number, number, number], translated_text: '오늘은 날씨가 좋네', original_text: '今日はいい天気だね', ...over,
   });
 
-  it('테두리를 못 딴 말풍선(merged 등)은 글자 영역을 감싸는 타원에 넣는다', () => {
-    const plan = planBubble(result(), { shape: null, failure: 'merged' }, 1000, 1000, measure, 12, 20);
-    expect(plan.kind === 'fit' && plan.source).toBe('ellipse');
+  it('테두리를 못 딴 말풍선은 원문 글자 영역만 하얗게 지우고 그 둘레 타원에 넣는다', () => {
+    const plan = planBubble(result(), { shape: null, failure: 'too-big' }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind === 'fit' && plan.source).toBe('erase');
+    if (plan.kind !== 'fit') return;
+    // 흰색은 글자 영역(420~580)에 여백만 조금
+    expect(plan.fit.layout.fill.rows).toHaveLength(1);
+    const [l, r] = plan.fit.layout.fill.rows[0]!;
+    expect(l).toBeGreaterThan(410);
+    expect(r).toBeLessThan(590);
+  });
+
+  it('찾은 말풍선에 안 들어가면 네모 상자로 덮지 않고 넘침으로 표시', () => {
+    const shape = ellipseShapeForBox([480, 480, 520, 520], 1000, 1000);
+    const plan = planBubble(result({ translated_text: '가'.repeat(80) }), { shape }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind).toBe('fit');
+    expect(plan.kind === 'fit' && plan.source).toBe('bubble');
+    expect(plan.kind === 'fit' && plan.fit.layout.overflow).toBe(true);
   });
 
   it('말풍선 없는 글자·모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {
@@ -263,7 +337,7 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     expect(planBubble(result({ fit_bubble: false }), { shape: null, failure: 'merged' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
   });
 
-  it('타원은 원문 글자 영역 네 모서리를 모두 덮는다', () => {
+  it('타원은 원문 글자 영역 네 모서리를 모두 감싼다', () => {
     const shape = ellipseShapeForBox([400, 400, 600, 600], 1000, 1000);
     const corner = shape.rows[Math.floor((400 - shape.top) / shape.rowHeight)];
     expect(corner![0]).toBeLessThanOrEqual(400);
