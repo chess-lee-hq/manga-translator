@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Manga Translator 개인정보처리방침</title>
+  <style>
+    :root { --bg: #ffffff; --text: #1f2937; --muted: #6b7280; --line: #e5e7eb; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #111827; --text: #e5e7eb; --muted: #9ca3af; --line: #374151; } }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    h2 { font-size: 17px; margin: 28px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+    p, li { margin: 4px 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Manga Translator 개인정보처리방침</h1>
+  <p class="muted">시행일: 2026년 10월 20일</p>
+
+  <p>Manga Translator(이하 "이 앱")는 일본 만화를 브라우저에서 한국어로 읽기 위한 개인용 번역 뷰어입니다.
+    이 앱에는 별도의 서버가 없으며, 운영자는 이용자의 데이터를 수집하거나 보관하지 않습니다.</p>
+
+  <h2>1. 이용자 기기에만 저장되는 정보</h2>
+  <ul>
+    <li>번역 기록, 열어 둔 만화 이미지, 단어장·작품 노트, 설정, 사용량 기록</li>
+    <li>이용자가 직접 입력한 AI 서비스(OpenAI, Google Gemini) API 키</li>
+  </ul>
+  <p>위 정보는 이용자 브라우저의 저장소(IndexedDB, localStorage 등)에만 저장되며 운영자에게 전송되지 않습니다.
+    브라우저의 사이트 데이터를 지우거나 앱의 저장소 창에서 삭제할 수 있습니다.</p>
+
+  <h2>2. AI 번역 서비스로 보내는 정보</h2>
+  <p>번역할 때 만화 이미지의 말풍선 부분(및 이용자가 켠 경우 페이지 축소 이미지)과 단어장·작품 노트 등 번역에 필요한 문맥이
+    이용자가 고른 AI 서비스(OpenAI 또는 Google Gemini)로 이용자 본인의 API 키를 통해 직접 전송됩니다.
+    이 정보의 처리는 각 서비스의 개인정보처리방침을 따릅니다.</p>
+
+  <h2>3. Google 드라이브 연동</h2>
+  <p>이용자가 "구글 드라이브 저장·불러오기"를 사용할 때만 Google 계정 접근 허락을 요청합니다.
+    요청하는 권한은 <code>drive.file</code>로, <strong>이 앱이 만들었거나 이용자가 이 앱으로 연 파일에만</strong> 접근할 수 있으며
+    드라이브의 다른 파일은 볼 수 없습니다.</p>
+  <ul>
+    <li>저장: 이용자가 고른 이름의 백업 ZIP(이미지·번역·단어장·노트)을 이용자의 드라이브에 만들거나 덮어씁니다.</li>
+    <li>불러오기: 이 앱이 저장한 백업 파일 목록을 보여 주고, 이용자가 고른 파일을 내려받아 복원합니다.</li>
+  </ul>
+  <p>Google에서 받은 접근 권한과 파일 내용은 이용자 브라우저 안에서만 쓰이며 운영자나 제3자에게 전송·공유되지 않고,
+    광고나 다른 목적에 사용되지 않습니다. 접근 허락은 언제든
+    <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google 계정의 서드파티 액세스</a>에서 취소할 수 있습니다.</p>
+  <p>이 앱의 Google 사용자 데이터 사용은 Google API 서비스 사용자 데이터 정책(제한적 사용 요건 포함)을 따릅니다.</p>
+
+  <h2>4. 쿠키·분석 도구</h2>
+  <p>이 앱은 광고, 추적용 쿠키, 방문 분석 도구를 사용하지 않습니다.</p>
+
+  <h2>5. 문의</h2>
+  <p>문의는 <a href="https://github.com/chess-lee-hq/manga-translator/issues" target="_blank" rel="noopener">GitHub 저장소의 Issues</a>로 남겨 주세요.</p>
+
+  <h2>6. 변경</h2>
+  <p>이 방침이 바뀌면 이 페이지에 시행일과 함께 게시합니다.</p>
+</main>
+</body>
+</html>
