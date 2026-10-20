@@ -37,10 +37,18 @@ export const BUBBLE_FIT = {
   insetYEm: 0.4,
   /** 최소 글자로도 안 들어갈 때 넘침으로 넘기기 전에 여백을 이만큼으로 줄여 한 번 더 (좁은 말풍선) */
   tightInsetScale: 0.3,
+  /**
+   * 그래도 안 되면 줄이 말풍선 안쪽보다 좌우로 조금(여백 배율 -1 = 한쪽 0.5글자) 넘쳐도 가로쓰기로 둠.
+   * 흰 테두리를 둘러 그림 위에서도 읽히고, 어색한 세로쓰기·어절 자르기보다 낫다는 사용자 판단 (넘침 표시는 띄우지 않음)
+   */
+  slightOverflowInsetScale: -1,
   /** 글자 크기를 몇 단계로 나눠 시도할지 */
   fontSteps: 24,
-  /** 가로로 안 들어갈 때 세로쓰기를 시도할 만큼 홀쭉한 말풍선 (높이 ÷ 너비) */
-  verticalMinAspect: 1.15,
+  /**
+   * 가로로 안 들어갈 때 세로쓰기를 시도할 만큼 홀쭉한 말풍선 (높이 ÷ 너비).
+   * 가로로 쓰면 한 줄에 두세 글자밖에 안 들어가는 막대 같은 말풍선만 (1.15였을 땐 조금 긴 말풍선도 세로로 써서 어색했음)
+   */
+  verticalMinAspect: 2,
   /** 모양을 못 딴 말풍선에 쓰는 타원: 글자 영역 네 모서리를 지나는 타원(√2배)에 약간 여유 */
   ellipseScale: 1.5,
   /** 타원 모양의 행 수 */
@@ -165,12 +173,13 @@ function tryFit(
   allowBreakWord: boolean,
   /** 한 줄 폭 상한 (단행본처럼 좁게 쌓을 때) */
   maxLineWidth = Infinity,
-  /** 테두리 여백 배율 (넘침 직전 마지막 시도에서 줄임) */
+  /** 테두리 여백 배율 (넘침 직전 마지막 시도에서 줄임). 가로가 음수면 줄이 말풍선 안쪽 폭보다 그만큼 넓어도 됨 */
   insetScale = 1,
+  insetYScale = insetScale,
 ): BubbleLine[] | null {
   const lineHeight = fontSize * lineHeightEm;
   const insetX = fontSize * BUBBLE_FIT.insetXEm * insetScale;
-  const insetY = fontSize * BUBBLE_FIT.insetYEm * insetScale;
+  const insetY = fontSize * BUBBLE_FIT.insetYEm * insetYScale;
   const innerTop = shape.top + insetY;
   const innerBottom = shape.top + shape.rows.length * shape.rowHeight - insetY;
   const maxLines = Math.floor((innerBottom - innerTop) / lineHeight);
@@ -281,6 +290,31 @@ export function layoutBubbleText(
       const lines = tryFit(trimmed, base, minFont, BUBBLE_FIT.lineHeights[1], measureFast, allowBreakWord, Infinity, BUBBLE_FIT.tightInsetScale);
       if (lines) return { fontSize: minFont, lineHeight: minFont * BUBBLE_FIT.lineHeights[1], lines, fill: fillOf(base), overflow: false };
     }
+  }
+  return null;
+}
+
+/**
+ * 어절을 지키며 줄이 좌우로만 조금(한쪽 0.5글자) 말풍선 밖으로 나가는 배치. 위아래는 말풍선 안.
+ * 홀쭉하지 않은 말풍선에서 어색한 세로쓰기·어절 자르기 대신 씀 (흰색은 말풍선 안쪽만, 넘침 표시 없음)
+ */
+export function layoutBubbleSlightOverflow(
+  text: string,
+  shape: BubbleShape,
+  pageWidth: number,
+  pageHeight: number,
+  measure: Measure,
+  minFont: number,
+  maxFont: number,
+): BubbleTextLayout | null {
+  const trimmed = text.trim();
+  if (!trimmed || !(maxFont >= minFont && minFont > 0)) return null;
+  const base = toPx(shape, pageWidth, pageHeight);
+  const step = Math.max((maxFont - minFont) / BUBBLE_FIT.fontSteps, 0.25);
+  const measureFast = cachedMeasure(measure);
+  for (let fontSize = maxFont; fontSize >= minFont - 1e-6; fontSize -= step) {
+    const lines = tryFit(trimmed, base, fontSize, BUBBLE_FIT.lineHeights[1], measureFast, false, Infinity, BUBBLE_FIT.slightOverflowInsetScale, BUBBLE_FIT.tightInsetScale);
+    if (lines) return { fontSize, lineHeight: fontSize * BUBBLE_FIT.lineHeights[1], lines, fill: fillOf(base), overflow: false };
   }
   return null;
 }
@@ -518,7 +552,7 @@ export function ellipseShapeForBox(box: [number, number, number, number], pageWi
 }
 
 /**
- * 말풍선 모양 안에 넣기: 가로(어절 유지) → 홀쭉하면 세로 → 가로(어절 자르기 허용) 순.
+ * 말풍선 모양 안에 넣기: 가로(어절 유지) → 막대처럼 홀쭉하면 세로 → 가로(좌우로 살짝 넘침) → 가로(어절 자르기 허용) 순.
  * 어느 쪽으로도 안 들어가면 null (호출하는 쪽이 네모 상자로 덮음)
  */
 export function fitIntoShape(
@@ -536,6 +570,8 @@ export function fitIntoShape(
     const vertical = layoutBubbleVertical(text, shape, pageWidth, pageHeight, minFont, maxFont);
     if (vertical) return { direction: 'vertical', layout: vertical };
   }
+  const slight = layoutBubbleSlightOverflow(text, shape, pageWidth, pageHeight, measure, minFont, maxFont);
+  if (slight) return { direction: 'horizontal', layout: slight };
   const breakWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, true);
   return breakWords ? { direction: 'horizontal', layout: breakWords } : null;
 }

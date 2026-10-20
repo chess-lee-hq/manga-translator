@@ -362,6 +362,14 @@ describe('세로쓰기로 말풍선 안에 넣기', () => {
     expect(layout.columns.flatMap(c => c.cells.map(cell => cell.text)).join('')).toBe('가나다라마바사아자차');
   });
 
+  it('조금 긴 말풍선(막대 모양이 아님)은 좌우로 살짝 넘치더라도 가로쓰기', () => {
+    const shape = ellipseShapeForBox([440, 475, 520, 525], 1000, 1000);
+    const fit = fitIntoShape('실성한 영감님이요!?', shape, 1000, 1000, measure, 12, 12);
+    expect(fit?.direction).toBe('horizontal');
+    expect(fit?.direction === 'horizontal' && fit.layout.lines.map(l => l.text)).toEqual(['실성한', '영감님이요!?']);
+    expect(fit?.layout.overflow).toBe(false);
+  });
+
   it('넓적한 말풍선은 가로쓰기 그대로', () => {
     const wide = ellipseShapeForBox([450, 350, 550, 650], 1000, 1000);
     expect(fitIntoShape('짧은 대사', wide, 1000, 1000, measure, 12, 20)?.direction).toBe('horizontal');
