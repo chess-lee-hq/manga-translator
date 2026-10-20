@@ -118,6 +118,8 @@ const BUBBLE_RULE = {
   lobeWideGap: 1.5,
   /** 한쪽 칸에 원문 글자가 이 비율도 없으면 나누지 않음 */
   lobeMinInk: 0.22,
+  /** 나눈 양쪽 글자 폭이 모두 글자 이만큼 이하면 한 줄을 쪼갠 것이므로 나누지 않음 */
+  lobeSingleLineGlyphs: 1.6,
   /**
    * 글자 영역의 이 비율 이상이 말풍선 안이면, 밖에 남은 어두운 칸(uncoveredInkLoose까지)은 박스가 그림 쪽으로 삐져나온 것으로 봄
    * (예: 박스 아래 끝에 걸친 인물 머리) — 말풍선을 포기하지 않음
@@ -479,6 +481,10 @@ function detectOnce(
   function findLobes(): BubbleLobe[] | undefined {
     const counted = (i: number) => ink[i] && !band[i] && inside(i);
     let best: { axis: 'x' | 'y'; cut: number; ratio: number } | null = null;
+    // 글자 한 자 크기 (격자 칸). 나눈 양쪽이 모두 한 줄짜리면 한 줄의 글자를 둘로 쪼갠 것이므로 나누지 않음
+    // (예: 효과음 「キャッ!!」 세로 한 줄이 번개 모양 배경의 뾰족한 테두리 때문에 「キャ」「ッ!!」로 나뉘었음)
+    const glyphPx = estimateGlyphSize(region, box);
+    const glyphCells = glyphPx ? glyphPx / block : 0;
     for (const axis of ['x', 'y'] as const) {
       // a: 나누는 방향(열 또는 행), b: 그와 수직
       const [a0, a1] = axis === 'x' ? [gbx0, gbx1] : [gby0, gby1];
@@ -525,6 +531,23 @@ function detectOnce(
         const ratio = neck / Math.max(1, Math.min(sideA, sideB));
         const wide = gaps.length > 1 && gap.end - gap.start >= median * BUBBLE_RULE.lobeWideGap;
         if (!(ratio < BUBBLE_RULE.lobeNeck || (wide && ratio < BUBBLE_RULE.lobeLooseNeck))) continue;
+        if (glyphCells > 0) {
+          // 자르는 선과 나란한 방향으로 본 양쪽 글자 폭: 둘 다 글자 1.6자 이하면 한 줄
+          const across = (from: number, to: number) => {
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (let k = from; k < to; k++) {
+              for (let b = b0; b < b1; b++) {
+                if (!counted(at(a0 + k, b))) continue;
+                lo = Math.min(lo, b);
+                hi = Math.max(hi, b + 1);
+              }
+            }
+            return hi - lo;
+          };
+          const single = (w: number) => w <= glyphCells * BUBBLE_RULE.lobeSingleLineGlyphs;
+          if (single(across(first, gap.start)) && single(across(gap.end, last + 1))) continue;
+        }
         if (!best || ratio < best.ratio) best = { axis, cut: a0 + Math.floor((gap.start + gap.end) / 2), ratio };
       }
     }
