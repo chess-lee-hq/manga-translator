@@ -1,9 +1,12 @@
-import { layoutTags, resolveDisplayMode, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
-import { BUBBLE_FIT, fillOutline, layoutBubbleText, type BubbleTextLayout } from './bubbleLayout';
-import { detectPageBubbleShapes } from './bubbleShape';
+import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
+import { BUBBLE_FIT, fillOutline, planBubble, type BubbleFit } from './bubbleLayout';
+import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
-import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize, resolveTextDirection, VERTICAL_TEXT, type VerticalLayout } from './overlayLayout';
+import {
+  columnUnits, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
+  resolveTextDirection, VERTICAL_CORNER_OFFSET, VERTICAL_TEXT, type VerticalCell, type VerticalLayout,
+} from './overlayLayout';
 
 /** 저장 이미지 목표 높이. 원본이 이보다 작으면 최대 MAX_EXPORT_SCALE배까지 키워 글자를 선명하게 그림 */
 const EXPORT_TARGET_HEIGHT = 2400;
@@ -58,9 +61,40 @@ function drawTextLines(ctx: CanvasRenderingContext2D, lines: string[], cx: numbe
   });
 }
 
-/** 원본 말풍선 모양대로 흰색으로 지우고, 줄마다 정해진 자리에 번역문을 그림 (화면 BubbleFitText와 같은 배치) */
-function drawBubbleFit(ctx: CanvasRenderingContext2D, layout: BubbleTextLayout, setFont: (size: number) => void) {
-  const outline = fillOutline(layout.fill);
+/**
+ * 세로쓰기 한 칸을 (x, cy) 가운데에 그림. 화면 VerticalGlyph와 같은 규칙:
+ * 말줄임·물결·괄호는 90도 눕히고, 마침표·쉼표는 칸의 오른쪽 위로
+ */
+function drawVerticalCell(ctx: CanvasRenderingContext2D, cell: VerticalCell, x: number, cy: number, fontSize: number) {
+  if (cell.text === ' ') return;
+  if (cell.kind === 'rotate') {
+    ctx.save();
+    ctx.translate(x, cy);
+    ctx.rotate(Math.PI / 2);
+    ctx.fillText(cell.text, 0, 0);
+    ctx.restore();
+    return;
+  }
+  if (cell.kind === 'corner') {
+    ctx.fillText(cell.text, x + VERTICAL_CORNER_OFFSET.x * fontSize, cy + VERTICAL_CORNER_OFFSET.y * fontSize);
+    return;
+  }
+  ctx.fillText(cell.text, x, cy);
+}
+
+/** 열 하나를 위에서부터 그림 (칸마다 높이가 다를 수 있음: 띄어쓰기는 반 칸) */
+function drawVerticalColumn(ctx: CanvasRenderingContext2D, cells: VerticalCell[], x: number, top: number, cellHeight: number, fontSize: number) {
+  let y = top;
+  for (const cell of cells) {
+    const height = cellHeight * cell.size;
+    drawVerticalCell(ctx, cell, x, y + height / 2, fontSize);
+    y += height;
+  }
+}
+
+/** 원본 말풍선 모양(또는 타원)대로 흰색으로 지우고, 정해진 자리에 번역문을 그림 (화면 BubbleFitText와 같은 배치) */
+function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (size: number) => void) {
+  const outline = fillOutline(fit.layout.fill);
   ctx.save();
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
@@ -69,6 +103,18 @@ function drawBubbleFit(ctx: CanvasRenderingContext2D, layout: BubbleTextLayout, 
   ctx.fill();
   ctx.restore();
 
+  if (fit.direction === 'vertical') {
+    const layout = fit.layout;
+    setFont(layout.fontSize);
+    ctx.letterSpacing = '0px'; // 한 글자씩 그리므로 자간은 쓰지 않음
+    ctx.fillStyle = '#111827';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const column of layout.columns) drawVerticalColumn(ctx, column.cells, column.cx, column.top, layout.cellHeight, layout.fontSize);
+    return;
+  }
+
+  const layout = fit.layout;
   setFont(layout.fontSize);
   ctx.fillStyle = '#111827';
   ctx.textAlign = 'center';
@@ -95,10 +141,8 @@ function drawVerticalColumns(ctx: CanvasRenderingContext2D, layout: VerticalLayo
 
   layout.columns.forEach((column, columnIndex) => {
     const x = cx + totalWidth / 2 - columnWidth * (columnIndex + 0.5);
-    const columnHeight = column.length * cellHeight;
-    column.forEach((char, charIndex) => {
-      ctx.fillText(char, x, cy - columnHeight / 2 + cellHeight * (charIndex + 0.5));
-    });
+    const columnHeight = columnUnits(column) * cellHeight;
+    drawVerticalColumn(ctx, column, x, cy - columnHeight / 2, cellHeight, layout.fontSize);
   });
 }
 
@@ -130,9 +174,10 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   const maxFont = OVERLAY_STYLE.maxFontPx * options.viewScale * cssPx;
   const { measure, setFont } = createTextMeasurer(options.fontFamily || DEFAULT_FONT_FAMILY, ctx);
 
-  // 원본 말풍선 모양 (화면과 같은 규칙으로 찾음 — 대상이 하나라도 있을 때만 픽셀을 읽음)
-  let shapes: ReturnType<typeof detectPageBubbleShapes> = {};
-  if (results.some(wantsBubbleFit)) {
+  // 원본 말풍선 모양 (화면과 같은 규칙으로 찾음). 말풍선이 없는 글자를 옆에 붙이는 판단에도 쓰므로
+  // 직접 표시 방식을 고르지 않은 항목이 하나라도 있으면 픽셀을 읽음
+  let shapes: Record<string, BubbleDetection> = {};
+  if (results.some(r => wantsBubbleFit(r) || (r.display_mode !== 'cover' && r.display_mode !== 'tag'))) {
     try {
       shapes = detectPageBubbleShapes(image, results);
     } catch (error) {
@@ -140,14 +185,15 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     }
   }
 
+  const modeOf = (result: TranslationResult) => effectiveDisplayMode(result, shapes[result.id]);
+
   // 1) 원문을 덮는 말풍선
   for (const result of results) {
-    if (resolveDisplayMode(result) === 'tag') continue;
+    if (modeOf(result) === 'tag') continue;
 
-    const shape = wantsBubbleFit(result) ? shapes[result.id] : null;
-    const fitted = shape ? layoutBubbleText(result.translated_text ?? '', shape, width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, maxFont) : null;
-    if (fitted) {
-      drawBubbleFit(ctx, fitted, setFont);
+    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, maxFont);
+    if (plan.kind === 'fit') {
+      drawBubbleFit(ctx, plan.fit, setFont);
       continue;
     }
 
@@ -179,7 +225,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
 
   // 2) 효과음 등 원문은 두고 바깥에 붙이는 작은 딱지
   const tagUnit = cssPx * options.viewScale;
-  const tags = layoutTags(results, width, height, tagUnit, measure);
+  const tags = layoutTags(results, width, height, tagUnit, measure, modeOf);
   for (const result of results) {
     const tag = tags[result.id];
     if (!tag) continue;

@@ -1,5 +1,7 @@
-import type { BubbleShape } from './bubbleShape';
-import { OVERLAY_STYLE } from './overlayLayout';
+import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from './bubbleShape';
+import { wantsBubbleFit } from './bubbleDisplay';
+import type { TranslationResult } from './gemini';
+import { columnUnits, fillColumns, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
 
 /**
  * 원본 말풍선 모양 안에 번역문을 배치합니다. (화면과 이미지 저장이 같은 계산 사용)
@@ -25,6 +27,15 @@ export const BUBBLE_FIT = {
   expandScales: [1.08, 1.16],
   /** 글자 크기를 몇 단계로 나눠 시도할지 */
   fontSteps: 24,
+  /** 가로로 안 들어갈 때 세로쓰기를 시도할 만큼 홀쭉한 말풍선 (높이 ÷ 너비) */
+  verticalMinAspect: 1.15,
+  /** 모양을 못 딴 말풍선에 쓰는 타원: 글자 영역 네 모서리를 지나는 타원(√2배)에 약간 여유 */
+  ellipseScale: 1.5,
+  /** 타원 모양의 행 수 */
+  ellipseRows: 64,
+  /** 타원의 최소 반지름 (최소 글자 크기 배수). 원문이 한 줄짜리 세로 글이면 타원이 너무 홀쭉해 아무것도 안 들어가므로 */
+  ellipseMinRadiusX: 2.5,
+  ellipseMinRadiusY: 1.5,
 } as const;
 
 export interface BubbleLine {
@@ -219,6 +230,8 @@ export function layoutBubbleText(
   measure: Measure,
   minFont: number,
   maxFont: number,
+  /** false면 어절을 중간에서 자르지 않는 배치만 찾음 (세로쓰기를 먼저 시도해 보려고) */
+  allowBreakWords = true,
 ): BubbleTextLayout | null {
   const trimmed = text.trim();
   if (!trimmed || !(maxFont >= minFont && minFont > 0)) return null;
@@ -238,7 +251,7 @@ export function layoutBubbleText(
 
   const shapes: [PxShape, boolean][] = [[base, false], ...BUBBLE_FIT.expandScales.map(f => [scaleShape(base, f), true] as [PxShape, boolean])];
   // 어절을 중간에서 자르지 않는 배치를 (흰 영역을 키우는 것까지) 먼저 모두 찾아보고, 어떻게도 안 될 때만 글자 단위로 자름
-  for (const allowBreakWord of [false, true]) {
+  for (const allowBreakWord of allowBreakWords ? [false, true] : [false]) {
     for (const [candidate, expanded] of shapes) {
       const fit = attempt(candidate, allowBreakWord);
       if (fit) return { ...fit, fill: { top: candidate.top, rowHeight: candidate.rowHeight, rows: candidate.rows }, expanded };
@@ -278,4 +291,218 @@ export function bubbleCapacity(text: string, shape: BubbleShape, pageWidth: numb
     else high = mid - 1;
   }
   return low;
+}
+
+/** 말풍선 모양 안 세로쓰기 배치 (그리는 좌표계 px) */
+export interface BubbleVerticalLayout {
+  fontSize: number;
+  cellHeight: number;
+  columnWidth: number;
+  /** 첫 열이 가장 오른쪽. cx = 열 가운데 x, top = 첫 칸의 위쪽 y */
+  columns: { cx: number; top: number; cells: VerticalCell[] }[];
+  fill: BubbleTextLayout['fill'];
+  expanded: boolean;
+}
+
+export type BubbleFit =
+  | { direction: 'horizontal'; layout: BubbleTextLayout }
+  | { direction: 'vertical'; layout: BubbleVerticalLayout };
+
+/** 모양의 가로 범위와 높이 (홀쭉한지 판정용) */
+function shapeExtent(shape: PxShape) {
+  let left = Infinity;
+  let right = -Infinity;
+  shape.rows.forEach(row => {
+    if (!row) return;
+    left = Math.min(left, row[0]);
+    right = Math.max(right, row[1]);
+  });
+  return { width: right - left, height: shape.rows.length * shape.rowHeight };
+}
+
+/** 가로 구간 [x0, x1]이 통째로 들어가는 세로 구간 — 무게중심 행에서 위아래로 넓혀 감 */
+function columnRun(shape: PxShape, x0: number, x1: number): [number, number] | null {
+  const covers = (i: number) => {
+    const row = shape.rows[i];
+    return !!row && row[0] <= x0 && row[1] >= x1;
+  };
+  let start = Math.min(shape.rows.length - 1, Math.max(0, Math.floor((shape.centerY - shape.top) / shape.rowHeight)));
+  if (!covers(start)) {
+    // 무게중심 행이 이 열을 못 담으면 가장 가까운 담는 행에서 시작
+    let found = -1;
+    for (let d = 1; d < shape.rows.length && found < 0; d++) {
+      if (covers(start - d)) found = start - d;
+      else if (covers(start + d)) found = start + d;
+    }
+    if (found < 0) return null;
+    start = found;
+  }
+  let first = start;
+  let last = start;
+  while (first > 0 && covers(first - 1)) first--;
+  while (last < shape.rows.length - 1 && covers(last + 1)) last++;
+  return [shape.top + first * shape.rowHeight, shape.top + (last + 1) * shape.rowHeight];
+}
+
+function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: number): Omit<BubbleVerticalLayout, 'fill' | 'expanded'> | null {
+  const cellHeight = fontSize * VERTICAL_TEXT.cellHeight;
+  const columnWidth = fontSize * VERTICAL_TEXT.columnWidth;
+  const insetX = fontSize * BUBBLE_FIT.insetXEm;
+  const insetY = fontSize * BUBBLE_FIT.insetYEm;
+  const totalUnits = paragraphs.reduce((sum, cells) => sum + columnUnits(cells), 0);
+  const { width } = shapeExtent(shape);
+  const maxColumns = Math.max(1, Math.floor((width - insetX * 2) / columnWidth));
+
+  for (let count = 1; count <= maxColumns; count++) {
+    const rightEdge = shape.centerX + (count * columnWidth) / 2;
+    const runs: [number, number][] = [];
+    for (let j = 0; j < count; j++) {
+      const x1 = rightEdge - j * columnWidth;
+      const run = columnRun(shape, x1 - columnWidth - insetX, x1 + insetX);
+      if (!run) break;
+      const top = run[0] + insetY;
+      const bottom = run[1] - insetY;
+      // 두 칸도 못 들어가는 열(말풍선 뾰족한 끝)은 쓰지 않음
+      if ((bottom - top) / cellHeight < 2) break;
+      runs.push([top, bottom]);
+    }
+    if (runs.length < count) continue;
+    const capacities = runs.map(([top, bottom]) => (bottom - top) / cellHeight);
+    if (capacities.reduce((a, b) => a + b, 0) < totalUnits) continue;
+
+    const filled = fillColumns(paragraphs, j => capacities[j] ?? 0);
+    if (filled.length > count || filled.some((column, j) => columnUnits(column) > capacities[j] + 1e-6)) continue;
+
+    return {
+      fontSize,
+      cellHeight,
+      columnWidth,
+      columns: filled.map((cells, j) => {
+        const [top, bottom] = runs[j];
+        const height = columnUnits(cells) * cellHeight;
+        // 글자 덩어리를 말풍선 무게중심 높이에 두되 그 열의 세로 구간 안으로
+        const columnTop = Math.min(Math.max(shape.centerY - height / 2, top), bottom - height);
+        return { cx: rightEdge - (j + 0.5) * columnWidth, top: columnTop, cells };
+      }),
+    };
+  }
+  return null;
+}
+
+/**
+ * 말풍선 모양 안 세로쓰기. 일본 만화의 홀쭉한 말풍선은 가로로 한 줄에 몇 글자 못 들어가므로,
+ * 가로쓰기로 어절을 자르지 않고는 안 들어갈 때 세로로 세워 봅니다. (흰 영역을 조금 키우는 것까지 시도)
+ */
+export function layoutBubbleVertical(
+  text: string,
+  shape: BubbleShape,
+  pageWidth: number,
+  pageHeight: number,
+  minFont: number,
+  maxFont: number,
+): BubbleVerticalLayout | null {
+  const trimmed = text.trim();
+  if (!trimmed || !(maxFont >= minFont && minFont > 0)) return null;
+  const paragraphs = trimmed.split('\n').map(verticalCells);
+  const base = toPx(shape, pageWidth, pageHeight);
+  const step = Math.max((maxFont - minFont) / BUBBLE_FIT.fontSteps, 0.25);
+  const shapes: [PxShape, boolean][] = [[base, false], ...BUBBLE_FIT.expandScales.map(f => [scaleShape(base, f), true] as [PxShape, boolean])];
+  for (const [candidate, expanded] of shapes) {
+    for (let fontSize = maxFont; fontSize >= minFont - 1e-6; fontSize -= step) {
+      const fit = tryFitVertical(paragraphs, candidate, fontSize);
+      if (fit) return { ...fit, fill: { top: candidate.top, rowHeight: candidate.rowHeight, rows: candidate.rows }, expanded };
+    }
+  }
+  return null;
+}
+
+/** 모양이 홀쭉한지 (가로로 안 들어갈 때 세로쓰기를 시도할 대상) */
+export function isTallShape(shape: BubbleShape, pageWidth: number, pageHeight: number): boolean {
+  const { width, height } = shapeExtent(toPx(shape, pageWidth, pageHeight));
+  return width > 0 && height / width >= BUBBLE_FIT.verticalMinAspect;
+}
+
+/**
+ * 말풍선은 있어 보이는데 테두리를 못 딴 경우에 쓰는 타원 모양 (0~1000).
+ * 글자 영역 네 모서리를 지나는 타원보다 조금 크게 잡아 원문 글자를 모두 덮습니다.
+ */
+export function ellipseShapeForBox(box: [number, number, number, number], pageWidth: number, pageHeight: number, minFont = 0): BubbleShape {
+  const [ymin, xmin, ymax, xmax] = box;
+  const cx = (xmin + xmax) / 2;
+  const cy = (ymin + ymax) / 2;
+  // 정규화 좌표는 가로·세로 축척이 달라, 실제 화면에서 타원이 되도록 px로 계산한 뒤 되돌림
+  const rxPx = Math.max(((xmax - xmin) / 2 / 1000) * pageWidth * BUBBLE_FIT.ellipseScale, minFont * BUBBLE_FIT.ellipseMinRadiusX);
+  const ryPx = Math.max(((ymax - ymin) / 2 / 1000) * pageHeight * BUBBLE_FIT.ellipseScale, minFont * BUBBLE_FIT.ellipseMinRadiusY);
+  const rx = (rxPx / pageWidth) * 1000;
+  const ry = (ryPx / pageHeight) * 1000;
+  const top = Math.max(0, cy - ry);
+  const bottom = Math.min(1000, cy + ry);
+  const rowHeight = (bottom - top) / BUBBLE_FIT.ellipseRows;
+  const rows: ([number, number] | null)[] = [];
+  for (let i = 0; i < BUBBLE_FIT.ellipseRows; i++) {
+    const y = top + (i + 0.5) * rowHeight;
+    const t = 1 - ((y - cy) / ry) ** 2;
+    if (t <= 0) {
+      rows.push(null);
+      continue;
+    }
+    const half = rx * Math.sqrt(t);
+    rows.push([Math.max(0, cx - half), Math.min(1000, cx + half)]);
+  }
+  return { top, rowHeight, rows, centerX: cx, centerY: cy };
+}
+
+/**
+ * 말풍선 모양 안에 넣기: 가로(어절 유지) → 홀쭉하면 세로 → 가로(어절 자르기 허용) 순.
+ * 어느 쪽으로도 안 들어가면 null (호출하는 쪽이 네모 상자로 덮음)
+ */
+export function fitIntoShape(
+  text: string,
+  shape: BubbleShape,
+  pageWidth: number,
+  pageHeight: number,
+  measure: Measure,
+  minFont: number,
+  maxFont: number,
+): BubbleFit | null {
+  const keepWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, false);
+  if (keepWords) return { direction: 'horizontal', layout: keepWords };
+  if (isTallShape(shape, pageWidth, pageHeight)) {
+    const vertical = layoutBubbleVertical(text, shape, pageWidth, pageHeight, minFont, maxFont);
+    if (vertical) return { direction: 'vertical', layout: vertical };
+  }
+  const breakWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, true);
+  return breakWords ? { direction: 'horizontal', layout: breakWords } : null;
+}
+
+/** 덮는 말풍선 하나를 어떻게 그릴지 (화면·이미지 저장 공통) */
+export type BubblePlan =
+  | { kind: 'fit'; fit: BubbleFit; source: 'bubble' | 'ellipse' }
+  /** 모양 안에 안 들어가거나 모양을 쓸 대상이 아님 → 네모 상자 */
+  | { kind: 'box' };
+
+/**
+ * - 말풍선 모양을 찾았으면 그 안에
+ * - 말풍선은 있어 보이는데(배경이 흰색) 테두리를 못 땄으면 글자 영역을 감싸는 타원 안에
+ * - 그 밖(직접 옮긴 박스, 맞춤을 끈 박스, 모양 계산 전)은 네모 상자
+ * 말풍선이 아예 없는 글자(그림·스크린톤 위)는 여기 오기 전에 "옆에 작게 붙이기"로 빠짐 (bubbleDisplay.effectiveDisplayMode)
+ */
+export function planBubble(
+  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble'>,
+  detection: BubbleDetection | undefined,
+  pageWidth: number,
+  pageHeight: number,
+  measure: Measure,
+  minFont: number,
+  maxFont: number,
+): BubblePlan {
+  if (!detection || !wantsBubbleFit(result)) return { kind: 'box' };
+  const text = result.translated_text ?? '';
+  if (detection.shape) {
+    const fit = fitIntoShape(text, detection.shape, pageWidth, pageHeight, measure, minFont, maxFont);
+    return fit ? { kind: 'fit', fit, source: 'bubble' } : { kind: 'box' };
+  }
+  if (NO_BUBBLE_FAILURES.has(detection.failure)) return { kind: 'box' };
+  const fit = fitIntoShape(text, ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont), pageWidth, pageHeight, measure, minFont, maxFont);
+  return fit ? { kind: 'fit', fit, source: 'ellipse' } : { kind: 'box' };
 }

@@ -179,15 +179,68 @@ export function resolveTextDirection(
   const chars = Array.from((result.translated_text ?? '').trim()).length;
   if (chars < VERTICAL_TEXT.minChars) return 'horizontal';
   if (boxWidth >= boxHeight || minFontSize <= 0) return 'horizontal';
+  // 세로로 세워도 한 열에 몇 글자 못 들어가는 낮은 상자면 한 글자씩 여러 열로 쪼개지므로 가로로 둠
+  if (boxHeight < minFontSize * VERTICAL_TEXT.cellHeight * VERTICAL_TEXT.minCharsPerLine) return 'horizontal';
   const expandedWidth = boxWidth * OVERLAY_STYLE.maxWidthRatio;
   const usableWidth = expandedWidth - OVERLAY_STYLE.paddingXPx * cssPx * 2;
   return usableWidth / minFontSize < VERTICAL_TEXT.minCharsPerLine ? 'vertical' : 'horizontal';
 }
 
+/**
+ * 세로쓰기에서 한 칸에 놓을 글자와 그리는 방식.
+ * - upright: 그대로 세움 (한글·한자·느낌표·물음표)
+ * - rotate: 90도 돌림 (말줄임 ".." · 물결 · 장음 · 줄표 · 괄호 — 가로로 긴 기호라 세로쓰기에선 눕혀야 자연스러움)
+ * - corner: 칸의 오른쪽 위로 (마침표·쉼표 — 일본 만화 세로쓰기처럼 앞 글자 옆에 붙어 보이지 않게)
+ */
+export type VerticalGlyphKind = 'upright' | 'rotate' | 'corner';
+
+export interface VerticalCell {
+  text: string;
+  kind: VerticalGlyphKind;
+  /** 칸 높이 배율 (보통 1, 띄어쓰기는 0.5) */
+  size: number;
+}
+
+const ROTATE_GLYPHS = new Set(['..', '…', '‥', '~', '〜', '～', 'ー', '-', '—', '–', '―', '(', ')', '（', '）', '[', ']', '「', '」', '『', '』', '<', '>', '《', '》', '〈', '〉']);
+const CORNER_GLYPHS = new Set(['.', ',', '。', '、', '，', '．']);
+/** 띄어쓰기는 반 칸 (한 칸을 다 쓰면 어절 사이가 지나치게 벌어짐) */
+const SPACE_CELL_SIZE = 0.5;
+
+/**
+ * 세로쓰기 칸 나누기: 문장부호도 한 글자처럼 한 칸씩 차지합니다.
+ * 말줄임표(번역문 규칙상 "..")는 두 점을 한 칸에 눕혀 세로 말줄임으로 보이게 합니다.
+ * 줄바꿈("\n")은 새 열 표시로 빈 문자열 칸 대신 null을 넣지 않고, 호출하는 쪽에서 문단별로 나눠 부릅니다.
+ */
+export function verticalCells(text: string): VerticalCell[] {
+  const chars = Array.from(text);
+  const cells: VerticalCell[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (/\s/.test(ch)) {
+      // 연속 공백은 반 칸 하나로, 열 맨 앞 공백은 버림
+      if (cells.length > 0 && cells[cells.length - 1].text !== ' ') cells.push({ text: ' ', kind: 'upright', size: SPACE_CELL_SIZE });
+      continue;
+    }
+    if (ch === '.' && chars[i + 1] === '.') {
+      let j = i;
+      while (chars[j] === '.') j++;
+      cells.push({ text: '..', kind: 'rotate', size: 1 });
+      i = j - 1;
+      continue;
+    }
+    cells.push({ text: ch, kind: ROTATE_GLYPHS.has(ch) ? 'rotate' : CORNER_GLYPHS.has(ch) ? 'corner' : 'upright', size: 1 });
+  }
+  while (cells.length > 0 && cells[cells.length - 1].text === ' ') cells.pop();
+  return cells;
+}
+
+/** 마침표·쉼표를 칸 오른쪽 위로 옮기는 거리 (글자 크기 대비) */
+export const VERTICAL_CORNER_OFFSET = { x: 0.3, y: -0.38 } as const;
+
 export interface VerticalLayout {
   fontSize: number;
-  /** 글자를 담은 열 목록. 첫 열이 가장 오른쪽 (일본 만화 세로쓰기 방향) */
-  columns: string[][];
+  /** 글자 칸을 담은 열 목록. 첫 열이 가장 오른쪽 (일본 만화 세로쓰기 방향) */
+  columns: VerticalCell[][];
   /** 흰 상자 크기 (여백 포함, 최소한 원래 박스 크기) */
   width: number;
   height: number;
@@ -209,25 +262,14 @@ export function layoutVerticalText(
   const padY = OVERLAY_STYLE.paddingYPx * cssPx;
   const step = Math.max(0.5, (maxFontSize - minFontSize) / 20);
 
+  const paragraphs = text.split('\n').map(verticalCells);
   const build = (fontSize: number) => {
     const cellHeight = fontSize * VERTICAL_TEXT.cellHeight;
     const columnWidth = fontSize * VERTICAL_TEXT.columnWidth;
-    const maxRows = Math.max(1, Math.floor((boxHeight - padY * 2) / cellHeight));
+    const capacity = Math.max(1, (boxHeight - padY * 2) / cellHeight);
 
-    const columns: string[][] = [];
-    for (const paragraph of text.split('\n')) {
-      let column: string[] = [];
-      for (const char of Array.from(paragraph)) {
-        if (column.length >= maxRows) {
-          columns.push(column);
-          column = [];
-        }
-        column.push(char);
-      }
-      columns.push(column);
-    }
-
-    const rows = Math.max(1, ...columns.map(column => column.length));
+    const columns = fillColumns(paragraphs, () => capacity);
+    const rows = Math.max(1, ...columns.map(columnUnits));
     return {
       fontSize,
       columns,
@@ -248,6 +290,36 @@ export function layoutVerticalText(
     if (built.contentWidth <= boxWidth && built.contentHeight <= boxHeight) return toLayout(built);
   }
   return toLayout(build(minFontSize));
+}
+
+/** 열 하나의 높이 (칸 단위) */
+export const columnUnits = (column: VerticalCell[]) => column.reduce((sum, cell) => sum + cell.size, 0);
+
+/**
+ * 칸들을 열로 나눕니다. 열 높이 한도(칸 단위)는 열마다 다를 수 있음 (말풍선 모양 안의 세로쓰기).
+ * 문단은 새 열에서 시작하고, 열 맨 앞에 오는 띄어쓰기는 버립니다.
+ */
+export function fillColumns(paragraphs: VerticalCell[][], capacityOf: (columnIndex: number) => number): VerticalCell[][] {
+  const columns: VerticalCell[][] = [];
+  for (const cells of paragraphs) {
+    let column: VerticalCell[] = [];
+    let used = 0;
+    for (const cell of cells) {
+      if (cell.text === ' ' && column.length === 0) continue;
+      if (column.length > 0 && used + cell.size > capacityOf(columns.length) + 1e-6) {
+        while (column.length > 0 && column[column.length - 1].text === ' ') column.pop();
+        columns.push(column);
+        column = [];
+        used = 0;
+        if (cell.text === ' ') continue;
+      }
+      column.push(cell);
+      used += cell.size;
+    }
+    while (column.length > 0 && column[column.length - 1].text === ' ') column.pop();
+    columns.push(column);
+  }
+  return columns;
 }
 
 /**

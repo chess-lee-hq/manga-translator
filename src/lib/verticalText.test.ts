@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { layoutVerticalText, resolveTextDirection } from './overlayLayout';
+import { layoutVerticalText, resolveTextDirection, verticalCells, type VerticalCell } from './overlayLayout';
+
+const texts = (columns: VerticalCell[][]) => columns.map(column => column.map(cell => cell.text));
 
 const bubble = (translated_text: string, text_direction?: 'horizontal' | 'vertical') => ({ translated_text, text_direction });
 
@@ -35,7 +37,7 @@ describe('layoutVerticalText', () => {
     // 6글자 → 글자 20px이면 칸 21px × 6 = 126 + 여백 8 = 134 ≤ 300, 열 너비 22 + 16 = 38 ≤ 40
     const layout = layoutVerticalText('가나다라마바', 40, 300, 10, 28, 1);
     expect(layout.columns).toHaveLength(1);
-    expect(layout.columns[0]).toEqual(['가', '나', '다', '라', '마', '바']);
+    expect(texts(layout.columns)[0]).toEqual(['가', '나', '다', '라', '마', '바']);
     expect(layout.fontSize).toBeLessThanOrEqual(28);
     expect(layout.width).toBeGreaterThanOrEqual(40);
     expect(layout.height).toBeGreaterThanOrEqual(300);
@@ -44,18 +46,45 @@ describe('layoutVerticalText', () => {
   it('한 열에 안 들어가면 왼쪽으로 열을 늘린다 (첫 열이 오른쪽)', () => {
     const layout = layoutVerticalText('가나다라마바사아자차카타파하', 40, 60, 10, 12, 1);
     expect(layout.columns.length).toBeGreaterThan(1);
-    expect(layout.columns[0][0]).toBe('가');
-    expect(layout.columns.flat().join('')).toBe('가나다라마바사아자차카타파하');
+    expect(layout.columns[0][0].text).toBe('가');
+    expect(texts(layout.columns).flat().join('')).toBe('가나다라마바사아자차카타파하');
   });
 
   it('줄바꿈은 새 열로 시작한다', () => {
     const layout = layoutVerticalText('가나\n다라', 60, 300, 10, 20, 1);
-    expect(layout.columns).toEqual([['가', '나'], ['다', '라']]);
+    expect(texts(layout.columns)).toEqual([['가', '나'], ['다', '라']]);
   });
 
   it('좁은 박스에서는 글자 크기를 줄여 맞춘다', () => {
     const wide = layoutVerticalText('가나다', 80, 300, 10, 28, 1);
     const narrow = layoutVerticalText('가나다', 30, 300, 10, 28, 1);
     expect(narrow.fontSize).toBeLessThan(wide.fontSize);
+  });
+});
+
+describe('verticalCells — 세로쓰기 칸 나누기', () => {
+  const cells = (text: string) => verticalCells(text).map(c => `${c.text}:${c.kind}${c.size !== 1 ? `:${c.size}` : ''}`);
+
+  it('느낌표·물음표도 한 글자처럼 한 칸씩 세운다', () => {
+    expect(cells('뭐야?!')).toEqual(['뭐:upright', '야:upright', '?:upright', '!:upright']);
+  });
+
+  it('마침표·쉼표는 칸 오른쪽 위로 옮길 표시를 붙인다', () => {
+    expect(cells('그래, 알았어.')).toEqual(['그:upright', '래:upright', ',:corner', ' :upright:0.5', '알:upright', '았:upright', '어:upright', '.:corner']);
+  });
+
+  it('말줄임(..)은 두 점을 한 칸에 눕힌다 (점이 더 많아도 한 칸)', () => {
+    expect(cells('그건..')).toEqual(['그:upright', '건:upright', '..:rotate']);
+    expect(cells('음...')).toEqual(['음:upright', '..:rotate']);
+  });
+
+  it('물결·장음·괄호는 눕히고, 연속 공백은 반 칸 하나로, 앞뒤 공백은 버린다', () => {
+    expect(cells(' 좋아~  (진짜) ')).toEqual(['좋:upright', '아:upright', '~:rotate', ' :upright:0.5', '(:rotate', '진:upright', '짜:upright', '):rotate']);
+  });
+
+  it('세로 상자 배치에서 띄어쓰기는 반 칸만 차지한다', () => {
+    // 칸 21px (글자 20px). "가 나"는 2.5칸 = 52.5px + 여백 8 → 높이 61이면 한 열에 들어감
+    const layout = layoutVerticalText('가 나', 40, 61, 20, 20, 1);
+    expect(layout.columns).toHaveLength(1);
   });
 });

@@ -4,7 +4,8 @@
  * 글자 영역 안의 흰 픽셀에서 시작해 흰색을 바깥으로 채워 나가면 말풍선 테두리에서 멈춥니다.
  * 채워진 영역 + 그 안에 갇힌 글자 획 = 말풍선 안쪽 모양입니다.
  *
- * 확실하지 않으면 null을 돌려주고, 호출하는 쪽은 지금의 둥근 사각형 덮기로 되돌아갑니다.
+ * 확실하지 않으면 모양 없이 "왜 못 찾았는지"를 돌려줍니다. (detectBubble)
+ * 호출하는 쪽은 그 이유로 말풍선이 아예 없는 글자인지(→ 옆에 작게 붙임), 말풍선은 있는데 모양만 못 딴 것인지(→ 타원으로 덮음) 가릅니다.
  * - 흰색이 탐색 범위 끝까지 번짐 (테두리가 끊겼거나 말풍선이 없는 글자)
  * - 말풍선이 글자 영역에 비해 너무 큼 (그림의 흰 배경으로 번짐)
  * - 글자 영역 배경이 흰색이 아님 (스크린톤·그림 위 글자)
@@ -42,9 +43,35 @@ export interface BubbleShape {
   centerY: number;
 }
 
+/**
+ * 모양을 못 찾은 이유.
+ * - not-paper: 글자 배경이 흰색이 아님 (스크린톤·그림 위 글자) → 말풍선 없음
+ * - leak: 흰색이 탐색 범위 끝까지 번짐 (흰 바탕 위 말풍선 없는 글자, 또는 테두리가 크게 끊김) → 말풍선 없음으로 봄
+ * - too-big: 채운 영역이 글자에 비해 너무 큼 (큰 말풍선에 작은 글자, 또는 넓은 흰 배경)
+ * - uncovered-ink: 글자 획이 모양 밖에 남음 (글자가 테두리에 걸침)
+ * - no-enclosure: 흰색이 글자 획 사이 좁은 틈에만 갇히고 글자를 둘러싼 흰 영역이 없음
+ *   (그림 위 흰 테두리 글자·속이 흰 큰 글씨 — 배경 밝기 검사를 흰 획 때문에 통과해도 말풍선은 없음)
+ * - merged: 다른 말풍선의 글자까지 같은 영역 (붙은 말풍선)
+ * - tiny / no-seed: 영역이 너무 작거나 글자 영역 안에 흰 칸이 없음
+ */
+export type BubbleFailure = 'not-paper' | 'leak' | 'too-big' | 'uncovered-ink' | 'no-enclosure' | 'merged' | 'tiny' | 'no-seed';
+
+export type BubbleDetection = { shape: BubbleShape; failure?: undefined } | { shape: null; failure: BubbleFailure };
+
+/** 말풍선이 아예 없는 글자로 보는 실패 (덮지 않고 옆에 작게 붙임) */
+export const NO_BUBBLE_FAILURES: ReadonlySet<BubbleFailure> = new Set(['not-paper', 'leak', 'no-enclosure']);
+
 const BUBBLE_RULE = {
   /** 탐색 범위: 글자 영역에서 가로·세로로 각각 이만큼(글자 영역 긴 변 대비) 넓힘 */
   searchMarginRatio: 1.1,
+  /**
+   * 흰색이 탐색 범위 끝까지 번졌을 때 다시 볼 넓은 범위 (글자 영역 긴 변 대비, 페이지 짧은 변 대비 중 큰 쪽).
+   * 큰 말풍선에 작은 글자·홀쭉한 말풍선 위쪽에만 쓴 글자는 말풍선이 첫 범위보다 커서 "번짐"으로 잘못 보였음
+   */
+  wideSearchMarginRatio: 3.5,
+  wideSearchPageRatio: 0.12,
+  /** 넓게 다시 볼 때 허용하는 말풍선 크기 (글자 영역 대비). 이보다 크게 번지면 말풍선이 아니라 넓은 배경(컷 전체 등) */
+  wideMaxAreaRatio: 60,
   /** 픽셀 격자의 긴 변 칸 수 상한 (크면 정밀하지만 느림) */
   maxGridCells: 320,
   /** 글자 영역 배경의 밝기(상위 10%)가 이보다 어두우면 흰 말풍선이 아님 */
@@ -56,11 +83,18 @@ const BUBBLE_RULE = {
   maxAreaRatio: 12,
   /** 글자 영역 안의 어두운 칸 중 채운 영역 밖에 남아도 되는 비율 */
   maxUncoveredInk: 0.04,
+  /** 글자가 다 안 덮일 때, 채운 흰 영역이 글자 영역의 이 비율도 안 되면 둘러싼 말풍선이 없는 것으로 봄 */
+  minEnclosureRatio: 0.6,
+  /** 테두리의 작은 틈(손그림 말풍선·인쇄 번짐)을 메우는 두께 (격자 칸). 흰색이 새면 이만큼 테두리를 두껍게 해 한 번 더 시도 */
+  gapCloseCells: 1,
 } as const;
 
 /** 픽셀을 읽어올 탐색 범위 (원본 이미지 px, 페이지 밖은 잘라냄) */
-export function searchRegionFor(box: PixelBox, imageWidth: number, imageHeight: number): PixelBox {
-  const margin = Math.max(box.xmax - box.xmin, box.ymax - box.ymin) * BUBBLE_RULE.searchMarginRatio;
+export function searchRegionFor(box: PixelBox, imageWidth: number, imageHeight: number, wide = false): PixelBox {
+  const longSide = Math.max(box.xmax - box.xmin, box.ymax - box.ymin);
+  const margin = wide
+    ? Math.max(longSide * BUBBLE_RULE.wideSearchMarginRatio, Math.min(imageWidth, imageHeight) * BUBBLE_RULE.wideSearchPageRatio)
+    : longSide * BUBBLE_RULE.searchMarginRatio;
   return {
     xmin: Math.max(0, Math.floor(box.xmin - margin)),
     ymin: Math.max(0, Math.floor(box.ymin - margin)),
@@ -76,10 +110,26 @@ const lumaAt = (data: Uint8ClampedArray, i: number) => {
 };
 
 /**
- * 탐색 범위의 픽셀에서 말풍선 모양을 찾습니다.
+ * 탐색 범위의 픽셀에서 말풍선 모양을 찾습니다. 못 찾으면 이유를 돌려줍니다.
+ * 흰색이 새어 나가면(leak·too-big) 테두리의 작은 틈을 메우고 한 번 더 시도합니다.
  * @param box 글자 영역 (원본 이미지 px)
  * @param otherCenters 같은 페이지 다른 글자 영역의 중심 (원본 이미지 px) — 이 점이 모양 안에 들어오면 실패
  */
+export function detectBubble(
+  region: PixelRegion,
+  box: PixelBox,
+  imageWidth: number,
+  imageHeight: number,
+  otherCenters: { x: number; y: number }[] = [],
+  maxAreaRatio: number = BUBBLE_RULE.maxAreaRatio,
+): BubbleDetection {
+  const first = detectOnce(region, box, imageWidth, imageHeight, otherCenters, 0, maxAreaRatio);
+  if (first.shape || (first.failure !== 'leak' && first.failure !== 'too-big')) return first;
+  const closed = detectOnce(region, box, imageWidth, imageHeight, otherCenters, BUBBLE_RULE.gapCloseCells, maxAreaRatio);
+  return closed.shape ? closed : first;
+}
+
+/** 예전 호출 방식: 모양만 (못 찾으면 null) */
 export function detectBubbleShape(
   region: PixelRegion,
   box: PixelBox,
@@ -87,15 +137,29 @@ export function detectBubbleShape(
   imageHeight: number,
   otherCenters: { x: number; y: number }[] = [],
 ): BubbleShape | null {
+  return detectBubble(region, box, imageWidth, imageHeight, otherCenters).shape;
+}
+
+const fail = (failure: BubbleFailure): BubbleDetection => ({ shape: null, failure });
+
+function detectOnce(
+  region: PixelRegion,
+  box: PixelBox,
+  imageWidth: number,
+  imageHeight: number,
+  otherCenters: { x: number; y: number }[],
+  closeCells: number,
+  maxAreaRatio: number,
+): BubbleDetection {
   const { data, width, height } = region;
-  if (width < 4 || height < 4) return null;
+  if (width < 4 || height < 4) return fail('tiny');
 
   // 1) 글자 영역 배경 밝기 (상위 10%) — 누렇게 스캔된 종이도 흰색으로 인정
   const bx0 = Math.max(0, Math.floor(box.xmin - region.x));
   const by0 = Math.max(0, Math.floor(box.ymin - region.y));
   const bx1 = Math.min(width, Math.ceil(box.xmax - region.x));
   const by1 = Math.min(height, Math.ceil(box.ymax - region.y));
-  if (bx1 - bx0 < 2 || by1 - by0 < 2) return null;
+  if (bx1 - bx0 < 2 || by1 - by0 < 2) return fail('tiny');
 
   const histogram = new Uint32Array(256);
   let boxPixels = 0;
@@ -110,7 +174,7 @@ export function detectBubbleShape(
     count += histogram[paper];
     if (count >= boxPixels * 0.1) break;
   }
-  if (paper < BUBBLE_RULE.minPaperLuma) return null;
+  if (paper < BUBBLE_RULE.minPaperLuma) return fail('not-paper');
   const whiteThreshold = Math.max(BUBBLE_RULE.minWhiteLuma, paper - BUBBLE_RULE.whiteTolerance);
 
   // 2) 작은 격자로 줄이되 칸 안의 가장 어두운 픽셀을 씀 → 가는 테두리가 끊기지 않음
@@ -133,6 +197,10 @@ export function detectBubbleShape(
     }
   }
 
+  // 틈 메우기: 흰 칸 중 closeCells 안에 어두운 칸이 있으면 막힌 칸으로 봄 (테두리가 두꺼워져 작은 틈이 닫힘)
+  // 채운 모양은 그만큼 안쪽으로 줄지만 칸이 아주 작아(긴 변 320칸) 눈에 띄지 않음. 글자 획 판정은 원래 white를 씀
+  const passable = closeCells > 0 ? closeGaps(white, gw, gh, closeCells) : white;
+
   const gbx0 = Math.floor(bx0 / block);
   const gby0 = Math.floor(by0 / block);
   const gbx1 = Math.max(gbx0 + 1, Math.ceil(bx1 / block));
@@ -147,28 +215,28 @@ export function detectBubbleShape(
   for (let gy = gby0 + insetY; gy < gby1 - insetY; gy++) {
     for (let gx = gbx0 + insetX; gx < gbx1 - insetX; gx++) {
       const i = gy * gw + gx;
-      if (white[i] && !mask[i]) {
+      if (passable[i] && !mask[i]) {
         mask[i] = 1;
         stack.push(i);
       }
     }
   }
-  if (stack.length === 0) return null;
+  if (stack.length === 0) return fail('no-seed');
 
   let filled = stack.length;
   const boxCells = (gbx1 - gbx0) * (gby1 - gby0);
-  const maxCells = boxCells * BUBBLE_RULE.maxAreaRatio;
+  const maxCells = boxCells * maxAreaRatio;
   while (stack.length > 0) {
     const i = stack.pop()!;
     const gx = i % gw;
     const gy = (i - gx) / gw;
     // 탐색 범위 끝에 닿음 = 테두리 없이 번짐
-    if (gx === 0 || gy === 0 || gx === gw - 1 || gy === gh - 1) return null;
+    if (gx === 0 || gy === 0 || gx === gw - 1 || gy === gh - 1) return fail('leak');
     for (const n of [i - 1, i + 1, i - gw, i + gw]) {
-      if (white[n] && !mask[n]) {
+      if (passable[n] && !mask[n]) {
         mask[n] = 1;
         stack.push(n);
-        if (++filled > maxCells) return null;
+        if (++filled > maxCells) return fail('too-big');
       }
     }
   }
@@ -209,13 +277,18 @@ export function detectBubbleShape(
       if (!inside(i)) uncovered++;
     }
   }
-  if (ink > 0 && uncovered / ink > BUBBLE_RULE.maxUncoveredInk) return null;
+  if (ink > 0 && uncovered / ink > BUBBLE_RULE.maxUncoveredInk) {
+    // 둘러싼 영역(흰색 + 그 안에 갇힌 글자 획)이 글자 영역에 비해 작으면 말풍선이 아니라 글자 속 흰 틈만 채운 것
+    let enclosed = 0;
+    for (let i = 0; i < gw * gh; i++) if (inside(i)) enclosed++;
+    return fail(enclosed < boxCells * BUBBLE_RULE.minEnclosureRatio ? 'no-enclosure' : 'uncovered-ink');
+  }
 
   // 6) 다른 말풍선의 글자가 같은 모양에 들어오면 붙은 말풍선으로 번진 것
   for (const c of otherCenters) {
     const gx = Math.floor((c.x - region.x) / block);
     const gy = Math.floor((c.y - region.y) / block);
-    if (gx >= 0 && gy >= 0 && gx < gw && gy < gh && inside(gy * gw + gx)) return null;
+    if (gx >= 0 && gy >= 0 && gx < gw && gy < gh && inside(gy * gw + gx)) return fail('merged');
   }
 
   // 7) 행마다 안쪽의 왼쪽·오른쪽 끝 → 정규화 좌표
@@ -246,15 +319,35 @@ export function detectBubbleShape(
     lastRow = gy;
     spans.push([toNormX(left), toNormX(right + 1)]);
   }
-  if (firstRow < 0 || area === 0) return null;
+  if (firstRow < 0 || area === 0) return fail('no-seed');
 
   return {
-    top: toNormY(firstRow),
-    rowHeight: toNormY(firstRow + 1) - toNormY(firstRow),
-    rows: spans.slice(firstRow, lastRow + 1),
-    centerX: toNormX(sumX / area),
-    centerY: toNormY(sumY / area),
+    shape: {
+      top: toNormY(firstRow),
+      rowHeight: toNormY(firstRow + 1) - toNormY(firstRow),
+      rows: spans.slice(firstRow, lastRow + 1),
+      centerX: toNormX(sumX / area),
+      centerY: toNormY(sumY / area),
+    },
   };
+}
+
+/** 흰 칸 중 radius 칸 안(가로·세로)에 어두운 칸이 있으면 막힌 칸으로 바꾼 사본 */
+function closeGaps(white: Uint8Array, gw: number, gh: number, radius: number): Uint8Array {
+  const out = new Uint8Array(white);
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      if (white[gy * gw + gx]) continue;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const x = gx + dx;
+          const y = gy + dy;
+          if (x >= 0 && y >= 0 && x < gw && y < gh) out[y * gw + x] = 0;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */
@@ -279,11 +372,11 @@ function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
   };
 }
 
-/** 한 페이지의 글자 영역마다 말풍선 모양을 찾습니다. 찾지 못한 항목은 null */
+/** 한 페이지의 글자 영역마다 말풍선 모양을 찾습니다. 찾지 못한 항목은 이유와 함께 */
 export function detectPageBubbleShapes(
   image: HTMLImageElement | HTMLCanvasElement,
   results: { id: string; box_2d: [number, number, number, number] }[],
-): Record<string, BubbleShape | null> {
+): Record<string, BubbleDetection> {
   const reader = createPixelReader(image);
   const { width, height } = reader;
   const boxes = results.map(r => {
@@ -292,10 +385,21 @@ export function detectPageBubbleShapes(
   });
   const centers = boxes.map(b => ({ x: (b.xmin + b.xmax) / 2, y: (b.ymin + b.ymax) / 2 }));
 
-  const shapes: Record<string, BubbleShape | null> = {};
+  const shapes: Record<string, BubbleDetection> = {};
   results.forEach((result, i) => {
+    const others = centers.filter((_, j) => j !== i);
     const region = reader.read(searchRegionFor(boxes[i], width, height));
-    shapes[result.id] = region ? detectBubbleShape(region, boxes[i], width, height, centers.filter((_, j) => j !== i)) : null;
+    let detection = region ? detectBubble(region, boxes[i], width, height, others) : fail('tiny');
+    // 범위 끝까지 번졌으면 말풍선이 범위보다 큰 것일 수 있으니(큰 말풍선에 작은 글자, 홀쭉한 말풍선) 넓게 한 번 더.
+    // 넓게 봐도 번지거나 말풍선이라기엔 너무 넓게 퍼지면(컷 전체 같은 밝은 배경) 말풍선 없는 글자로 봄
+    if (detection.failure === 'leak') {
+      const wide = reader.read(searchRegionFor(boxes[i], width, height, true));
+      if (wide) {
+        const retry = detectBubble(wide, boxes[i], width, height, others, BUBBLE_RULE.wideMaxAreaRatio);
+        if (retry.shape || (retry.failure !== 'leak' && retry.failure !== 'too-big')) detection = retry;
+      }
+    }
+    shapes[result.id] = detection;
   });
   return shapes;
 }

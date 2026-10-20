@@ -1,3 +1,4 @@
+import { NO_BUBBLE_FAILURES, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { getDisplayBox, OVERLAY_STYLE, wrapText, type Box } from './overlayLayout';
 import { stripFurigana } from './prompt';
@@ -48,10 +49,27 @@ export function isLikelySfx(result: Pick<TranslationResult, 'box_2d' | 'original
   return area >= SFX_RULE.minBoxArea && area / Math.max(1, original || translated) >= SFX_RULE.minAreaPerGlyph;
 }
 
-/** 사용자가 직접 고른 방식이 있으면 그것을, 없으면 자동 판별 결과를 씁니다. */
+/** 사용자가 직접 고른 방식이 있으면 그것을, 없으면 자동 판별 결과를 씁니다. (말풍선 모양을 모를 때) */
 export function resolveDisplayMode(result: Pick<TranslationResult, 'box_2d' | 'original_text' | 'translated_text' | 'display_mode'>): DisplayMode {
   if (result.display_mode === 'cover' || result.display_mode === 'tag') return result.display_mode;
   return isLikelySfx(result) ? 'tag' : 'cover';
+}
+
+/** 말풍선이 아예 없는 글자인지 (그림·스크린톤 위 글자, 흰 바탕에 테두리 없이 떠 있는 글자) */
+export const isNoBubble = (detection: BubbleDetection | null | undefined) =>
+  !!detection && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure);
+
+/**
+ * 화면·저장에서 실제로 쓰는 표시 방식. 직접 고른 방식 → 효과음 → 말풍선이 없는 글자 순으로 "작게(옆에 붙임)",
+ * 그 밖은 덮기. 말풍선 없는 글자를 덮으면 그 자리의 그림까지 가리므로 원문은 두고 옆에 번역을 붙임
+ */
+export function effectiveDisplayMode(
+  result: Pick<TranslationResult, 'box_2d' | 'original_text' | 'translated_text' | 'display_mode'>,
+  detection: BubbleDetection | null | undefined,
+): DisplayMode {
+  if (result.display_mode === 'cover' || result.display_mode === 'tag') return result.display_mode;
+  if (isLikelySfx(result) || isNoBubble(detection)) return 'tag';
+  return 'cover';
 }
 
 /**
@@ -114,8 +132,10 @@ export function layoutTags(
   pageHeight: number,
   unit: number,
   measure: (text: string, fontSize: number) => number,
+  /** 표시 방식 (말풍선 모양까지 고려한 effectiveDisplayMode). 없으면 모양을 모를 때의 판별 */
+  modeOf: (result: TranslationResult) => DisplayMode = resolveDisplayMode,
 ): Record<string, TagLayout> {
-  const modes = results.map(resolveDisplayMode);
+  const modes = results.map(modeOf);
   // 덮는 말풍선은 흰 상자 자리, 딱지 대상은 원문 글자 자리를 피해야 할 영역으로 봄
   const areas = results.map((r, i) => boxToRect(modes[i] === 'tag' ? r.box_2d : getDisplayBox(r), pageWidth, pageHeight));
 

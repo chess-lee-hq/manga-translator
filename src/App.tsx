@@ -465,9 +465,10 @@ function App() {
   };
 
   /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */
-  const handleToggleDisplayMode = (imgIndex: number, id: string) => {
+  /** current: 화면에 보이는 방식 (말풍선이 없어 자동으로 "작게"가 된 경우도 덮기로 바꿀 수 있게 화면이 알려 줌) */
+  const handleToggleDisplayMode = (imgIndex: number, id: string, current?: 'cover' | 'tag') => {
     updatePageResults(keyOf(imgIndex), results =>
-      results.map(r => (r.id === id ? { ...r, display_mode: resolveDisplayMode(r) === 'tag' ? 'cover' : 'tag' } : r)),
+      results.map(r => (r.id === id ? { ...r, display_mode: (current ?? resolveDisplayMode(r)) === 'tag' ? 'cover' : 'tag' } : r)),
     );
   };
 

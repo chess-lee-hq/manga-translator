@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bubbleCapacity, fillOutline, layoutBubbleText, wrapToWidths } from './bubbleLayout';
-import { detectBubbleShape, searchRegionFor, type PixelBox, type PixelRegion } from './bubbleShape';
+import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleText, layoutBubbleVertical, planBubble, wrapToWidths } from './bubbleLayout';
+import { detectBubble, detectBubbleShape, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
 const H = 600;
@@ -11,14 +11,14 @@ function canvas(fill = 255) {
   const set = (x: number, y: number, v: number) => {
     if (x >= 0 && y >= 0 && x < W && y < H) luma[Math.floor(y) * W + Math.floor(x)] = v;
   };
-  const ellipse = (cx: number, cy: number, rx: number, ry: number, inside: number, outline: number, gapFrom?: number) => {
+  const ellipse = (cx: number, cy: number, rx: number, ry: number, inside: number, outline: number, gapFrom?: number, gapHalf = 12) => {
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const d = Math.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2);
         if (d <= 1) set(x, y, inside);
         else if (d <= 1 + 3 / Math.min(rx, ry)) {
           // gapFrom: 오른쪽 끝 부분 테두리를 끊음
-          if (gapFrom !== undefined && x > gapFrom && Math.abs(y - cy) < 12) set(x, y, inside);
+          if (gapFrom !== undefined && x > gapFrom && Math.abs(y - cy) < gapHalf) set(x, y, inside);
           else set(x, y, outline);
         }
       }
@@ -52,7 +52,9 @@ function canvas(fill = 255) {
   };
   const detect = (box: PixelBox, others: { x: number; y: number }[] = []) =>
     detectBubbleShape(region(searchRegionFor(box, W, H)), box, W, H, others);
-  return { ellipse, rect, text, detect };
+  const why = (box: PixelBox, others: { x: number; y: number }[] = []) =>
+    detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others).failure;
+  return { ellipse, rect, text, detect, why };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -110,6 +112,49 @@ describe('detectBubbleShape', () => {
     const wide: PixelBox = { xmin: 240, ymin: 250, xmax: 360, ymax: 350 };
     c.text(wide);
     expect(c.detect(wide)).toBeNull();
+  });
+});
+
+describe('detectBubble — 못 찾은 이유', () => {
+  it('그림·스크린톤 위 글자(속이 흰 글자라 배경 검사는 통과해도 둘러싼 흰 영역이 없음)와 흰 바탕에 떠 있는 글자는 말풍선 없음', () => {
+    const tone = canvas(255);
+    tone.ellipse(300, 300, 90, 120, 150, 0);
+    tone.text(textBox);
+    expect(NO_BUBBLE_FAILURES.has(tone.why(textBox)!)).toBe(true);
+
+    const darkTone = canvas(120);
+    darkTone.rect(260, 230, 340, 370, 140);
+    darkTone.rect(285, 260, 315, 340, 20);
+    expect(darkTone.why({ xmin: 270, ymin: 240, xmax: 330, ymax: 360 })).toBe('not-paper');
+
+    const plain = canvas(255);
+    plain.text(textBox);
+    expect(plain.why(textBox)).toBe('leak');
+  });
+
+  it('붙은 말풍선은 merged, 테두리에 걸친 글자는 uncovered-ink (말풍선은 있음)', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 90, 120, 255, 0);
+    c.text(textBox);
+    expect(c.why(textBox, [{ x: 300, y: 205 }])).toBe('merged');
+
+    const d = canvas(130);
+    d.ellipse(300, 300, 50, 70, 255, 0);
+    const wide: PixelBox = { xmin: 240, ymin: 250, xmax: 360, ymax: 350 };
+    d.text(wide);
+    expect(d.why(wide)).toBe('uncovered-ink');
+  });
+
+  it('테두리의 작은 틈은 메우고 모양을 찾는다 (큰 틈은 여전히 포기)', () => {
+    const small = canvas(255);
+    small.ellipse(300, 300, 90, 120, 255, 0, 360, 1.5);
+    small.text(textBox);
+    expect(small.detect(textBox)).not.toBeNull();
+
+    const big = canvas(255);
+    big.ellipse(300, 300, 90, 120, 255, 0, 360, 12);
+    big.text(textBox);
+    expect(big.detect(textBox)).toBeNull();
   });
 });
 
@@ -173,5 +218,55 @@ describe('layoutBubbleText', () => {
     const outline = fillOutline(layout.fill);
     expect(outline.length).toBeGreaterThan(4);
     expect(outline[0][1]).toBeCloseTo(outline.at(-1)![1]);
+  });
+});
+
+/** 세로로 긴 타원 말풍선 (페이지 1000×1000 px 기준, 0~1000 좌표) */
+function tallBubble(): BubbleShape {
+  return ellipseShapeForBox([380, 485, 620, 515], 1000, 1000);
+}
+
+describe('세로쓰기로 말풍선 안에 넣기', () => {
+  it('홀쭉한 말풍선에 가로로 어절을 지키며 안 들어가면 세로로 세운다', () => {
+    const shape = tallBubble();
+    const fit = fitIntoShape('그러니까 그건 절대로 안 된다고 했잖아', shape, 1000, 1000, measure, 12, 20);
+    expect(fit?.direction).toBe('vertical');
+  });
+
+  it('세로 배치는 첫 열이 오른쪽이고 글자를 순서대로 담는다', () => {
+    const layout = layoutBubbleVertical('가나다라마바사아자차', tallBubble(), 1000, 1000, 12, 20)!;
+    expect(layout).not.toBeNull();
+    const xs = layout.columns.map(c => c.cx);
+    expect([...xs].sort((a, b) => b - a)).toEqual(xs);
+    expect(layout.columns.flatMap(c => c.cells.map(cell => cell.text)).join('')).toBe('가나다라마바사아자차');
+  });
+
+  it('넓적한 말풍선은 가로쓰기 그대로', () => {
+    const wide = ellipseShapeForBox([450, 350, 550, 650], 1000, 1000);
+    expect(fitIntoShape('짧은 대사', wide, 1000, 1000, measure, 12, 20)?.direction).toBe('horizontal');
+  });
+});
+
+describe('planBubble — 덮는 말풍선 배치 고르기', () => {
+  const result = (over: Record<string, unknown> = {}) => ({
+    box_2d: [440, 420, 560, 580] as [number, number, number, number], translated_text: '오늘은 날씨가 좋네', original_text: '今日はいい天気だね', ...over,
+  });
+
+  it('테두리를 못 딴 말풍선(merged 등)은 글자 영역을 감싸는 타원에 넣는다', () => {
+    const plan = planBubble(result(), { shape: null, failure: 'merged' }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind === 'fit' && plan.source).toBe('ellipse');
+  });
+
+  it('말풍선 없는 글자·모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {
+    expect(planBubble(result(), { shape: null, failure: 'not-paper' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
+    expect(planBubble(result(), undefined, 1000, 1000, measure, 12, 20).kind).toBe('box');
+    expect(planBubble(result({ fit_bubble: false }), { shape: null, failure: 'merged' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
+  });
+
+  it('타원은 원문 글자 영역 네 모서리를 모두 덮는다', () => {
+    const shape = ellipseShapeForBox([400, 400, 600, 600], 1000, 1000);
+    const corner = shape.rows[Math.floor((400 - shape.top) / shape.rowHeight)];
+    expect(corner![0]).toBeLessThanOrEqual(400);
+    expect(corner![1]).toBeGreaterThanOrEqual(600);
   });
 });

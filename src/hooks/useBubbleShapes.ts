@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { detectPageBubbleShapes, type BubbleShape } from '../lib/bubbleShape';
+import { detectPageBubbleShapes, type BubbleDetection } from '../lib/bubbleShape';
 import { loadImage } from '../lib/imageUtils';
 import type { TranslationResult } from '../types';
 
 /** 페이지 이미지 → (그 페이지 박스 배치 → 말풍선 모양). 박스가 바뀌면 그 페이지만 다시 계산 */
-const cache = new Map<string, { signature: string; boxes: Record<string, string>; shapes: Record<string, BubbleShape | null> }>();
+const cache = new Map<string, { signature: string; boxes: Record<string, string>; shapes: Record<string, BubbleDetection> }>();
 const MAX_CACHED_PAGES = 40;
 
 const boxKey = (result: TranslationResult) => result.box_2d.map(Math.round).join(',');
@@ -12,7 +12,7 @@ const signatureOf = (results: TranslationResult[]) => results.map(r => `${r.id}:
 
 /**
  * 보이는 페이지들의 원본 말풍선 모양을 찾아 둡니다. (페이지 이미지 픽셀을 읽는 작업이라 화면 표시 뒤 비동기로 계산)
- * 아직 계산 중이면 undefined, 찾지 못했으면 null을 돌려줍니다.
+ * 아직 계산 중이면 undefined, 계산했으면 { shape } 또는 { shape: null, failure: 못 찾은 이유 }를 돌려줍니다.
  */
 export function useBubbleShapes(pages: { src: string; results: TranslationResult[] }[], enabled: boolean) {
   const [, setVersion] = useState(0);
@@ -30,7 +30,7 @@ export function useBubbleShapes(pages: { src: string; results: TranslationResult
         const image = await loadImage(page.src).catch(() => null);
         if (cancelled) return;
         const signature = signatureOf(page.results);
-        let shapes: Record<string, BubbleShape | null> = {};
+        let shapes: Record<string, BubbleDetection> = {};
         try {
           shapes = image ? detectPageBubbleShapes(image, page.results) : {};
         } catch (error) {
@@ -39,7 +39,7 @@ export function useBubbleShapes(pages: { src: string; results: TranslationResult
         cache.delete(page.src);
         cache.set(page.src, { signature, boxes: Object.fromEntries(page.results.map(r => [r.id, boxKey(r)])), shapes });
         if (cache.size > MAX_CACHED_PAGES) cache.delete(cache.keys().next().value!);
-        const found = Object.values(shapes).filter(Boolean).length;
+        const found = Object.values(shapes).filter(d => d.shape).length;
         console.debug(`[bubble] 말풍선 모양 ${found}/${page.results.length}개 찾음`);
         // 페이지마다 바로 반영하고 다음 페이지 전에 화면이 그려질 틈을 줌
         setVersion(v => v + 1);
@@ -52,7 +52,7 @@ export function useBubbleShapes(pages: { src: string; results: TranslationResult
     // pending은 매 렌더 새 배열이라, 실제 계산 대상이 바뀌었을 때(pendingKey)만 다시 실행
   }, [pendingKey]);
 
-  return (src: string, result: TranslationResult): BubbleShape | null | undefined => {
+  return (src: string, result: TranslationResult): BubbleDetection | undefined => {
     const entry = cache.get(src);
     // 박스를 옮긴 직후에는 옛 자리의 모양을 쓰지 않도록 박스가 같을 때만 돌려줌
     if (!entry || entry.boxes[result.id] !== boxKey(result)) return undefined;

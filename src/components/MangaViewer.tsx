@@ -2,13 +2,13 @@ import { Download } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { useBubbleShapes } from '../hooks/useBubbleShapes';
-import { layoutTags, resolveDisplayMode, TAG_STYLE, wantsBubbleFit } from '../lib/bubbleDisplay';
-import { BUBBLE_FIT, bubbleCapacity, layoutBubbleText, type BubbleTextLayout } from '../lib/bubbleLayout';
-import type { BubbleShape } from '../lib/bubbleShape';
+import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
+import { BUBBLE_FIT, bubbleCapacity, planBubble, type BubblePlan } from '../lib/bubbleLayout';
+import type { BubbleDetection } from '../lib/bubbleShape';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { BubbleFitText } from './BubbleFitText';
 import { VerticalBubbleText } from './VerticalBubbleText';
-import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, UploadedImage, ViewMode } from '../types';
+import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, TranslationResult, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
 
 interface MangaViewerProps {
@@ -23,7 +23,8 @@ interface MangaViewerProps {
   hoveredBubble: HoveredBubble | null;
   onHoverBubble: (bubble: HoveredBubble | null) => void;
   onBoxChange: (imgIndex: number, id: string, box: Box2d) => void;
-  onToggleDisplayMode: (imgIndex: number, id: string) => void;
+  /** current: 지금 화면에 보이는 표시 방식 (말풍선이 없어 자동으로 "작게"가 된 경우도 반대로 바꾸도록) */
+  onToggleDisplayMode: (imgIndex: number, id: string, current?: DisplayMode) => void;
   onSetTextDirection: (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => void;
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   onSetTagPosition: (imgIndex: number, id: string, pos: [number, number] | null) => void;
@@ -44,7 +45,9 @@ interface MangaViewerProps {
 }
 
 /** 말풍선 모양별 배치 결과 (화면이 다시 그려질 때마다 배치를 새로 찾지 않도록) */
-const bubbleLayoutCache = new WeakMap<BubbleShape, Map<string, BubbleTextLayout | null>>();
+const bubblePlanCache = new WeakMap<BubbleDetection, Map<string, BubblePlan>>();
+/** 페이지마다 마지막으로 남긴 배치 요약 (같은 내용을 반복해서 찍지 않게) */
+const loggedPlacement = new Map<string, string>();
 
 interface DrawingBox {
   imgIndex: number;
@@ -81,19 +84,21 @@ export function MangaViewer({
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // 원본 말풍선 모양 (페이지 픽셀을 읽어 비동기로 계산) + 모양·글·페이지 크기가 같으면 배치 결과를 재사용
-  const shapeOf = useBubbleShapes(
+  const detectionOf = useBubbleShapes(
     visibleIndices.filter(i => images[i]).map(i => ({ src: images[i].src, results: translationCache[getCacheKey(images[i].file)] || [] })),
     scriptStyle === 'overlay',
   );
-  const bubbleLayoutFor = (shape: BubbleShape, text: string, pageWidth: number, pageHeight: number) => {
-    let byKey = bubbleLayoutCache.get(shape);
+  /** 덮는 말풍선의 배치 (말풍선 모양 → 타원 → 네모 상자). 모양·글·페이지 크기·설정이 같으면 재사용 */
+  const planFor = (result: TranslationResult, detection: BubbleDetection | undefined, pageWidth: number, pageHeight: number): BubblePlan => {
+    if (!detection) return { kind: 'box' };
+    let byKey = bubblePlanCache.get(detection);
     if (!byKey) {
       byKey = new Map();
-      bubbleLayoutCache.set(shape, byKey);
+      bubblePlanCache.set(detection, byKey);
     }
-    const key = `${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${text}`;
+    const key = `${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
     if (!byKey.has(key)) {
-      byKey.set(key, layoutBubbleText(text, shape, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, OVERLAY_STYLE.maxFontPx * scale));
+      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, OVERLAY_STYLE.maxFontPx * scale));
     }
     return byKey.get(key)!;
   };
@@ -159,8 +164,11 @@ export function MangaViewer({
                 const isDrawingHere = drawingBox?.imgIndex === imgIndex;
                 const pageHeight = Math.max(1, (viewportHeight - VIEWER_CHROME_PX) * scale);
                 const pageWidth = (pageHeight * img.width) / img.height;
+                // 표시 방식: 직접 고른 방식 → 효과음 → 말풍선 없는 글자는 "작게(옆에 붙임)" (이미지 저장과 같은 규칙)
+                const modeOf = (result: TranslationResult) => effectiveDisplayMode(result, detectionOf(img.src, result));
                 // 작은 딱지 위치는 이미지 저장과 같은 계산(lib/bubbleDisplay.ts)으로 페이지 px 기준 배치
-                const tagLayouts = scriptStyle === 'overlay' ? layoutTags(results, pageWidth, pageHeight, scale, measureText) : {};
+                const tagLayouts = scriptStyle === 'overlay' ? layoutTags(results, pageWidth, pageHeight, scale, measureText, modeOf) : {};
+                if (scriptStyle === 'overlay') logPlacement(img.src, imgIndex, results, r => detectionOf(img.src, r), modeOf, r => planFor(r, detectionOf(img.src, r), pageWidth, pageHeight));
 
                 return (
                   <div key={imgIndex} className="relative shadow-2xl bg-white select-none flex-shrink-0 group">
@@ -232,7 +240,8 @@ export function MangaViewer({
                         const isHovered = hoveredBubble?.imageIndex === imgIndex && hoveredBubble?.bubbleIndex === bubbleIndex;
 
                         if (scriptStyle === 'overlay') {
-                          if (resolveDisplayMode(result) === 'tag') {
+                          const displayMode = modeOf(result);
+                          if (displayMode === 'tag') {
                             // 효과음 등: 원문은 그대로 보이게 두고, 원문 영역 바깥에 작은 딱지
                             const tag = tagLayouts[result.id];
                             const tagInner = tag && (
@@ -267,7 +276,7 @@ export function MangaViewer({
                                     initialBox={result.box_2d}
                                     onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
                                     displayMode="tag"
-                                    onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                    onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id, displayMode)}
                                     onDelete={() => onDelete(imgIndex, result.id)}
                                     onReread={() => onReread(imgIndex, result.id)}
                                   >
@@ -314,13 +323,15 @@ export function MangaViewer({
                             );
                           }
 
-                          // 원본 말풍선 모양에 맞춰 넣기 (찾지 못했거나 최소 글자 크기·흰 영역 확장으로도 넘치면 둥근 사각형으로)
-                          const shape = shapeOf(img.src, result);
+                          // 원본 말풍선 모양(또는 테두리를 못 딴 말풍선은 타원)에 맞춰 넣기 — 가로 → 홀쭉하면 세로 → 안 되면 둥근 사각형
+                          const detection = detectionOf(img.src, result);
+                          const shape = detection?.shape ?? null;
                           const fitWanted = wantsBubbleFit(result);
-                          const bubbleLayout = fitWanted && shape ? bubbleLayoutFor(shape, result.translated_text, pageWidth, pageHeight) : null;
+                          const plan = planFor(result, detection, pageWidth, pageHeight);
+                          const bubbleLayout = plan.kind === 'fit' ? plan.fit : null;
                           // 말풍선을 찾았는데 번역문이 길어 넘쳤거나 흰 영역을 넓혀야 했던 경우 → 영역 수정에서 표시하고 "짧게 다시 번역" 제안
                           const overflowNote = fitWanted && shape
-                            ? (!bubbleLayout ? '번역문이 길어 말풍선에 다 들어가지 않아 네모 상자로 표시 중' : bubbleLayout.expanded ? '번역문이 길어 흰 영역을 말풍선 밖으로 조금 넓혔음' : null)
+                            ? (!bubbleLayout ? '번역문이 길어 말풍선에 다 들어가지 않아 네모 상자로 표시 중' : bubbleLayout.layout.expanded ? '번역문이 길어 흰 영역을 말풍선 밖으로 조금 넓혔음' : null)
                             : null;
                           const bubbleEditProps = shape ? {
                             bubbleFit: fitWanted,
@@ -334,7 +345,7 @@ export function MangaViewer({
                           } : {};
 
                           if (bubbleLayout) {
-                            const fitted = <BubbleFitText layout={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />;
+                            const fitted = <BubbleFitText fit={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />;
                             if (!isEditingBoxes) return <Fragment key={result.id}>{fitted}</Fragment>;
                             return (
                               <Fragment key={result.id}>
@@ -343,7 +354,7 @@ export function MangaViewer({
                                   initialBox={[top0, left0, bottom0, right0]}
                                   onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
                                   displayMode="cover"
-                                  onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                  onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id, displayMode)}
                                   onDelete={() => onDelete(imgIndex, result.id)}
                                   onReread={() => onReread(imgIndex, result.id)}
                                   {...bubbleEditProps}
@@ -399,7 +410,7 @@ export function MangaViewer({
                                 initialBox={[top0, left0, bottom0, right0]}
                                 onChange={(newBox: Box2d) => onBoxChange(imgIndex, result.id, newBox)}
                                 displayMode="cover"
-                                onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id)}
+                                onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id, displayMode)}
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
                                 onDelete={() => onDelete(imgIndex, result.id)}
@@ -459,4 +470,41 @@ export function MangaViewer({
       {footer}
     </div>
   );
+}
+
+/**
+ * [배치 통계] 페이지마다 번역문을 어떻게 놓았는지 콘솔에 요약 (말풍선 안착률을 보고 다음 개선 순서를 정하려고).
+ * 말풍선 모양 계산이 끝난 페이지만, 내용이 바뀌었을 때만 한 번 찍음
+ */
+function logPlacement(
+  src: string,
+  imgIndex: number,
+  results: TranslationResult[],
+  detectionOf: (result: TranslationResult) => BubbleDetection | undefined,
+  modeOf: (result: TranslationResult) => DisplayMode,
+  planOf: (result: TranslationResult) => BubblePlan,
+) {
+  if (results.length === 0 || results.some(r => !detectionOf(r))) return;
+  const counts = { 말풍선가로: 0, 말풍선세로: 0, 타원: 0, 네모상자: 0, 말풍선없음옆에: 0, 효과음등작게: 0 };
+  const failures: Record<string, number> = {};
+  for (const result of results) {
+    const detection = detectionOf(result)!;
+    if (!detection.shape) failures[detection.failure] = (failures[detection.failure] ?? 0) + 1;
+    if (modeOf(result) === 'tag') {
+      if (!result.display_mode && !detection.shape && (detection.failure === 'not-paper' || detection.failure === 'leak')) counts.말풍선없음옆에++;
+      else counts.효과음등작게++;
+      continue;
+    }
+    const plan = planOf(result);
+    if (plan.kind === 'box') counts.네모상자++;
+    else if (plan.source === 'ellipse') counts.타원++;
+    else if (plan.fit.direction === 'vertical') counts.말풍선세로++;
+    else counts.말풍선가로++;
+  }
+  const summary = Object.entries(counts).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(' · ');
+  const failureText = Object.entries(failures).map(([k, n]) => `${k} ${n}`).join(', ');
+  const line = `${summary}${failureText ? ` (모양 못 찾은 이유: ${failureText})` : ''}`;
+  if (loggedPlacement.get(src) === line) return;
+  loggedPlacement.set(src, line);
+  console.info(`[배치] ${imgIndex + 1}쪽 ${results.length}개 — ${line}`);
 }
