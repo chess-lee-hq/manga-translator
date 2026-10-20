@@ -26,6 +26,27 @@ function writeFlag(key: string, value: boolean) {
   }
 }
 
+/**
+ * 덮어쓰기 글자 굵기: 보통(600, 기본) / 굵게(800, 예전 기본).
+ * 화면·이미지 저장이 같은 값을 쓰고, 바꾸면 바로 다시 그리도록 구독할 수 있음
+ */
+const BOLD_TEXT_KEY = 'manga-overlay-bold';
+export const OVERLAY_WEIGHT = { normal: 600, bold: 800 } as const;
+const fontListeners = new Set<() => void>();
+let fontVersion = 0;
+export const isOverlayBold = () => readFlag(BOLD_TEXT_KEY, false);
+export const overlayFontWeight = () => (isOverlayBold() ? OVERLAY_WEIGHT.bold : OVERLAY_WEIGHT.normal);
+export function setOverlayBold(bold: boolean) {
+  writeFlag(BOLD_TEXT_KEY, bold);
+  fontVersion++;
+  fontListeners.forEach(listener => listener());
+}
+export function subscribeOverlayFont(listener: () => void) {
+  fontListeners.add(listener);
+  return () => fontListeners.delete(listener);
+}
+export const getOverlayFontVersion = () => fontVersion;
+
 /** 시험해 보려고 기본으로 켜 둠. 효과가 없으면 끄거나 기능째 걷어냄 */
 export const isSceneThumbnailEnabled = () => readFlag(SCENE_KEY, true);
 export const setSceneThumbnailEnabled = (enabled: boolean) => writeFlag(SCENE_KEY, enabled);

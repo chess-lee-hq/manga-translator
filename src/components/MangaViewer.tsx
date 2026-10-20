@@ -1,11 +1,12 @@
 import { Download } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
 import { BUBBLE_FIT, bubbleCapacity, planBubble, type BubblePlan } from '../lib/bubbleLayout';
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
 import { BubbleFitText } from './BubbleFitText';
 import { VerticalBubbleText } from './VerticalBubbleText';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, TranslationResult, UploadedImage, ViewMode } from '../types';
@@ -82,6 +83,8 @@ export function MangaViewer({
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const { measure: measureText } = useMemo(() => createTextMeasurer(getComputedStyle(document.documentElement).fontFamily), []);
+  // 글자 굵기 옵션을 바꾸면 폭이 달라지므로 다시 배치 (배치 캐시 키에도 넣음)
+  const fontVersion = useSyncExternalStore(subscribeOverlayFont, getOverlayFontVersion);
 
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -103,9 +106,9 @@ export function MangaViewer({
       byKey = new Map();
       bubblePlanCache.set(detection, byKey);
     }
-    const key = `${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
+    const key = `${fontVersion}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
     if (!byKey.has(key)) {
-      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, OVERLAY_STYLE.maxFontPx * scale));
+      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, BUBBLE_FIT.maxFontPx * scale));
     }
     return byKey.get(key)!;
   };

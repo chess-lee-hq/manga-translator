@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Loader2, Settings2, Trash2, X } from 'lucide-react';
 import { deleteOcrModel, getOcrStatus, isOcrModelDownloaded, loadOcrModel, subscribeOcrStatus } from '../lib/mangaOcr';
 import { OCR_MODEL_APPROX_MB } from '../lib/mangaOcrConfig';
-import { isSceneThumbnailEnabled, setSceneThumbnailEnabled } from '../lib/translationOptions';
+import { isOverlayBold, isSceneThumbnailEnabled, setOverlayBold, setSceneThumbnailEnabled } from '../lib/translationOptions';
 
 interface TranslationOptionsModalProps {
   /** 로컬 OCR 교차 검증을 켰는지 (App이 들고 있어야 켜자마자 검증이 시작됨) */
@@ -25,9 +25,10 @@ function OptionRow({ checked, onChange, title, children }: { checked: boolean; o
   );
 }
 
-/** 번역 요청 방식을 바꾸는 옵션들 (다음 번역 요청부터 적용) */
+/** 번역 요청 방식을 바꾸는 옵션들 (다음 번역 요청부터 적용) + 덮어쓰기 글자 굵기(바로 적용) */
 export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }: TranslationOptionsModalProps) {
   const [scene, setScene] = useState(isSceneThumbnailEnabled);
+  const [bold, setBold] = useState(isOverlayBold);
   const ocrStatus = useSyncExternalStore(subscribeOcrStatus, getOcrStatus);
   const [downloaded, setDownloaded] = useState<boolean | null>(null);
 
@@ -69,6 +70,14 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
 
         <div className="space-y-2">
           <OptionRow
+            checked={bold}
+            onChange={next => { setOverlayBold(next); setBold(next); }}
+            title="굵은 글씨로 덮어쓰기"
+          >
+            끄면(기본) 단행본처럼 중간 굵기로, 켜면 예전처럼 아주 굵게 씁니다. 화면과 이미지 저장에 바로 적용되고 번역 요청과는 상관없습니다.
+          </OptionRow>
+
+          <OptionRow
             checked={scene}
             onChange={next => { setSceneThumbnailEnabled(next); setScene(next); }}
             title="장면 이미지 함께 보내기 (실험)"
@@ -99,7 +108,7 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
             </button>
           )}
         </div>
-        <p className="text-[11px] text-gray-400 mt-3">다음 번역 요청부터 적용됩니다. 이미 번역된 페이지는 그대로입니다.</p>
+        <p className="text-[11px] text-gray-400 mt-3">글자 굵기 외의 옵션은 다음 번역 요청부터 적용됩니다. 이미 번역된 페이지는 그대로입니다.</p>
       </div>
     </div>
   );

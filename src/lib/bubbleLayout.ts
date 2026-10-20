@@ -17,11 +17,16 @@ import { columnUnits, fillColumns, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, 
 export const BUBBLE_FIT = {
   /** 말풍선 맞춤에서 허용하는 가장 작은 글자 (배율 100% 화면 px). 이보다 작아져야 하면 맞춤을 포기 */
   minFontPx: 12,
+  /**
+   * 말풍선 맞춤에서 쓰는 가장 큰 글자 (배율 100% 화면 px). 네모 상자(28)보다 낮게 잡아
+   * 큰 말풍선에서도 글자가 꽉 차지 않고 말풍선마다 크기가 비슷하게 (단행본처럼 여백이 남음)
+   */
+  maxFontPx: 22,
   /** 줄 간격 (기본 → 조인 값) */
   lineHeights: [OVERLAY_STYLE.lineHeight, 1.02],
   /** 말풍선 테두리와 글자 사이 여백 (글자 크기 대비) */
-  insetXEm: 0.3,
-  insetYEm: 0.25,
+  insetXEm: 0.5,
+  insetYEm: 0.4,
   /** 글자 크기를 몇 단계로 나눠 시도할지 */
   fontSteps: 24,
   /** 가로로 안 들어갈 때 세로쓰기를 시도할 만큼 홀쭉한 말풍선 (높이 ÷ 너비) */

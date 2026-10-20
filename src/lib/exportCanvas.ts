@@ -197,7 +197,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   for (const result of results) {
     if (modeOf(result) === 'tag') continue;
 
-    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, maxFont);
+    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, BUBBLE_FIT.maxFontPx * options.viewScale * cssPx);
     if (plan.kind === 'fit') {
       drawBubbleFit(ctx, plan.fit, setFont);
       for (const extra of plan.more ?? []) drawBubbleFit(ctx, extra.fit, setFont);

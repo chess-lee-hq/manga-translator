@@ -1,4 +1,5 @@
 import type { TranslationResult } from './gemini';
+import { overlayFontWeight } from './translationOptions';
 
 /**
  * 덮어쓰기 말풍선 규칙. 화면(MangaViewer)과 이미지 저장(exportCanvas)이 같은 값을 씁니다.
@@ -8,7 +9,10 @@ export const OVERLAY_STYLE = {
   /** 글자 크기 하한·상한 (뷰어 배율에 비례) */
   minFontPx: 10,
   maxFontPx: 28,
-  fontWeight: 800,
+  /** 글자 굵기 (번역 옵션의 "굵은 글씨"에 따라 600 또는 800) */
+  get fontWeight(): number {
+    return overlayFontWeight();
+  },
   lineHeight: 1.15,
   letterSpacingEm: -0.02,
   /** 흰 상자 안쪽 여백·모서리·그림자 (뷰어 배율과 무관) */
