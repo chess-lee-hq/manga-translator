@@ -342,7 +342,10 @@ export function MangaViewer({
                             result.id,
                             bubbleCapacity(result.translated_text, area, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale),
                           ) : undefined;
-                          const overflowNote = bubbleLayout?.layout.overflow ? '번역문이 길어 말풍선 밖으로 넘침' : null;
+                          const extraFits = plan.kind === 'fit' ? plan.more ?? [] : [];
+                          const overflowNote = bubbleLayout && [bubbleLayout, ...extraFits.map(m => m.fit)].some(f => f.layout.overflow)
+                            ? '번역문이 길어 말풍선 밖으로 넘침'
+                            : null;
                           const bubbleEditProps = area ? {
                             bubbleFit: fitWanted,
                             onToggleBubbleFit: () => onSetBubbleFit(imgIndex, result.id, !fitWanted),
@@ -354,6 +357,7 @@ export function MangaViewer({
                             const fitted = (
                               <>
                                 <BubbleFitText fit={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />
+                                {extraFits.map((m, k) => <BubbleFitText key={k} fit={m.fit} pageWidth={pageWidth} pageHeight={pageHeight} />)}
                                 {overflowNote && !isEditingBoxes && (
                                   <button
                                     type="button"
@@ -506,7 +510,7 @@ function logPlacement(
   planOf: (result: TranslationResult) => BubblePlan,
 ) {
   if (results.length === 0 || results.some(r => !detectionOf(r))) return;
-  const counts = { 말풍선가로: 0, 말풍선세로: 0, 원문만지움: 0, 넘침: 0, 네모상자: 0, 말풍선없음옆에: 0, 효과음등작게: 0 };
+  const counts = { 말풍선가로: 0, 말풍선세로: 0, 원문만지움: 0, 연리지나눔: 0, 넘침: 0, 네모상자: 0, 말풍선없음옆에: 0, 효과음등작게: 0 };
   const failures: Record<string, number> = {};
   for (const result of results) {
     const detection = detectionOf(result)!;
@@ -521,7 +525,8 @@ function logPlacement(
       counts.네모상자++;
       continue;
     }
-    if (plan.fit.layout.overflow) counts.넘침++;
+    if ([plan.fit, ...(plan.more ?? []).map(m => m.fit)].some(f => f.layout.overflow)) counts.넘침++;
+    if (plan.more?.length) counts.연리지나눔++;
     if (plan.source === 'erase') counts.원문만지움++;
     else if (plan.fit.direction === 'vertical') counts.말풍선세로++;
     else counts.말풍선가로++;

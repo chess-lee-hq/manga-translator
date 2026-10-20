@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, wrapToWidths } from './bubbleLayout';
+import { bubbleCapacity, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, splitTranslation, wrapToWidths } from './bubbleLayout';
 import { detectBubble, detectBubbleShape, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
@@ -58,7 +58,9 @@ function canvas(fill = 255) {
     detectBubbleShape(region(searchRegionFor(box, W, H, wide)), box, W, H, others);
   const why = (box: PixelBox, others: PixelBox[] = []) =>
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others).failure;
-  return { ellipse, disc, rect, text, detect, why };
+  const full = (box: PixelBox, others: PixelBox[] = []) =>
+    detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others);
+  return { ellipse, disc, rect, text, detect, why, full };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -151,6 +153,47 @@ describe('detectBubbleShape', () => {
     expect(widthOf(loose)).toBeLessThan(150);
     const inner = c.detect({ xmin: 270, ymin: 250, xmax: 330, ymax: 350 })!;
     expect(widthOf(inner)).toBeLessThan(150);
+  });
+
+  it('글자 영역 하나가 이어진 말풍선 두 칸에 걸치면 칸별로 나눈다 (오른쪽 칸 먼저)', () => {
+    const c = canvas(130);
+    c.ellipse(230, 300, 90, 80, 255, 0);
+    c.ellipse(370, 300, 90, 80, 255, 0);
+    c.disc(230, 300, 90, 80, 255);
+    c.disc(370, 300, 90, 80, 255);
+    const left: PixelBox = { xmin: 185, ymin: 260, xmax: 255, ymax: 340 };
+    const right: PixelBox = { xmin: 345, ymin: 260, xmax: 415, ymax: 340 };
+    c.text(left);
+    c.text(right);
+    const merged: PixelBox = { xmin: 185, ymin: 260, xmax: 415, ymax: 340 };
+    const detection = c.full(merged);
+    expect(detection.shape).not.toBeNull();
+    const lobes = detection.shape ? detection.lobes : undefined;
+    expect(lobes).toHaveLength(2);
+    const px = (v: number) => (v / 1000) * W;
+    expect(px(lobes![0].shape.centerX)).toBeGreaterThan(330);
+    expect(px(lobes![1].shape.centerX)).toBeLessThan(270);
+    expect(lobes![0].inkShare).toBeCloseTo(0.5, 1);
+    expect(lobes![0].box.xmin).toBeGreaterThan(300);
+    expect(lobes![1].box.xmax).toBeLessThan(300);
+  });
+
+  it('둥근 말풍선 하나에 글자 묶음이 둘이어도(잘록한 목이 없음) 나누지 않는다', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 160, 110, 255, 0);
+    c.text({ xmin: 200, ymin: 260, xmax: 250, ymax: 340 });
+    c.text({ xmin: 340, ymin: 260, xmax: 390, ymax: 340 });
+    const detection = c.full({ xmin: 200, ymin: 260, xmax: 390, ymax: 340 });
+    expect(detection.shape).not.toBeNull();
+    expect(detection.shape ? detection.lobes : 'x').toBeUndefined();
+  });
+
+  it('보통 세로쓰기 말풍선(글자 줄 간격이 고름)은 나누지 않는다', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 90, 120, 255, 0);
+    c.text(textBox);
+    const detection = c.full(textBox);
+    expect(detection.shape ? detection.lobes : 'x').toBeUndefined();
   });
 
   it('멀리 있는 다른 글자는 영향을 주지 않는다', () => {
@@ -307,6 +350,19 @@ describe('세로쓰기로 말풍선 안에 넣기', () => {
   });
 });
 
+describe('splitTranslation — 이어진 말풍선 두 칸에 번역문 나누기', () => {
+  it('원문 비율에 가장 가까운 문장 끝에서 나눈다', () => {
+    expect(splitTranslation('고맙습니다. 하지만 제 결심은 변함없습니다. 제 존재가 일본에 도움이 안 된다면', [0.47, 0.53]))
+      .toEqual(['고맙습니다. 하지만 제 결심은 변함없습니다.', '제 존재가 일본에 도움이 안 된다면']);
+    expect(splitTranslation('어디 가? 금방 올게!', [0.5, 0.5])).toEqual(['어디 가?', '금방 올게!']);
+  });
+
+  it('문장이 하나뿐이거나 비율이 크게 어긋나면 나누지 않는다', () => {
+    expect(splitTranslation('제 존재가 일본에 도움이 안 된다면', [0.5, 0.5])).toBeNull();
+    expect(splitTranslation('응. 그럼 내일 아침 일찍 역 앞에서 다시 만나서 같이 가자', [0.5, 0.5])).toBeNull();
+  });
+});
+
 describe('planBubble — 덮는 말풍선 배치 고르기', () => {
   const result = (over: Record<string, unknown> = {}) => ({
     box_2d: [440, 420, 560, 580] as [number, number, number, number], translated_text: '오늘은 날씨가 좋네', original_text: '今日はいい天気だね', ...over,
@@ -329,6 +385,24 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     expect(plan.kind).toBe('fit');
     expect(plan.kind === 'fit' && plan.source).toBe('bubble');
     expect(plan.kind === 'fit' && plan.fit.layout.overflow).toBe(true);
+  });
+
+  it('이어진 말풍선 두 칸에 하나로 번역된 글은 나눠서 칸마다 넣는다', () => {
+    const lobeA = ellipseShapeForBox([420, 600, 580, 760], 1000, 1000);
+    const lobeB = ellipseShapeForBox([420, 240, 580, 400], 1000, 1000);
+    const whole = ellipseShapeForBox([420, 240, 580, 760], 1000, 1000);
+    const lobes = [
+      { shape: lobeA, inkShare: 0.5, box: { xmin: 600, ymin: 420, xmax: 760, ymax: 580 } },
+      { shape: lobeB, inkShare: 0.5, box: { xmin: 240, ymin: 420, xmax: 400, ymax: 580 } },
+    ];
+    const plan = planBubble(result({ translated_text: '어디 가는 거야? 금방 올게.' }), { shape: whole, lobes }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind).toBe('fit');
+    if (plan.kind !== 'fit') return;
+    expect(plan.more).toHaveLength(1);
+    const textOf = (fit: typeof plan.fit) => (fit.direction === 'horizontal' ? fit.layout.lines.map(l => l.text).join(' ') : '');
+    expect(textOf(plan.fit)).toBe('어디 가는 거야?');
+    expect(textOf(plan.more![0].fit)).toBe('금방 올게.');
+    expect(plan.fit.direction === 'horizontal' && plan.fit.layout.lines[0].cx).toBeGreaterThan(600);
   });
 
   it('말풍선 없는 글자·모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {

@@ -516,9 +516,38 @@ export type BubblePlan =
     source: 'bubble' | 'erase';
     /** 글자를 배치한 영역 ("짧게 다시 번역"의 글자 수 계산용) */
     area: BubbleShape;
+    /** 이어진 말풍선(연리지)의 나머지 칸: 번역문을 나눠 칸마다 따로 넣음 */
+    more?: { fit: BubbleFit; area: BubbleShape }[];
   }
   /** 모양을 쓸 대상이 아님 (직접 옮긴 박스, 맞춤을 끈 박스, 모양 계산 전) → 네모 상자 */
   | { kind: 'box' };
+
+/** 번역문을 나눌 수 있는 자리: 문장부호(. ! ? … ~ 。) 뒤, 줄바꿈 */
+const SENTENCE_END = /[.!?…~。！？]+["'」』)\]]*\s*|\n+/g;
+/** 칸별 원문 비율과 나눈 번역문 비율이 이만큼 넘게 다르면 억지로 나누지 않음 */
+const SPLIT_MAX_DRIFT = 0.25;
+
+/**
+ * 이어진 말풍선 두 칸에 하나로 번역된 글을 문장 끝에서 나눕니다. 원문 글자가 칸에 나뉜 비율(shares)에 가장 가까운 자리.
+ * 문장이 하나뿐이거나 비율이 크게 어긋나면 null (나누지 않고 전체 모양에 넣음). 두 칸까지만
+ */
+export function splitTranslation(text: string, shares: number[]): string[] | null {
+  if (shares.length !== 2) return null;
+  const trimmed = text.trim();
+  const weight = (t: string) => t.replace(/\s+/g, '').length;
+  const total = weight(trimmed);
+  if (total === 0) return null;
+  let best: { at: number; drift: number } | null = null;
+  for (const match of trimmed.matchAll(SENTENCE_END)) {
+    const at = match.index! + match[0].length;
+    if (at >= trimmed.length) continue;
+    const drift = Math.abs(weight(trimmed.slice(0, at)) / total - shares[0]);
+    if (!best || drift < best.drift) best = { at, drift };
+  }
+  if (!best || best.drift > SPLIT_MAX_DRIFT) return null;
+  const parts = [trimmed.slice(0, best.at).trim(), trimmed.slice(best.at).trim()];
+  return parts.every(Boolean) ? parts : null;
+}
 
 /** 모양 안에 넣기 → 안 되면 최소 글자로 넘치게 */
 function fitOrOverflow(text: string, shape: BubbleShape, pageWidth: number, pageHeight: number, measure: Measure, minFont: number, maxFont: number): BubbleFit | null {
@@ -546,6 +575,21 @@ export function planBubble(
   if (!detection || !wantsBubbleFit(result)) return { kind: 'box' };
   const text = result.translated_text ?? '';
   if (detection.shape) {
+    // 이어진 말풍선 두 칸에 걸친 글자 영역(예전에 하나로 번역된 것): 번역문을 문장 끝에서 나눠 칸마다
+    const lobes = detection.lobes;
+    const parts = lobes ? splitTranslation(text, lobes.map(l => l.inkShare)) : null;
+    if (lobes && parts) {
+      const fits = parts.map((part, k) => fitOrOverflow(part, lobes[k].shape, pageWidth, pageHeight, measure, minFont, maxFont));
+      if (fits.every(f => f)) {
+        return {
+          kind: 'fit',
+          fit: fits[0]!,
+          source: 'bubble',
+          area: lobes[0].shape,
+          more: fits.slice(1).map((fit, k) => ({ fit: fit!, area: lobes[k + 1].shape })),
+        };
+      }
+    }
     const fit = fitOrOverflow(text, detection.shape, pageWidth, pageHeight, measure, minFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'bubble', area: detection.shape } : { kind: 'box' };
   }

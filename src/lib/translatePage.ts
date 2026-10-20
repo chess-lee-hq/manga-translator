@@ -6,6 +6,7 @@ import { isSceneThumbnailEnabled } from './translationOptions';
 import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type GridResult, type GridSource } from './imageUtils';
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
+import { splitTextBoxesByBubble } from './bubbleShape';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
 import { sanitizeResults } from './results';
@@ -75,10 +76,20 @@ function orderForSpread(results: TranslationResult[], isSpread: boolean): Transl
   return [...results.filter(r => centerX(r) >= 500), ...results.filter(r => centerX(r) < 500)];
 }
 
+/** 이어진 말풍선 두 칸에 걸친 글자 영역을 칸별로 나눔 (실패해도 번역은 그대로 진행) */
+function splitJoinedBubbles(image: HTMLImageElement, boxes: BoundingBox[]): BoundingBox[] {
+  try {
+    return splitTextBoxesByBubble(image, boxes);
+  } catch (error) {
+    console.warn('이어진 말풍선 나누기 실패 — 그대로 번역합니다:', error);
+    return boxes;
+  }
+}
+
 /** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
 async function detectPage(image: HTMLImageElement, pageId: string) {
   const { boxes: detections, darkRatio } = await detectSpeechBubbles(image);
-  const boxes = sortTextByReadingOrder(detections);
+  const boxes = splitJoinedBubbles(image, sortTextByReadingOrder(detections));
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
   const speakers = assignSpeakers(boxes, detections, width, height).map(s => (s ? `${pageId}|${s}` : null));

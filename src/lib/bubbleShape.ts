@@ -56,7 +56,19 @@ export interface BubbleShape {
  */
 export type BubbleFailure = 'not-paper' | 'leak' | 'too-big' | 'uncovered-ink' | 'no-enclosure' | 'merged' | 'tiny' | 'no-seed';
 
-export type BubbleDetection = { shape: BubbleShape; failure?: undefined } | { shape: null; failure: BubbleFailure };
+/** 이어진 말풍선(연리지)의 한 칸 */
+export interface BubbleLobe {
+  shape: BubbleShape;
+  /** 원문 글자 중 이 칸에 있는 비율 (번역문을 나눌 때 기준) */
+  inkShare: number;
+  /** 이 칸의 원문 글자 영역 (원본 이미지 px) */
+  box: PixelBox;
+}
+
+export type BubbleDetection =
+  /** lobes: 글자 영역 하나가 잘록하게 이어진 말풍선 두 칸에 걸쳐 있음 (읽는 순서: 오른쪽→왼쪽, 위→아래) */
+  | { shape: BubbleShape; failure?: undefined; lobes?: BubbleLobe[] }
+  | { shape: null; failure: BubbleFailure };
 
 /** 말풍선이 아예 없는 글자로 보는 실패 (덮지 않고 옆에 작게 붙임) */
 export const NO_BUBBLE_FAILURES: ReadonlySet<BubbleFailure> = new Set(['not-paper', 'leak', 'no-enclosure']);
@@ -92,6 +104,22 @@ const BUBBLE_RULE = {
    * 검출 박스가 말풍선보다 조금 크게 잡혀 테두리선이 박스 안에 들어와도 "글자가 테두리에 걸침"으로 오해하지 않도록
    */
   outlineBandPx: 8,
+  /**
+   * 이어진 말풍선 판정: 글자 묶음 사이 빈 틈에서 말풍선 폭(높이)이 양쪽 칸보다 이 비율 아래로 잘록하면 두 칸.
+   * 틈이 글자 줄 사이 간격보다 확실히 넓으면(lobeWideGap배) 덜 잘록해도(lobeLooseNeck) 두 칸으로 봄
+   */
+  lobeNeck: 0.7,
+  // 구름 모양 말풍선 하나의 울퉁불퉁한 테두리(실측 0.76)는 나누지 않도록
+  lobeLooseNeck: 0.75,
+  lobeWideGap: 1.5,
+  /** 한쪽 칸에 원문 글자가 이 비율도 없으면 나누지 않음 */
+  lobeMinInk: 0.22,
+  /**
+   * 글자 영역의 이 비율 이상이 말풍선 안이면, 밖에 남은 어두운 칸(uncoveredInkLoose까지)은 박스가 그림 쪽으로 삐져나온 것으로 봄
+   * (예: 박스 아래 끝에 걸친 인물 머리) — 말풍선을 포기하지 않음
+   */
+  boxInsideLoose: 0.7,
+  uncoveredInkLoose: 0.25,
   /** 글자 영역 안의 어두운 칸 중 채운 영역 밖에 남아도 되는 비율 */
   maxUncoveredInk: 0.04,
   /** 글자가 다 안 덮일 때, 채운 흰 영역이 글자 영역의 이 비율도 안 되면 둘러싼 말풍선이 없는 것으로 봄 */
@@ -383,7 +411,10 @@ function detectOnce(
       if (!inside(i)) uncovered++;
     }
   }
-  if (inkCells > 0 && uncovered / inkCells > BUBBLE_RULE.maxUncoveredInk) {
+  let boxInside = 0;
+  for (let gy = gby0; gy < gby1; gy++) for (let gx = gbx0; gx < gbx1; gx++) if (inside(gy * gw + gx)) boxInside++;
+  const overhang = boxInside >= boxCells * BUBBLE_RULE.boxInsideLoose && uncovered <= inkCells * BUBBLE_RULE.uncoveredInkLoose;
+  if (inkCells > 0 && uncovered / inkCells > BUBBLE_RULE.maxUncoveredInk && !overhang) {
     // 둘러싼 영역(흰색 + 그 안에 갇힌 글자 획)이 글자 영역에 비해 작으면 말풍선이 아니라 글자 속 흰 틈만 채운 것
     let enclosed = 0;
     for (let i = 0; i < gw * gh; i++) if (enclosedCell(i)) enclosed++;
@@ -393,42 +424,148 @@ function detectOnce(
   // 7) 행마다 안쪽의 왼쪽·오른쪽 끝 → 정규화 좌표
   const toNormX = (gx: number) => ((region.x + gx * block) / imageWidth) * 1000;
   const toNormY = (gy: number) => ((region.y + gy * block) / imageHeight) * 1000;
-  let firstRow = -1;
-  let lastRow = -1;
-  const spans: ([number, number] | null)[] = [];
-  let area = 0;
-  let sumX = 0;
-  let sumY = 0;
-  for (let gy = 0; gy < gh; gy++) {
-    let left = -1;
-    let right = -1;
-    for (let gx = 0; gx < gw; gx++) {
-      if (!inside(gy * gw + gx)) continue;
-      if (left < 0) left = gx;
-      right = gx;
-      area++;
-      sumX += gx + 0.5;
-      sumY += gy + 0.5;
+  const shapeOf = (keep: (i: number) => boolean): { shape: BubbleShape; area: number } | null => {
+    let firstRow = -1;
+    let lastRow = -1;
+    const spans: ([number, number] | null)[] = [];
+    let area = 0;
+    let sumX = 0;
+    let sumY = 0;
+    for (let gy = 0; gy < gh; gy++) {
+      let left = -1;
+      let right = -1;
+      for (let gx = 0; gx < gw; gx++) {
+        if (!keep(gy * gw + gx)) continue;
+        if (left < 0) left = gx;
+        right = gx;
+        area++;
+        sumX += gx + 0.5;
+        sumY += gy + 0.5;
+      }
+      if (left < 0) {
+        spans.push(null);
+        continue;
+      }
+      if (firstRow < 0) firstRow = gy;
+      lastRow = gy;
+      spans.push([toNormX(left), toNormX(right + 1)]);
     }
-    if (left < 0) {
-      spans.push(null);
-      continue;
-    }
-    if (firstRow < 0) firstRow = gy;
-    lastRow = gy;
-    spans.push([toNormX(left), toNormX(right + 1)]);
-  }
-  if (firstRow < 0 || area === 0) return fail('no-seed');
-
-  return {
-    shape: {
-      top: toNormY(firstRow),
-      rowHeight: toNormY(firstRow + 1) - toNormY(firstRow),
-      rows: spans.slice(firstRow, lastRow + 1),
-      centerX: toNormX(sumX / area),
-      centerY: toNormY(sumY / area),
-    },
+    if (firstRow < 0 || area === 0) return null;
+    return {
+      area,
+      shape: {
+        top: toNormY(firstRow),
+        rowHeight: toNormY(firstRow + 1) - toNormY(firstRow),
+        rows: spans.slice(firstRow, lastRow + 1),
+        centerX: toNormX(sumX / area),
+        centerY: toNormY(sumY / area),
+      },
+    };
   };
+  const whole = shapeOf(inside);
+  if (!whole) return fail('no-seed');
+
+  // 8) 이어진 말풍선: 글자 영역 하나가 잘록한 목을 사이에 둔 두 칸에 걸쳐 있으면 칸별로 나눔 (다른 대사와 나눈 경우는 제외)
+  if (rivals.length === 0) {
+    const lobes = findLobes();
+    if (lobes) return { shape: whole.shape, lobes };
+  }
+  return { shape: whole.shape };
+
+  function findLobes(): BubbleLobe[] | undefined {
+    const counted = (i: number) => ink[i] && !band[i] && inside(i);
+    let best: { axis: 'x' | 'y'; cut: number; ratio: number } | null = null;
+    for (const axis of ['x', 'y'] as const) {
+      // a: 나누는 방향(열 또는 행), b: 그와 수직
+      const [a0, a1] = axis === 'x' ? [gbx0, gbx1] : [gby0, gby1];
+      const [b0, b1] = axis === 'x' ? [gby0, gby1] : [gbx0, gbx1];
+      const bAll = axis === 'x' ? gh : gw;
+      const at = (a: number, b: number) => (axis === 'x' ? b * gw + a : a * gw + b);
+      const inkAt: number[] = [];
+      for (let a = a0; a < a1; a++) {
+        let n = 0;
+        for (let b = b0; b < b1; b++) if (counted(at(a, b))) n++;
+        inkAt.push(n);
+      }
+      const total = inkAt.reduce((x, y) => x + y, 0);
+      const first = inkAt.findIndex(n => n > 0);
+      const last = inkAt.length - 1 - [...inkAt].reverse().findIndex(n => n > 0);
+      if (total === 0 || first < 0 || last <= first) continue;
+      // 글자 묶음 사이 빈 틈들
+      const gaps: { start: number; end: number }[] = [];
+      for (let k = first + 1; k < last; k++) {
+        if (inkAt[k] > 0) continue;
+        const start = k;
+        while (k < last && inkAt[k] === 0) k++;
+        gaps.push({ start, end: k });
+      }
+      if (gaps.length === 0) continue;
+      const widths = gaps.map(g => g.end - g.start).sort((x, y) => x - y);
+      const median = widths[Math.floor(widths.length / 2)];
+      // 말풍선 안쪽의 폭(나누는 방향에 수직인 길이)
+      const lenAt = (k: number) => {
+        let n = 0;
+        for (let b = 0; b < bAll; b++) if (inside(at(a0 + k, b))) n++;
+        return n;
+      };
+      for (const gap of gaps) {
+        let before = 0;
+        for (let k = first; k < gap.start; k++) before += inkAt[k];
+        if (Math.min(before, total - before) < total * BUBBLE_RULE.lobeMinInk) continue;
+        let neck = Infinity;
+        for (let k = gap.start; k < gap.end; k++) neck = Math.min(neck, lenAt(k));
+        let sideA = 0;
+        for (let k = first; k < gap.start; k++) sideA = Math.max(sideA, lenAt(k));
+        let sideB = 0;
+        for (let k = gap.end; k <= last; k++) sideB = Math.max(sideB, lenAt(k));
+        const ratio = neck / Math.max(1, Math.min(sideA, sideB));
+        const wide = gaps.length > 1 && gap.end - gap.start >= median * BUBBLE_RULE.lobeWideGap;
+        if (!(ratio < BUBBLE_RULE.lobeNeck || (wide && ratio < BUBBLE_RULE.lobeLooseNeck))) continue;
+        if (!best || ratio < best.ratio) best = { axis, cut: a0 + Math.floor((gap.start + gap.end) / 2), ratio };
+      }
+    }
+    if (!best) return undefined;
+    const { axis, cut } = best;
+    const coord = (i: number) => (axis === 'x' ? i % gw : Math.floor(i / gw));
+    // 읽는 순서: 가로로 나뉘면 오른쪽 칸 먼저(세로쓰기 일본 만화), 세로로 나뉘면 위 칸 먼저
+    const sides = axis === 'x'
+      ? [(i: number) => coord(i) >= cut, (i: number) => coord(i) < cut]
+      : [(i: number) => coord(i) < cut, (i: number) => coord(i) >= cut];
+    let totalInk = 0;
+    const lobes: BubbleLobe[] = [];
+    const inks: number[] = [];
+    for (const side of sides) {
+      const part = shapeOf(i => inside(i) && side(i));
+      if (!part || part.area < boxCells * BUBBLE_RULE.minEnclosureRatio * 0.5) return undefined;
+      let n = 0;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let gy = gby0; gy < gby1; gy++) {
+        for (let gx = gbx0; gx < gbx1; gx++) {
+          const i = gy * gw + gx;
+          if (!counted(i) || !side(i)) continue;
+          n++;
+          x0 = Math.min(x0, gx); y0 = Math.min(y0, gy); x1 = Math.max(x1, gx + 1); y1 = Math.max(y1, gy + 1);
+        }
+      }
+      if (n === 0) return undefined;
+      totalInk += n;
+      inks.push(n);
+      // 원문 글자 범위 + 약간의 여백 (원래 박스 밖으로는 넓히지 않음)
+      const pad = 2 * block;
+      lobes.push({
+        shape: part.shape,
+        inkShare: 0,
+        box: {
+          xmin: Math.max(box.xmin, region.x + x0 * block - pad),
+          ymin: Math.max(box.ymin, region.y + y0 * block - pad),
+          xmax: Math.min(box.xmax, region.x + x1 * block + pad),
+          ymax: Math.min(box.ymax, region.y + y1 * block + pad),
+        },
+      });
+    }
+    lobes.forEach((lobe, k) => { lobe.inkShare = inks[k] / totalInk; });
+    return lobes;
+  }
 }
 
 /** 흰 칸 중 radius 칸 안(가로·세로)에 어두운 칸이 있으면 막힌 칸으로 바꾼 사본 */
@@ -500,4 +637,28 @@ export function detectPageBubbleShapes(
     shapes[result.id] = detection;
   });
   return shapes;
+}
+
+/**
+ * 번역 요청 전: 글자 영역 하나가 이어진 말풍선 두 칸에 걸쳐 있으면 칸별 글자 영역으로 나눕니다.
+ * 그래야 AI가 칸마다 따로 번역하고, 화면에서도 칸마다 제 번역문이 들어감. (같은 요청 안이라 비용 그대로)
+ * 나눈 칸은 읽는 순서대로 원래 자리에 넣으므로 순서가 유지됩니다.
+ */
+export function splitTextBoxesByBubble<T extends PixelBox>(image: HTMLImageElement | HTMLCanvasElement, boxes: T[]): T[] {
+  if (boxes.length === 0) return boxes;
+  const reader = createPixelReader(image);
+  const { width, height } = reader;
+  const out: T[] = [];
+  boxes.forEach((box, i) => {
+    const region = reader.read(searchRegionFor(box, width, height));
+    const detection = region ? detectBubble(region, box, width, height, boxes.filter((_, j) => j !== i)) : null;
+    const lobes = detection?.shape ? detection.lobes : undefined;
+    if (!lobes) {
+      out.push(box);
+      return;
+    }
+    console.info(`[연리지] 글자 영역 하나를 이어진 말풍선 ${lobes.length}칸으로 나눔`);
+    for (const lobe of lobes) out.push({ ...box, ...lobe.box });
+  });
+  return out;
 }
