@@ -22,6 +22,12 @@ export const BUBBLE_FIT = {
    * 큰 말풍선에서도 글자가 꽉 차지 않고 말풍선마다 크기가 비슷하게 (단행본처럼 여백이 남음)
    */
   maxFontPx: 22,
+  /**
+   * 단행본처럼 좁게 쌓기: 한 줄을 이 글자 수(글자 크기 배수) 안으로 줄바꿈한 배치를 먼저 찾음.
+   * 그러려면 글자가 narrowMinScale배까지만 작아져도 됨 — 그보다 더 줄여야 하면 넓게 쓰는 예전 배치로
+   */
+  narrowLineEm: 5.5,
+  narrowMinScale: 0.8,
   /** 줄 간격 (기본 → 조인 값) */
   lineHeights: [OVERLAY_STYLE.lineHeight, 1.02],
   /** 말풍선 테두리와 글자 사이 여백 (글자 크기 대비) */
@@ -146,7 +152,16 @@ export function wrapToWidths(text: string, widths: number[], measure: (t: string
   return lines;
 }
 
-function tryFit(text: string, shape: PxShape, fontSize: number, lineHeightEm: number, measure: Measure, allowBreakWord: boolean): BubbleLine[] | null {
+function tryFit(
+  text: string,
+  shape: PxShape,
+  fontSize: number,
+  lineHeightEm: number,
+  measure: Measure,
+  allowBreakWord: boolean,
+  /** 한 줄 폭 상한 (단행본처럼 좁게 쌓을 때) */
+  maxLineWidth = Infinity,
+): BubbleLine[] | null {
   const lineHeight = fontSize * lineHeightEm;
   const insetX = fontSize * BUBBLE_FIT.insetXEm;
   const insetY = fontSize * BUBBLE_FIT.insetYEm;
@@ -174,7 +189,7 @@ function tryFit(text: string, shape: PxShape, fontSize: number, lineHeightEm: nu
     const top = centeredTop(count);
     const spans = linesAt(top, count);
     if (!spans) continue;
-    const widths = spans.map(s => s[1] - s[0] - insetX * 2);
+    const widths = spans.map(s => Math.min(s[1] - s[0] - insetX * 2, maxLineWidth));
     if (widths.reduce((a, b) => a + b, 0) < totalWidth) continue;
 
     const lines = wrapToWidths(text, widths, measureAt, allowBreakWord);
@@ -184,7 +199,7 @@ function tryFit(text: string, shape: PxShape, fontSize: number, lineHeightEm: nu
       // 줄이 덜 쓰였으면 실제 줄 수로 다시 가운데 정렬 (새 자리에서도 각 줄이 들어갈 때만)
       const retop = centeredTop(lines.length);
       const respans = linesAt(retop, lines.length);
-      if (respans && lines.every((line, i) => measureAt(line) <= respans[i][1] - respans[i][0] - insetX * 2 + 0.01)) {
+      if (respans && lines.every((line, i) => measureAt(line) <= Math.min(respans[i][1] - respans[i][0] - insetX * 2, maxLineWidth) + 0.01)) {
         return lines.map((line, i) => ({ text: line, cx: (respans[i][0] + respans[i][1]) / 2, top: retop + i * lineHeight }));
       }
     }
@@ -239,7 +254,16 @@ export function layoutBubbleText(
     return null;
   };
 
-  // 어절을 중간에서 자르지 않는 배치를 먼저 찾아보고, 안 될 때만 글자 단위로 자름
+  // 1) 단행본처럼 좁게: 한 줄을 narrowLineEm 글자 안으로 (가장 긴 어절은 한 줄에 들어가도록), 어절 유지
+  const longestWord = Math.max(...trimmed.split(/\s+/).map(word => measureFast(word, 1)));
+  const narrowFloor = Math.max(minFont, maxFont * BUBBLE_FIT.narrowMinScale);
+  for (let fontSize = maxFont; fontSize >= narrowFloor - 1e-6; fontSize -= step) {
+    const cap = Math.max(fontSize * BUBBLE_FIT.narrowLineEm, longestWord * fontSize);
+    const lines = tryFit(trimmed, base, fontSize, BUBBLE_FIT.lineHeights[0], measureFast, false, cap);
+    if (lines) return { fontSize, lineHeight: fontSize * BUBBLE_FIT.lineHeights[0], lines, fill: fillOf(base), overflow: false };
+  }
+
+  // 2) 안 되면 말풍선 폭을 다 쓰는 배치. 어절을 중간에서 자르지 않는 배치를 먼저 찾아보고, 안 될 때만 글자 단위로 자름
   for (const allowBreakWord of allowBreakWords ? [false, true] : [false]) {
     const fit = attempt(base, allowBreakWord);
     if (fit) return { ...fit, fill: fillOf(base), overflow: false };

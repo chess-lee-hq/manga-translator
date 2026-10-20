@@ -316,6 +316,22 @@ describe('layoutBubbleText', () => {
     expect(overflow.fill.top).toBeCloseTo(bubbleTop);
   });
 
+  it('단행본처럼 좁게 쌓는다: 넓은 말풍선이어도 한 줄은 가장 긴 어절 정도까지 (어절 유지)', () => {
+    const wide = ellipseShapeForBox([400, 200, 600, 800], 1000, 1000);
+    const layout = layoutBubbleText('고맙습니다. 하지만 제 결심은 변함없습니다.', wide, 1000, 1000, measure, 12, 22)!;
+    expect(layout.fontSize).toBe(22);
+    expect(layout.lines.length).toBeGreaterThanOrEqual(4);
+    for (const line of layout.lines) expect(Array.from(line.text).length).toBeLessThanOrEqual(7); // 가장 긴 어절 '변함없습니다.'
+    expect(layout.lines.map(l => l.text).join(' ')).toBe('고맙습니다. 하지만 제 결심은 변함없습니다.');
+  });
+
+  it('좁게 쌓으면 글자가 너무 작아지는 납작한 말풍선은 폭을 다 쓴다', () => {
+    const flat = ellipseShapeForBox([480, 200, 520, 800], 1000, 1000);
+    const layout = layoutBubbleText('고맙습니다. 하지만 제 결심은 변함없습니다.', flat, 1000, 1000, measure, 12, 22);
+    expect(layout).not.toBeNull();
+    expect(Math.max(...layout!.lines.map(l => Array.from(l.text).length))).toBeGreaterThan(7);
+  });
+
   it('채우기 외곽선은 닫힌 다각형 (왼쪽 위→아래, 오른쪽 아래→위)', () => {
     const layout = layoutBubbleText('안녕', shape, W, H, measure, 10, 28)!;
     const outline = fillOutline(layout.fill);
