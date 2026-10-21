@@ -520,6 +520,22 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     expect(plan.fit.direction === 'horizontal' && plan.fit.layout.lines[0].cx).toBeGreaterThan(600);
   });
 
+  it('흰색은 원문 글자 영역과 번역문 줄 둘레만 칠한다 (말풍선 안으로 들어온 그림은 살림)', () => {
+    // 큰 말풍선 위쪽에만 원문 글자가 있고 아래쪽은 그림이 들어와 있는 경우
+    const shape = ellipseShapeForBox([300, 300, 700, 700], 1000, 1000);
+    const plan = planBubble(result({ box_2d: [240, 420, 360, 580], translated_text: '짧은 대사' }), { shape }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind).toBe('fit');
+    if (plan.kind !== 'fit') return;
+    const { top, rowHeight, rows } = plan.fit.layout.fill;
+    const painted = rows.map((r, i) => (r ? top + (i + 1) * rowHeight : -Infinity));
+    const lowest = Math.max(...painted);
+    const fit = plan.fit;
+    const textBottom = fit.direction === 'horizontal' ? Math.max(...fit.layout.lines.map(l => l.top + fit.layout.lineHeight)) : 0;
+    // 말풍선 아래쪽(최대 약 800)까지 칠하지 않고 원문 영역(360)·번역문 아래 여백까지만
+    expect(lowest).toBeLessThan(Math.max(360 + 12, textBottom + 20) + rowHeight);
+    expect(lowest).toBeLessThan(700);
+  });
+
   it('말풍선 없는 글자·모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {
     expect(planBubble(result(), { shape: null, failure: 'not-paper' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
     expect(planBubble(result(), undefined, 1000, 1000, measure, 12, 20).kind).toBe('box');

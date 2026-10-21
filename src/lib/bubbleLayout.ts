@@ -30,6 +30,8 @@ export const BUBBLE_FIT = {
    */
   narrowLineEm: 5.5,
   narrowMinScale: 0.8,
+  /** 좁게 쌓으면 이 줄 수를 넘는 긴 대사는 말풍선 폭을 쓰는 배치로 (12줄짜리 가는 기둥이 되지 않게) */
+  narrowMaxLines: 6,
   /** 줄 간격 (기본 → 조인 값) */
   lineHeights: [OVERLAY_STYLE.lineHeight, 1.02],
   /** 말풍선 테두리와 글자 사이 여백 (글자 크기 대비) */
@@ -56,6 +58,9 @@ export const BUBBLE_FIT = {
   /** 타원의 최소 반지름 (최소 글자 크기 배수). 원문이 한 줄짜리 세로 글이면 타원이 너무 홀쭉해 아무것도 안 들어가므로 */
   ellipseMinRadiusX: 2.5,
   ellipseMinRadiusY: 1.5,
+  /** 흰색을 칠할 범위: 원문 글자 영역 둘레 여백(최소 글자 배수, 후리가나·박스 밖으로 살짝 나간 획까지) · 번역문 줄 둘레 여백(글자 크기 배수) */
+  keepOriginalPadEm: 0.6,
+  keepTextPadEm: 0.35,
   /** 테두리를 못 딴 말풍선에서 원문 글자를 지우는 흰 사각형의 여백 (최소 글자 크기 배수) */
   erasePadEm: 0.3,
 } as const;
@@ -280,6 +285,7 @@ export function layoutBubbleText(
   for (let fontSize = maxFont; fontSize >= narrowFloor - 1e-6; fontSize -= step) {
     const cap = Math.max(fontSize * BUBBLE_FIT.narrowLineEm, longestWord * fontSize);
     const lines = tryFit(trimmed, base, fontSize, BUBBLE_FIT.lineHeights[0], measureFast, false, cap);
+    if (lines && lines.length > BUBBLE_FIT.narrowMaxLines) break;
     if (lines) return { fontSize, lineHeight: fontSize * BUBBLE_FIT.lineHeights[0], lines, fill: fillOf(base), overflow: false };
   }
 
@@ -697,6 +703,75 @@ function fitOrOverflow(text: string, shape: BubbleShape, pageWidth: number, page
  * 말풍선이 아예 없는 글자(그림·스크린톤 위)는 여기 오기 전에 "옆에 작게 붙이기"로 빠짐 (bubbleDisplay.effectiveDisplayMode)
  */
 export function planBubble(
+  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble'>,
+  detection: BubbleDetection | undefined,
+  pageWidth: number,
+  pageHeight: number,
+  measure: Measure,
+  minFont: number,
+  maxFont: number,
+): BubblePlan {
+  const plan = planBubbleUntrimmed(result, detection, pageWidth, pageHeight, measure, minFont, maxFont);
+  if (plan.kind !== 'fit') return plan;
+  const keep = keepRects(result.box_2d, pageWidth, pageHeight, minFont);
+  return {
+    ...plan,
+    fit: trimFill(plan.fit, keep, measure),
+    ...(plan.more ? { more: plan.more.map(m => ({ ...m, fit: trimFill(m.fit, keep, measure) })) } : {}),
+  };
+}
+
+/**
+ * 흰색을 칠할 범위 줄이기: 말풍선 안쪽 전체 대신 "원문 글자 영역 + 번역문 줄"만 (둘 다 여유를 두고, 말풍선 안쪽을 넘지 않게).
+ * 말풍선 안의 빈 곳은 원래 흰 종이라 칠하지 않아도 똑같이 보이고, 말풍선 안으로 들어온 그림(인물 머리 등)은 가리지 않음.
+ * 말풍선 테두리 안에 그림이 둘러싸여 있으면 예전엔 그림까지 칠해 지웠음
+ */
+type Rect = [number, number, number, number]; // x0, y0, x1, y1
+
+function keepRects(box: [number, number, number, number], pageWidth: number, pageHeight: number, minFont: number): Rect[] {
+  const [ymin, xmin, ymax, xmax] = box;
+  const pad = minFont * BUBBLE_FIT.keepOriginalPadEm;
+  return [[(xmin / 1000) * pageWidth - pad, (ymin / 1000) * pageHeight - pad, (xmax / 1000) * pageWidth + pad, (ymax / 1000) * pageHeight + pad]];
+}
+
+function textRects(fit: BubbleFit, measure: Measure): Rect[] {
+  const layout = fit.layout;
+  const pad = layout.fontSize * BUBBLE_FIT.keepTextPadEm;
+  if (fit.direction === 'horizontal') {
+    return fit.layout.lines.map(line => {
+      const half = measure(line.text, fit.layout.fontSize) / 2;
+      return [line.cx - half - pad, line.top - pad, line.cx + half + pad, line.top + fit.layout.lineHeight + pad] as Rect;
+    });
+  }
+  const { columnWidth, cellHeight } = fit.layout;
+  return fit.layout.columns.map(column => [
+    column.cx - columnWidth / 2 - pad, column.top - pad, column.cx + columnWidth / 2 + pad, column.top + columnUnits(column.cells) * cellHeight + pad,
+  ] as Rect);
+}
+
+function trimFill(fit: BubbleFit, keep: Rect[], measure: Measure): BubbleFit {
+  const rects = [...keep, ...textRects(fit, measure)];
+  const { top, rowHeight, rows } = fit.layout.fill;
+  const trimmed = rows.map((row, i): [number, number] | null => {
+    if (!row) return null;
+    const y0 = top + i * rowHeight;
+    const y1 = y0 + rowHeight;
+    let left = Infinity;
+    let right = -Infinity;
+    for (const [rx0, ry0, rx1, ry1] of rects) {
+      if (ry1 <= y0 || ry0 >= y1) continue;
+      left = Math.min(left, rx0);
+      right = Math.max(right, rx1);
+    }
+    const l = Math.max(row[0], left);
+    const r = Math.min(row[1], right);
+    return r > l ? [l, r] : null;
+  });
+  const fill = { top, rowHeight, rows: trimmed };
+  return fit.direction === 'horizontal' ? { ...fit, layout: { ...fit.layout, fill } } : { ...fit, layout: { ...fit.layout, fill } };
+}
+
+function planBubbleUntrimmed(
   result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble'>,
   detection: BubbleDetection | undefined,
   pageWidth: number,
