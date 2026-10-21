@@ -616,48 +616,72 @@ function closeGaps(white: Uint8Array, gw: number, gh: number, radius: number): U
 /** 원문 글자 판정 밝기 (이보다 어두우면 획) */
 const GLYPH_INK_LUMA = 140;
 
+/** 원문 글자 크기를 잴 때 한 번에 보는 픽셀 수 상한 (넘으면 건너뛰며 봄) */
+const GLYPH_MAX_PIXELS = 400_000;
+
 /**
- * 원문 글자 한 자의 크기(px)를 잽니다. 글자 영역의 획을 세로·가로로 투영해 생기는 덩어리(세로쓰기는 줄, 가로쓰기는 행)의
- * 폭이 곧 글자 크기. 문장부호·탁점 같은 작은 덩어리는 빼고 가운데값. 못 재면 null
+ * 원문 글자 한 자의 크기(px)를 잽니다. 글자 영역의 획을 서로 이어진 덩어리로 묶어, 덩어리마다 가로·세로 중 긴 쪽을 재고
+ * 상위 25% 지점 값을 씀 — 한 글자가 여러 덩어리로 나뉘거나(획이 떨어진 한자) 작은 덩어리(문장부호·탁점·후리가나)가 섞여도
+ * 큰 쪽은 글자 한 자 크기에 모임. 박스 가장자리에 닿은 덩어리(말풍선 테두리·그림)는 뺌. 못 재면 null.
+ * (예전엔 세로 줄 폭을 쟀는데, 줄 사이가 좁거나 후리가나가 끼면 여러 줄이 한 덩어리로 잡혀 3~8배로 크게 나왔음)
  */
 export function estimateGlyphSize(region: PixelRegion, box: PixelBox): number | null {
   const x0 = Math.max(0, Math.floor(box.xmin - region.x));
   const y0 = Math.max(0, Math.floor(box.ymin - region.y));
   const x1 = Math.min(region.width, Math.ceil(box.xmax - region.x));
   const y1 = Math.min(region.height, Math.ceil(box.ymax - region.y));
-  const w = x1 - x0;
-  const h = y1 - y0;
+  const step = Math.max(1, Math.ceil(Math.sqrt(((x1 - x0) * (y1 - y0)) / GLYPH_MAX_PIXELS)));
+  const w = Math.floor((x1 - x0) / step);
+  const h = Math.floor((y1 - y0) / step);
   if (w < 4 || h < 4) return null;
-  const cols = new Uint32Array(w);
-  const rows = new Uint32Array(h);
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      if (lumaAt(region.data, (y * region.width + x) * 4) >= GLYPH_INK_LUMA) continue;
-      cols[x - x0]++;
-      rows[y - y0]++;
+  const ink = new Uint8Array(w * h);
+  for (let gy = 0; gy < h; gy++) {
+    for (let gx = 0; gx < w; gx++) {
+      const x = x0 + gx * step;
+      const y = y0 + gy * step;
+      ink[gy * w + gx] = lumaAt(region.data, (y * region.width + x) * 4) < GLYPH_INK_LUMA ? 1 : 0;
     }
   }
-  const runs = (profile: Uint32Array) => {
-    // 획 몇 점짜리 잡티는 무시
-    const peak = Math.max(...profile);
-    const out: number[] = [];
-    let start = -1;
-    for (let i = 0; i <= profile.length; i++) {
-      const on = i < profile.length && profile[i] > peak * 0.02;
-      if (on && start < 0) start = i;
-      if (!on && start >= 0) {
-        out.push(i - start);
-        start = -1;
+  const seen = new Uint8Array(w * h);
+  const inner: number[] = [];
+  const edge: number[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    if (!ink[start] || seen[start]) continue;
+    let minX = w, maxX = -1, minY = h, maxY = -1, count = 0;
+    seen[start] = 1;
+    stack.push(start);
+    while (stack.length > 0) {
+      const p = stack.pop()!;
+      const px = p % w;
+      const py = (p - px) / w;
+      count++;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const qx = px + dx;
+          const qy = py + dy;
+          if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+          const q = qy * w + qx;
+          if (ink[q] && !seen[q]) {
+            seen[q] = 1;
+            stack.push(q);
+          }
+        }
       }
     }
-    return out;
-  };
-  // 세로로 긴 글자 영역은 세로쓰기(줄 폭), 가로로 길면 가로쓰기(행 높이), 비슷하면 둘 다
-  const groups = h > w * 1.2 ? runs(cols) : w > h * 1.2 ? runs(rows) : [...runs(cols), ...runs(rows)];
-  const big = Math.max(0, ...groups);
-  const sizes = groups.filter(g => g >= 3 && g >= big * 0.4).sort((a, b) => a - b);
+    // 점 몇 개짜리 잡티는 무시
+    if (count * step * step < 6) continue;
+    const size = Math.max(maxX - minX + 1, maxY - minY + 1) * step;
+    (minX === 0 || minY === 0 || maxX === w - 1 || maxY === h - 1 ? edge : inner).push(size);
+  }
+  // 박스가 글자에 딱 맞아 모든 덩어리가 가장자리에 닿으면 그것도 씀
+  const sizes = (inner.length > 0 ? inner : edge).sort((a, b) => a - b);
   if (sizes.length === 0) return null;
-  return sizes[Math.floor(sizes.length / 2)];
+  return sizes[Math.min(sizes.length - 1, Math.floor(sizes.length * 0.75))];
 }
 
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */

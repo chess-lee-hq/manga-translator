@@ -604,14 +604,13 @@ export type BubblePlan =
   | { kind: 'box' };
 
 /**
- * 페이지 안에서 번역문 글자 크기를 통일하는 규칙. 단행본처럼 기준 크기 하나로 쓰고, 원문 글자가 확실히 크거나 작은 대사만 따라 바꿈
+ * 페이지 안에서 번역문 글자 크기를 통일하는 규칙. 단행본처럼 기준 크기 하나로 쓰고, 원문 글자가 확실히 큰 대사(외침·강조)만 키움.
+ * 원문이 작은 대사도 기준 크기 (작은 말풍선은 안 들어가면 그만큼만 줄어듦)
  */
 export const UNIFORM_FONT = {
-  /** 원문 글자 크기가 페이지 기준(가운데값)의 이 범위 안이면 기준 크기로 통일 */
-  sameLow: 0.8,
-  sameHigh: 1.25,
-  /** 기준과 다른 대사도 이 배율 안에서만 (아주 작은 글씨·특대 글씨가 극단으로 가지 않게) */
-  minRatio: 0.75,
+  /** 원문 글자 크기가 페이지 기준(가운데값)의 이 배율 이상일 때만 따라서 키움 — 재는 오차(±30%)로 들쭉날쭉하지 않게 넉넉히 */
+  emphasisRatio: 1.5,
+  /** 키울 때 상한 */
   maxRatio: 2.5,
   /** 원문 글자 한 자 크기 대비 번역문 글자 크기 (한글은 같은 크기면 비슷한 칸을 차지) */
   koreanScale: 1,
@@ -634,9 +633,8 @@ export function uniformFontTargets(
   const toPx = (glyph: number) => Math.min(maxFont, Math.max(minFont, (glyph / 1000) * pageHeight * UNIFORM_FONT.koreanScale));
   for (const item of items) {
     const ratio = item.glyph ? item.glyph / base : 1;
-    const same = ratio >= UNIFORM_FONT.sameLow && ratio <= UNIFORM_FONT.sameHigh;
-    const clamped = Math.min(UNIFORM_FONT.maxRatio, Math.max(UNIFORM_FONT.minRatio, ratio));
-    targets.set(item.id, toPx(base * (same ? 1 : clamped)));
+    const scale = ratio >= UNIFORM_FONT.emphasisRatio ? Math.min(UNIFORM_FONT.maxRatio, ratio) : 1;
+    targets.set(item.id, toPx(base * scale));
   }
   return targets;
 }

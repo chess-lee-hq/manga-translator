@@ -396,6 +396,26 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
     expect(targets.get('big')).toBe(40);
   });
 
+  it('원문이 기준보다 작거나 조금 큰 대사(1.5배 미만)는 모두 기준 크기', () => {
+    const targets = uniformFontTargets([{ id: 'a', glyph: 20 }, { id: 'b', glyph: 20 }, { id: 'small', glyph: 12 }, { id: 'bit', glyph: 28 }], 1000, 10, 60);
+    expect(targets.get('small')).toBe(20);
+    expect(targets.get('bit')).toBe(20);
+  });
+
+  it('여러 줄이 촘촘한 세로쓰기도 줄 묶음이 아니라 글자 한 자 크기로 잰다', () => {
+    const c = canvas(255);
+    // 16px 글자를 줄 간격 2px로 촘촘히 3줄 (예전 방식은 3줄이 한 덩어리로 잡혀 약 50px)
+    const tight: PixelBox = { xmin: 270, ymin: 240, xmax: 326, ymax: 340 };
+    for (let x = tight.xmin + 1; x + 16 <= tight.xmax; x += 18) {
+      for (let y = tight.ymin + 2; y + 16 <= tight.ymax; y += 20) {
+        c.rect(x, y, x + 16, y + 16, 20);
+        c.rect(x + 3, y + 3, x + 13, y + 13, 255);
+      }
+    }
+    c.rect(tight.xmin + 18, tight.ymin + 40, tight.xmin + 20, tight.ymin + 44, 20); // 줄 사이에 낀 작은 점(후리가나 흉내)
+    expect(c.glyph(tight)).toBe(16);
+  });
+
   it('원문 크기를 하나도 못 재면 비워 둠 (예전 기본 크기 사용)', () => {
     expect(uniformFontTargets([{ id: 'a' }], 1000, 10, 60).size).toBe(0);
   });
