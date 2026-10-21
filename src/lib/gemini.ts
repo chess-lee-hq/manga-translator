@@ -268,6 +268,8 @@ export interface GridRequestOptions extends PromptContextOptions {
   pageCellCounts?: number[];
   /** 얼굴 위치로 추정한 화자 힌트 */
   speakerHint?: string;
+  /** 말풍선 크기로 잰 칸별 글자 수 한도 */
+  lengthHint?: string;
   /** 품질 검사에 걸린 칸을 다시 보내는 요청 */
   retry?: boolean;
   /** 토큰 사용량 로그에 표시할 이름 */

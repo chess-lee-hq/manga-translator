@@ -7,6 +7,8 @@ import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type 
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { splitTextBoxesByBubble } from './bubbleShape';
+import { buildLengthHint, estimateCharLimits } from './charBudget';
+import { createTextMeasurer } from './overlayLayout';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
 import { sanitizeResults } from './results';
@@ -99,7 +101,21 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
     const bodies = detections.filter(d => d.classId === 0).length;
     console.debug(`[speaker] 말풍선 ${boxes.length}개 중 ${known}개 화자 추정 (얼굴 ${faces} · 몸 ${bodies})`);
   }
-  return { boxes, speakers, darkRatio };
+  return { boxes, speakers, charLimits: charLimitsFor(image, boxes), darkRatio };
+}
+
+/** 말풍선마다 번역문 글자 수 한도 (실패해도 번역은 한도 없이 진행) */
+function charLimitsFor(image: HTMLImageElement, boxes: BoundingBox[]): (number | null)[] | undefined {
+  if (boxes.length === 0) return undefined;
+  try {
+    const { measure } = createTextMeasurer(getComputedStyle(document.documentElement).fontFamily);
+    const limits = estimateCharLimits(image, boxes, measure);
+    console.debug(`[글자수] 말풍선 ${boxes.length}개 한도: ${limits.map(l => l ?? '-').join(' · ')}`);
+    return limits;
+  } catch (error) {
+    console.warn('글자 수 한도 계산 실패 — 한도 없이 번역합니다:', error);
+    return undefined;
+  }
 }
 
 /**
@@ -132,6 +148,7 @@ function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPrompt
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
+      lengthHint: buildLengthHint(grid.cells),
       ...(scenes?.length ? { sceneImages: scenes } : {}),
     });
 }
@@ -142,6 +159,7 @@ function viaGeminiGrid(apiKey: string, version: '3.6' | '3.8', parts: GridPrompt
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
+      lengthHint: buildLengthHint(grid.cells),
       ...(scenes?.length ? { sceneImages: scenes.map(inlineImage) } : {}),
     });
 }
@@ -221,7 +239,7 @@ function regroupBySource(sources: GridSource[], cells: GridCellInfo[]): GridSour
   return sources
     .map(source => {
       const picked = cells.filter(c => c.pageId === source.pageId);
-      return { ...source, boxes: picked.map(c => c.box), speakers: picked.map(c => c.speaker ?? null) };
+      return { ...source, boxes: picked.map(c => c.box), speakers: picked.map(c => c.speaker ?? null), charLimits: picked.map(c => c.charLimit ?? null) };
     })
     .filter(source => source.boxes.length > 0);
 }
@@ -299,11 +317,11 @@ async function translatePageWithoutBubbles(img: UploadedImage, darkRatio: number
 export async function translatePage(img: UploadedImage, settings: TranslationSettings): Promise<TranslationResult[]> {
   requireKeys(settings);
   const imgElement = await loadImage(img.src);
-  const { boxes: textBoxes, speakers, darkRatio } = await detectPage(imgElement, 'page');
+  const { boxes: textBoxes, speakers, charLimits, darkRatio } = await detectPage(imgElement, 'page');
   if (textBoxes.length === 0) return translatePageWithoutBubbles(img, darkRatio, settings);
 
   const checked = await translateGridWithQualityCheck(
-    [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers }],
+    [{ pageId: 'page', image: imgElement, boxes: textBoxes, speakers, charLimits }],
     settings,
   );
   if (!checked) return [];
@@ -328,13 +346,13 @@ export async function translatePageBatch(pages: BatchPage[], settings: Translati
 
   const prepared = await Promise.all(pages.map(async page => {
     const image = await loadImage(page.img.src);
-    const { boxes, speakers, darkRatio } = await detectPage(image, page.id);
-    return { page, image, boxes, speakers, darkRatio };
+    const { boxes, speakers, charLimits, darkRatio } = await detectPage(image, page.id);
+    return { page, image, boxes, speakers, charLimits, darkRatio };
   }));
 
   const withBubbles = prepared.filter(p => p.boxes.length > 0);
   const withoutBubbles = prepared.filter(p => p.boxes.length === 0);
-  const sources: GridSource[] = withBubbles.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes, speakers: p.speakers }));
+  const sources: GridSource[] = withBubbles.map(p => ({ pageId: p.page.id, image: p.image, boxes: p.boxes, speakers: p.speakers, charLimits: p.charLimits }));
   const sizeById = new Map(prepared.map(p => [p.page.id, { width: p.image.width, height: p.image.height }]));
   const spreadById = new Map(prepared.map(p => [p.page.id, !!p.page.img.isSpread]));
 

@@ -552,7 +552,8 @@ export function ellipseShapeForBox(box: [number, number, number, number], pageWi
 }
 
 /**
- * 말풍선 모양 안에 넣기: 가로(어절 유지) → 막대처럼 홀쭉하면 세로 → 가로(좌우로 살짝 넘침) → 가로(어절 자르기 허용) 순.
+ * 말풍선 모양 안에 넣기: 가로(어절 유지) → 가로(좌우로 살짝 넘침) → 막대처럼 홀쭉하면 세로 → 가로(어절 자르기 허용) 순.
+ * 세로쓰기는 한 어절도 가로 한 줄에 못 들어가는 좁은 말풍선에서만 (사용자가 가로쓰기를 더 선호)
  * 어느 쪽으로도 안 들어가면 null (호출하는 쪽이 네모 상자로 덮음)
  */
 export function fitIntoShape(
@@ -566,12 +567,12 @@ export function fitIntoShape(
 ): BubbleFit | null {
   const keepWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, false);
   if (keepWords) return { direction: 'horizontal', layout: keepWords };
+  const slight = layoutBubbleSlightOverflow(text, shape, pageWidth, pageHeight, measure, minFont, maxFont);
+  if (slight) return { direction: 'horizontal', layout: slight };
   if (isTallShape(shape, pageWidth, pageHeight)) {
     const vertical = layoutBubbleVertical(text, shape, pageWidth, pageHeight, minFont, maxFont);
     if (vertical) return { direction: 'vertical', layout: vertical };
   }
-  const slight = layoutBubbleSlightOverflow(text, shape, pageWidth, pageHeight, measure, minFont, maxFont);
-  if (slight) return { direction: 'horizontal', layout: slight };
   const breakWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, true);
   return breakWords ? { direction: 'horizontal', layout: breakWords } : null;
 }
@@ -714,7 +715,9 @@ export function planBubble(
   const area = ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont);
   const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, minFont, maxFont);
   if (!fit) return { kind: 'box' };
-  const fill = eraseFillForBox(result.box_2d, pageWidth, pageHeight, minFont);
+  // 말풍선 안쪽(흰 종이+그 안의 글자)을 글자 영역 범위로 잘라 칠함 — 글자 영역이 그림 쪽으로 삐져나와도 그림은 안 칠함.
+  // 그것도 없으면(배경이 너무 작게 잡힘 등) 글자 영역 네모
+  const fill = detection.erase ? fillOf(toPx(detection.erase, pageWidth, pageHeight)) : eraseFillForBox(result.box_2d, pageWidth, pageHeight, minFont);
   return {
     kind: 'fit',
     fit: fit.direction === 'horizontal' ? { ...fit, layout: { ...fit.layout, fill } } : { ...fit, layout: { ...fit.layout, fill } },

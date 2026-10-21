@@ -8,6 +8,8 @@ export interface GridCellInfo {
   pageId: string;
   /** 추정한 화자 키 (`페이지ID|컷:인물`, 모르면 null) */
   speaker?: string | null;
+  /** 말풍선 크기로 잰 번역문 글자 수 한도 (공백 제외, 모르면 null — charBudget) */
+  charLimit?: number | null;
 }
 
 /** 격자에 넣을 페이지 하나 */
@@ -17,6 +19,8 @@ export interface GridSource {
   boxes: BoundingBox[];
   /** boxes와 같은 순서의 화자 키 (없으면 화자 힌트 없음) */
   speakers?: (string | null)[];
+  /** boxes와 같은 순서의 글자 수 한도 (없으면 한도 안내 없음) */
+  charLimits?: (number | null)[];
 }
 
 export interface GridResult {
@@ -105,7 +109,7 @@ export async function createGridImage(sources: GridSource[], options: GridImageO
   if (entries.length === 0) return null;
 
   const cells: GridCellInfo[] = sources.flatMap(source => source.boxes.map((box, boxIndex) => ({
-    id: 0, box, pageId: source.pageId, speaker: source.speakers?.[boxIndex] ?? null,
+    id: 0, box, pageId: source.pageId, speaker: source.speakers?.[boxIndex] ?? null, charLimit: source.charLimits?.[boxIndex] ?? null,
   }))).map((cell, index) => ({ ...cell, id: index + 1 }));
 
   const plan = options.plan ?? planGridImages(entries.length, cellSize, engine);

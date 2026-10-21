@@ -68,7 +68,8 @@ export interface BubbleLobe {
 export type BubbleDetection = (
   /** lobes: 글자 영역 하나가 잘록하게 이어진 말풍선 두 칸에 걸쳐 있음 (읽는 순서: 오른쪽→왼쪽, 위→아래) */
   | { shape: BubbleShape; failure?: undefined; lobes?: BubbleLobe[] }
-  | { shape: null; failure: BubbleFailure }
+  /** erase: 말풍선 안쪽 중 글자 영역 범위 (테두리를 다 못 땄을 때 원문만 지울 자리, uncovered-ink일 때) */
+  | { shape: null; failure: BubbleFailure; erase?: BubbleShape }
 ) & {
   /** 원문 글자 한 자의 크기 (페이지 높이 기준 0~1000). 번역문 글자 크기를 원본에 맞추는 데 씀 */
   glyph?: number;
@@ -384,50 +385,7 @@ function detectOnce(
     inside = (i: number) => owner[i] === 0;
   }
 
-  // 테두리 띠: 안쪽 영역에서 outlineBandPx 안에 있는 칸 (여기 있는 어두운 칸은 글자가 아니라 테두리선)
-  const bandCells = Math.max(1, Math.ceil(BUBBLE_RULE.outlineBandPx / block));
-  const band = new Uint8Array(gw * gh);
-  {
-    let frontier: number[] = [];
-    for (let i = 0; i < gw * gh; i++) if (inside(i)) frontier.push(i);
-    for (let step = 0; step < bandCells && frontier.length > 0; step++) {
-      const next: number[] = [];
-      for (const i of frontier) {
-        const gx = i % gw;
-        const gy = (i - gx) / gw;
-        const neighbors = [gx > 0 ? i - 1 : -1, gx < gw - 1 ? i + 1 : -1, gy > 0 ? i - gw : -1, gy < gh - 1 ? i + gw : -1];
-        for (const n of neighbors) {
-          if (n < 0 || band[n] || inside(n)) continue;
-          band[n] = 1;
-          next.push(n);
-        }
-      }
-      frontier = next;
-    }
-  }
-
-  // 6) 원문 글자 획이 모양 밖에 남으면 흰색으로 다 못 덮으므로 실패
-  let inkCells = 0;
-  let uncovered = 0;
-  for (let gy = gby0; gy < gby1; gy++) {
-    for (let gx = gbx0; gx < gbx1; gx++) {
-      const i = gy * gw + gx;
-      if (!ink[i] || band[i]) continue;
-      inkCells++;
-      if (!inside(i)) uncovered++;
-    }
-  }
-  let boxInside = 0;
-  for (let gy = gby0; gy < gby1; gy++) for (let gx = gbx0; gx < gbx1; gx++) if (inside(gy * gw + gx)) boxInside++;
-  const overhang = boxInside >= boxCells * BUBBLE_RULE.boxInsideLoose && uncovered <= inkCells * BUBBLE_RULE.uncoveredInkLoose;
-  if (inkCells > 0 && uncovered / inkCells > BUBBLE_RULE.maxUncoveredInk && !overhang) {
-    // 둘러싼 영역(흰색 + 그 안에 갇힌 글자 획)이 글자 영역에 비해 작으면 말풍선이 아니라 글자 속 흰 틈만 채운 것
-    let enclosed = 0;
-    for (let i = 0; i < gw * gh; i++) if (enclosedCell(i)) enclosed++;
-    return fail(enclosed < boxCells * BUBBLE_RULE.minEnclosureRatio ? 'no-enclosure' : 'uncovered-ink');
-  }
-
-  // 7) 행마다 안쪽의 왼쪽·오른쪽 끝 → 정규화 좌표
+  // 행마다 안쪽의 왼쪽·오른쪽 끝 → 정규화 좌표 (모양 만들기)
   const toNormX = (gx: number) => ((region.x + gx * block) / imageWidth) * 1000;
   const toNormY = (gy: number) => ((region.y + gy * block) / imageHeight) * 1000;
   const shapeOf = (keep: (i: number) => boolean): { shape: BubbleShape; area: number } | null => {
@@ -468,6 +426,57 @@ function detectOnce(
       },
     };
   };
+  // 테두리 띠: 안쪽 영역에서 outlineBandPx 안에 있는 칸 (여기 있는 어두운 칸은 글자가 아니라 테두리선)
+  const bandCells = Math.max(1, Math.ceil(BUBBLE_RULE.outlineBandPx / block));
+  const band = new Uint8Array(gw * gh);
+  {
+    let frontier: number[] = [];
+    for (let i = 0; i < gw * gh; i++) if (inside(i)) frontier.push(i);
+    for (let step = 0; step < bandCells && frontier.length > 0; step++) {
+      const next: number[] = [];
+      for (const i of frontier) {
+        const gx = i % gw;
+        const gy = (i - gx) / gw;
+        const neighbors = [gx > 0 ? i - 1 : -1, gx < gw - 1 ? i + 1 : -1, gy > 0 ? i - gw : -1, gy < gh - 1 ? i + gw : -1];
+        for (const n of neighbors) {
+          if (n < 0 || band[n] || inside(n)) continue;
+          band[n] = 1;
+          next.push(n);
+        }
+      }
+      frontier = next;
+    }
+  }
+
+  // 6) 원문 글자 획이 모양 밖에 남으면 흰색으로 다 못 덮으므로 실패
+  let inkCells = 0;
+  let uncovered = 0;
+  for (let gy = gby0; gy < gby1; gy++) {
+    for (let gx = gbx0; gx < gbx1; gx++) {
+      const i = gy * gw + gx;
+      if (!ink[i] || band[i]) continue;
+      inkCells++;
+      if (!inside(i)) uncovered++;
+    }
+  }
+  let boxInside = 0;
+  for (let gy = gby0; gy < gby1; gy++) for (let gx = gbx0; gx < gbx1; gx++) if (inside(gy * gw + gx)) boxInside++;
+  const overhang = boxInside >= boxCells * BUBBLE_RULE.boxInsideLoose && uncovered <= inkCells * BUBBLE_RULE.uncoveredInkLoose;
+  if (inkCells > 0 && uncovered / inkCells > BUBBLE_RULE.maxUncoveredInk && !overhang) {
+    // 둘러싼 영역(흰색 + 그 안에 갇힌 글자 획)이 글자 영역에 비해 작으면 말풍선이 아니라 글자 속 흰 틈만 채운 것
+    let enclosed = 0;
+    for (let i = 0; i < gw * gh; i++) if (enclosedCell(i)) enclosed++;
+    if (enclosed < boxCells * BUBBLE_RULE.minEnclosureRatio) return fail('no-enclosure');
+    // 말풍선은 있음: 원문만 지울 자리 = 말풍선 안쪽 중 글자 영역(+2칸) 범위
+    const inBox = (i: number) => {
+      const gx = i % gw;
+      const gy = (i - gx) / gw;
+      return gx >= gbx0 - 2 && gx < gbx1 + 2 && gy >= gby0 - 2 && gy < gby1 + 2;
+    };
+    const erase = shapeOf(i => inside(i) && inBox(i));
+    return erase ? { shape: null, failure: 'uncovered-ink', erase: erase.shape } : fail('uncovered-ink');
+  }
+
   const whole = shapeOf(inside);
   if (!whole) return fail('no-seed');
 

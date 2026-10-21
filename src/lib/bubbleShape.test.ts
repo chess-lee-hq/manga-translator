@@ -348,9 +348,13 @@ function tallBubble(): BubbleShape {
 }
 
 describe('세로쓰기로 말풍선 안에 넣기', () => {
-  it('홀쭉한 말풍선에 가로로 어절을 지키며 안 들어가면 세로로 세운다', () => {
-    const shape = tallBubble();
-    const fit = fitIntoShape('그러니까 그건 절대로 안 된다고 했잖아', shape, 1000, 1000, measure, 12, 20);
+  it('막대 말풍선이어도 어절이 가로 한 줄(좌우 살짝 넘침 포함)에 들어가면 가로쓰기', () => {
+    const fit = fitIntoShape('그러니까 그건 절대로 안 된다고 했잖아', tallBubble(), 1000, 1000, measure, 12, 20);
+    expect(fit?.direction).toBe('horizontal');
+  });
+
+  it('막대 말풍선에 어절이 가로 한 줄에도 안 들어가면 세로로 세운다', () => {
+    const fit = fitIntoShape('다녀오겠습니다아아!', tallBubble(), 1000, 1000, measure, 12, 20);
     expect(fit?.direction).toBe('vertical');
   });
 
@@ -448,6 +452,28 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     const [l, r] = plan.fit.layout.fill.rows[0]!;
     expect(l).toBeGreaterThan(410);
     expect(r).toBeLessThan(590);
+  });
+
+  it('테두리를 다 못 땄어도 말풍선 안쪽을 알면 그 범위만 칠한다 (그림 쪽으로 삐져나온 글자 영역은 안 칠함)', () => {
+    const erase = ellipseShapeForBox([450, 450, 550, 550], 1000, 1000);
+    const plan = planBubble(result(), { shape: null, failure: 'uncovered-ink', erase }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind === 'fit' && plan.source).toBe('erase');
+    if (plan.kind !== 'fit') return;
+    expect(plan.fit.layout.fill.rows.length).toBe(erase.rows.length);
+  });
+
+  it('붙은 글자가 테두리에 걸친 말풍선은 원문만 지울 자리(말풍선 안쪽)를 함께 돌려준다', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 50, 70, 255, 0);
+    const wide: PixelBox = { xmin: 240, ymin: 250, xmax: 360, ymax: 350 };
+    c.text(wide);
+    const detection = c.full(wide);
+    expect(detection.failure).toBe('uncovered-ink');
+    const erase = detection.shape ? undefined : detection.erase;
+    expect(erase).toBeDefined();
+    const rows = erase!.rows.filter((r): r is [number, number] => !!r);
+    // 말풍선 폭(100px)을 넘지 않음
+    expect(((Math.max(...rows.map(r => r[1])) - Math.min(...rows.map(r => r[0]))) / 1000) * W).toBeLessThanOrEqual(104);
   });
 
   it('찾은 말풍선에 안 들어가면 네모 상자로 덮지 않고 넘침으로 표시', () => {

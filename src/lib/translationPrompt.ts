@@ -119,6 +119,8 @@ export interface GridPromptOptions extends PromptContextOptions {
   pageCellCounts?: number[];
   /** 얼굴 위치로 추정한 화자 힌트 (speakerHints.buildSpeakerHint) */
   speakerHint?: string;
+  /** 말풍선 크기로 잰 칸별 글자 수 한도 (charBudget.buildLengthHint) */
+  lengthHint?: string;
   /** 품질 검사에 걸린 칸을 다시 보내는 요청이면 true */
   retry?: boolean;
   /** [실험] 격자 뒤에 붙인 장면 이미지(페이지 전체 축소본) 수 */
@@ -144,7 +146,7 @@ export function buildGridPrompt(options: GridPromptOptions): string {
 }
 
 export function buildGridPromptParts(options: GridPromptOptions): PromptParts {
-  const { expectedCells, pageCellCounts, speakerHint = '', recentContext, retry, sceneCount = 0, ...contextOptions } = options;
+  const { expectedCells, pageCellCounts, speakerHint = '', lengthHint = '', recentContext, retry, sceneCount = 0, ...contextOptions } = options;
 
   // (C) 요청마다 바뀌는 것들 — 반드시 맨 뒤
   const volatile: string[] = [];
@@ -166,6 +168,7 @@ export function buildGridPromptParts(options: GridPromptOptions): PromptParts {
     volatile.push(`이 격자에는 연속된 ${pageCellCounts.length}개 페이지의 대사가 읽는 순서대로 들어 있어. (${ranges.join(' / ')})\n같은 장면이 이어지니 말투와 호칭을 페이지가 넘어가도 일관되게 유지해.`);
   }
   if (speakerHint.trim()) volatile.push(speakerHint.trim());
+  if (lengthHint.trim()) volatile.push(lengthHint.trim());
   if (recentContext?.trim()) volatile.push(recentContext.trim());
   if (retry) volatile.push(RETRY_INSTRUCTION.trim());
   volatile.push(`1번부터 ${expectedCells}번까지 빠짐없이, 정확히 ${expectedCells}개를 순서대로 출력해.`);
