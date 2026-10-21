@@ -197,6 +197,24 @@ describe('detectBubbleShape', () => {
     expect(detection.shape ? detection.lobes : 'x').toBeUndefined();
   });
 
+  it('혹이 달린 말풍선: 글자는 몸통 구간(safeRows)에만, 흰색은 혹까지 전체(rows)', () => {
+    const c = canvas(130);
+    // 몸통(세로로 긴 타원) + 오른쪽 위 혹(작은 원) — 혹과 몸통 사이 위쪽은 오목하게 테두리 밖
+    c.ellipse(300, 320, 45, 110, 255, 0);
+    c.ellipse(350, 250, 30, 30, 255, 0);
+    c.disc(300, 320, 45, 110, 255);
+    c.disc(350, 250, 30, 30, 255);
+    const box: PixelBox = { xmin: 280, ymin: 260, xmax: 320, ymax: 380 };
+    c.text(box);
+    const shape = c.detect(box)!;
+    expect(shape).not.toBeNull();
+    const px = (v: number) => (v / 1000) * W;
+    const rowAt = (y: number) => Math.floor(((y / H) * 1000 - shape.top) / shape.rowHeight);
+    const i = rowAt(225); // 혹 높이: 몸통과 혹이 한 행에 따로 있음
+    expect(px(shape.rows[i]![1])).toBeGreaterThan(360);
+    expect(px(shape.safeRows![i]![1]) - px(shape.safeRows![i]![0])).toBeLessThan(px(shape.rows[i]![1]) - px(shape.rows[i]![0]) - 10);
+  });
+
   it('멀리 있는 다른 글자는 영향을 주지 않는다', () => {
     const c = canvas(130);
     c.ellipse(300, 300, 90, 120, 255, 0);

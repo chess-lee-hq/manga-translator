@@ -82,7 +82,10 @@ type Measure = (text: string, fontSize: number) => number;
 interface PxShape {
   top: number;
   rowHeight: number;
+  /** 글자를 놓을 구간 (BubbleShape.safeRows가 있으면 그것) */
   rows: ([number, number] | null)[];
+  /** 흰색으로 칠할 구간 (말풍선 안쪽 전체) */
+  fillRows: ([number, number] | null)[];
   centerX: number;
   centerY: number;
 }
@@ -90,10 +93,12 @@ interface PxShape {
 function toPx(shape: BubbleShape, pageWidth: number, pageHeight: number): PxShape {
   const sx = pageWidth / 1000;
   const sy = pageHeight / 1000;
+  const scaleRows = (rows: ([number, number] | null)[]) => rows.map(r => (r ? [r[0] * sx, r[1] * sx] as [number, number] : null));
   return {
     top: shape.top * sy,
     rowHeight: shape.rowHeight * sy,
-    rows: shape.rows.map(r => (r ? [r[0] * sx, r[1] * sx] : null)),
+    rows: scaleRows(shape.safeRows ?? shape.rows),
+    fillRows: scaleRows(shape.rows),
     centerX: shape.centerX * sx,
     centerY: shape.centerY * sy,
   };
@@ -319,7 +324,7 @@ export function layoutBubbleSlightOverflow(
   return null;
 }
 
-const fillOf = (shape: PxShape): BubbleTextLayout['fill'] => ({ top: shape.top, rowHeight: shape.rowHeight, rows: shape.rows });
+const fillOf = (shape: PxShape): BubbleTextLayout['fill'] => ({ top: shape.top, rowHeight: shape.rowHeight, rows: shape.fillRows });
 
 /**
  * 최소 글자 크기로도 안 들어갈 때: 말풍선 가운데 폭에 맞춰 줄바꿈하고 위아래로 넘치게 둠.
@@ -453,8 +458,19 @@ function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: 
   const { width } = shapeExtent(shape);
   const maxColumns = Math.max(1, Math.floor((width - insetX * 2) / columnWidth));
 
+  // 열 묶음의 가로 가운데 후보: 무게중심, 행마다 가운데의 가운데값 (혹이 달린 말풍선은 무게중심이 몸통에서 벗어남)
+  const mids = shape.rows.filter((r): r is [number, number] => !!r).map(r => (r[0] + r[1]) / 2).sort((a, b) => a - b);
+  const centers = [shape.centerX, ...(mids.length > 0 ? [mids[Math.floor(mids.length / 2)]] : [])];
   for (let count = 1; count <= maxColumns; count++) {
-    const rightEdge = shape.centerX + (count * columnWidth) / 2;
+    for (const centerX of centers) {
+      const fit = tryColumns(count, centerX);
+      if (fit) return fit;
+    }
+  }
+  return null;
+
+  function tryColumns(count: number, centerX: number): Omit<BubbleVerticalLayout, 'fill' | 'overflow'> | null {
+    const rightEdge = centerX + (count * columnWidth) / 2;
     const runs: [number, number][] = [];
     for (let j = 0; j < count; j++) {
       const x1 = rightEdge - j * columnWidth;
@@ -466,12 +482,12 @@ function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: 
       if ((bottom - top) / cellHeight < 2) break;
       runs.push([top, bottom]);
     }
-    if (runs.length < count) continue;
+    if (runs.length < count) return null;
     const capacities = runs.map(([top, bottom]) => (bottom - top) / cellHeight);
-    if (capacities.reduce((a, b) => a + b, 0) < totalUnits) continue;
+    if (capacities.reduce((a, b) => a + b, 0) < totalUnits) return null;
 
     const filled = fillColumns(paragraphs, j => capacities[j] ?? 0);
-    if (filled.length > count || filled.some((column, j) => columnUnits(column) > capacities[j] + 1e-6)) continue;
+    if (filled.length > count || filled.some((column, j) => columnUnits(column) > capacities[j] + 1e-6)) return null;
 
     return {
       fontSize,
@@ -486,7 +502,6 @@ function tryFitVertical(paragraphs: VerticalCell[][], shape: PxShape, fontSize: 
       }),
     };
   }
-  return null;
 }
 
 /**
@@ -594,7 +609,7 @@ export type BubblePlan =
   | {
     kind: 'fit';
     fit: BubbleFit;
-    /** bubble: 찾은 말풍선 안 / erase: 테두리를 못 따 원문 글자만 지우고 그 둘레(타원)에 배치 */
+    /** bubble: 찾은 말풍선 안 / erase: 테두리를 다 못 따(글자가 테두리에 걸침) 찾은 말풍선 안쪽이나 글자 영역 둘레 타원에 배치 */
     source: 'bubble' | 'erase';
     /** 글자를 배치한 영역 ("짧게 다시 번역"의 글자 수 계산용) */
     area: BubbleShape;
@@ -712,6 +727,12 @@ export function planBubble(
     return fit ? { kind: 'fit', fit, source: 'bubble', area: detection.shape } : { kind: 'box' };
   }
   if (NO_BUBBLE_FAILURES.has(detection.failure)) return { kind: 'box' };
+  // 글자 획 일부가 말풍선 밖에 걸쳐 모양을 확정 못 했어도, 찾은 말풍선 안쪽이 있으면 그 안에 놓고 그 안을 칠함
+  // (글자 영역 둘레 타원은 글자 영역이 한쪽에 치우치면 말풍선 밖으로 삐져나왔음). 밖에 걸친 원문 획만 남을 수 있음
+  if (detection.interior) {
+    const inner = fitOrOverflow(text, detection.interior, pageWidth, pageHeight, measure, minFont, maxFont);
+    if (inner) return { kind: 'fit', fit: inner, source: 'erase', area: detection.interior };
+  }
   const area = ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont);
   const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, minFont, maxFont);
   if (!fit) return { kind: 'box' };

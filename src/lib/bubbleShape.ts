@@ -38,6 +38,12 @@ export interface BubbleShape {
   rowHeight: number;
   /** 위에서부터 행마다 안쪽의 [왼쪽 x, 오른쪽 x]. 비어 있는 행은 null */
   rows: ([number, number] | null)[];
+  /**
+   * 글자를 놓아도 되는 구간: 행마다 안쪽이 가장 길게 이어진 구간 (rows와 같은 길이).
+   * 혹이 달린 말풍선은 한 행에 안쪽이 둘로 나뉘는데 rows는 그 사이(테두리 밖 오목한 곳)까지 한 구간으로 잡으므로,
+   * 글자는 이 구간에만 놓고 흰색은 rows 전체를 칠함. 없으면 rows
+   */
+  safeRows?: ([number, number] | null)[];
   /** 면적 가중 중심 (글자 덩어리를 놓을 기준점) */
   centerX: number;
   centerY: number;
@@ -68,8 +74,12 @@ export interface BubbleLobe {
 export type BubbleDetection = (
   /** lobes: 글자 영역 하나가 잘록하게 이어진 말풍선 두 칸에 걸쳐 있음 (읽는 순서: 오른쪽→왼쪽, 위→아래) */
   | { shape: BubbleShape; failure?: undefined; lobes?: BubbleLobe[] }
-  /** erase: 말풍선 안쪽 중 글자 영역 범위 (테두리를 다 못 땄을 때 원문만 지울 자리, uncovered-ink일 때) */
-  | { shape: null; failure: BubbleFailure; erase?: BubbleShape }
+  /**
+   * uncovered-ink(글자 획 일부가 말풍선 밖)일 때도 찾은 말풍선 안쪽은 알려줌:
+   * - interior: 말풍선 안쪽 전체 (번역문을 놓을 자리 — 글자 영역이 한쪽에 치우쳐도 말풍선 가운데에)
+   * - erase: 그중 글자 영역 범위 (interior를 못 쓸 때 원문만 지울 자리)
+   */
+  | { shape: null; failure: BubbleFailure; erase?: BubbleShape; interior?: BubbleShape }
 ) & {
   /** 원문 글자 한 자의 크기 (페이지 높이 기준 0~1000). 번역문 글자 크기를 원본에 맞추는 데 씀 */
   glyph?: number;
@@ -392,27 +402,42 @@ function detectOnce(
     let firstRow = -1;
     let lastRow = -1;
     const spans: ([number, number] | null)[] = [];
+    const safe: ([number, number] | null)[] = [];
     let area = 0;
     let sumX = 0;
     let sumY = 0;
     for (let gy = 0; gy < gh; gy++) {
       let left = -1;
       let right = -1;
-      for (let gx = 0; gx < gw; gx++) {
-        if (!keep(gy * gw + gx)) continue;
-        if (left < 0) left = gx;
-        right = gx;
-        area++;
-        sumX += gx + 0.5;
-        sumY += gy + 0.5;
+      let runStart = -1;
+      let bestStart = -1;
+      let bestEnd = -1;
+      for (let gx = 0; gx <= gw; gx++) {
+        const on = gx < gw && keep(gy * gw + gx);
+        if (on) {
+          if (left < 0) left = gx;
+          right = gx;
+          area++;
+          sumX += gx + 0.5;
+          sumY += gy + 0.5;
+          if (runStart < 0) runStart = gx;
+        } else if (runStart >= 0) {
+          if (gx - runStart > bestEnd - bestStart) {
+            bestStart = runStart;
+            bestEnd = gx;
+          }
+          runStart = -1;
+        }
       }
       if (left < 0) {
         spans.push(null);
+        safe.push(null);
         continue;
       }
       if (firstRow < 0) firstRow = gy;
       lastRow = gy;
       spans.push([toNormX(left), toNormX(right + 1)]);
+      safe.push([toNormX(bestStart), toNormX(bestEnd)]);
     }
     if (firstRow < 0 || area === 0) return null;
     return {
@@ -421,6 +446,7 @@ function detectOnce(
         top: toNormY(firstRow),
         rowHeight: toNormY(firstRow + 1) - toNormY(firstRow),
         rows: spans.slice(firstRow, lastRow + 1),
+        safeRows: safe.slice(firstRow, lastRow + 1),
         centerX: toNormX(sumX / area),
         centerY: toNormY(sumY / area),
       },
@@ -474,7 +500,10 @@ function detectOnce(
       return gx >= gbx0 - 2 && gx < gbx1 + 2 && gy >= gby0 - 2 && gy < gby1 + 2;
     };
     const erase = shapeOf(i => inside(i) && inBox(i));
-    return erase ? { shape: null, failure: 'uncovered-ink', erase: erase.shape } : fail('uncovered-ink');
+    const interior = shapeOf(inside);
+    return erase
+      ? { shape: null, failure: 'uncovered-ink', erase: erase.shape, ...(interior ? { interior: interior.shape } : {}) }
+      : fail('uncovered-ink');
   }
 
   const whole = shapeOf(inside);
