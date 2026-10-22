@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bubbleCapacity, uniformFontTargets, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, splitTranslation, wrapToWidths } from './bubbleLayout';
-import { detectBubble, detectBubbleShape, estimateGlyphSize, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
+import { buildGlyphMask, detectBubble, detectBubbleShape, estimateGlyphSize, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
 const H = 600;
@@ -61,7 +61,8 @@ function canvas(fill = 255) {
   const full = (box: PixelBox, others: PixelBox[] = []) =>
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others);
   const glyph = (box: PixelBox) => estimateGlyphSize(region(searchRegionFor(box, W, H)), box);
-  return { ellipse, disc, rect, text, detect, why, full, glyph };
+  const mask = (box: PixelBox, size: number) => buildGlyphMask(region(searchRegionFor(box, W, H)), box, size, W, H);
+  return { ellipse, disc, rect, text, detect, why, full, glyph, mask };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -416,6 +417,25 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
     expect(targets.get('c')).toBe(22);
     expect(targets.get('unknown')).toBe(22);
     expect(targets.get('big')).toBe(40);
+  });
+
+  it('원문 글자 획만 골라 마스크로 (테두리선·말풍선 안으로 들어온 큰 그림은 빼고)', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 90, 120, 255, 0);
+    c.text(textBox);
+    // 글자 영역 아래에 걸친 큰 그림 덩어리 (인물 머리 흉내, 글자 크기의 3배 넘음)
+    c.rect(260, 352, 340, 410, 30);
+    const m = c.mask(textBox, 16)!;
+    expect(m).not.toBeNull();
+    const at = (x: number, y: number) => {
+      const gx = x - m.x;
+      const gy = y - m.y;
+      return gx >= 0 && gy >= 0 && gx < m.width && gy < m.height ? m.data[gy * m.width + gx] : 0;
+    };
+    expect(at(textBox.xmin + 3, textBox.ymin + 3)).toBe(1); // 글자 획
+    expect(at(300, 395)).toBe(0); // 그림
+    expect(at(211, 300)).toBe(0); // 왼쪽 테두리선
+    expect(m.color).toEqual([255, 255, 255]);
   });
 
   it('원문이 기준보다 작거나 조금 큰 대사(1.5배 미만)는 모두 기준 크기', () => {

@@ -8,6 +8,7 @@ import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../l
 import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
 import { BubbleFitText } from './BubbleFitText';
+import { GlyphMaskOverlay } from './GlyphMaskOverlay';
 import { VerticalBubbleText } from './VerticalBubbleText';
 import type { Box2d, HoveredBubble, ScriptStyle, TranslationCache, TranslationResult, UploadedImage, ViewMode } from '../types';
 import { BoxEditor } from './BoxEditor';
@@ -369,6 +370,7 @@ export function MangaViewer({
                           if (bubbleLayout) {
                             const fitted = (
                               <>
+                                {plan.kind === 'fit' && plan.mask && <GlyphMaskOverlay mask={plan.mask} />}
                                 <BubbleFitText fit={bubbleLayout} pageWidth={pageWidth} pageHeight={pageHeight} />
                                 {extraFits.map((m, k) => <BubbleFitText key={k} fit={m.fit} pageWidth={pageWidth} pageHeight={pageHeight} />)}
                                 {overflowNote && !isEditingBoxes && (

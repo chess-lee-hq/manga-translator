@@ -28,9 +28,11 @@ export function BubbleFitText({ fit, pageWidth, pageHeight }: BubbleFitTextProps
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 20 }}>
-      <svg className="absolute inset-0" width={pageWidth} height={pageHeight} viewBox={`0 0 ${pageWidth} ${pageHeight}`}>
-        <path d={path} fill="#ffffff" />
-      </svg>
+      {outline.length > 0 && (
+        <svg className="absolute inset-0" width={pageWidth} height={pageHeight} viewBox={`0 0 ${pageWidth} ${pageHeight}`}>
+          <path d={path} fill="#ffffff" />
+        </svg>
+      )}
       {fit.direction === 'horizontal'
         ? fit.layout.lines.map((line, i) => (
           <div

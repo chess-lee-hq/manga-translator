@@ -1,5 +1,6 @@
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
 import { BUBBLE_FIT, fillOutline, planBubble, uniformFontTargets, type BubbleFit } from './bubbleLayout';
+import { glyphMaskCanvas } from './glyphMaskImage';
 import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
@@ -95,13 +96,16 @@ function drawVerticalColumn(ctx: CanvasRenderingContext2D, cells: VerticalCell[]
 /** 원본 말풍선 모양(또는 타원)대로 흰색으로 지우고, 정해진 자리에 번역문을 그림 (화면 BubbleFitText와 같은 배치) */
 function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (size: number) => void) {
   const outline = fillOutline(fit.layout.fill);
-  ctx.save();
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
+  // 원문 글자 획 마스크로 지운 칸은 칠할 모양이 비어 있음
+  if (outline.length > 0) {
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 
   if (fit.direction === 'vertical') {
     const layout = fit.layout;
@@ -208,6 +212,9 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
 
     const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, bubbleMaxFont(result));
     if (plan.kind === 'fit') {
+      // 원문 글자 획만 종이 색으로 지움 (원본 해상도 좌표 그대로)
+      const maskCanvas = plan.mask ? glyphMaskCanvas(plan.mask) : null;
+      if (plan.mask && maskCanvas) ctx.drawImage(maskCanvas, plan.mask.x, plan.mask.y);
       drawBubbleFit(ctx, plan.fit, setFont);
       for (const extra of plan.more ?? []) drawBubbleFit(ctx, extra.fit, setFont);
       continue;

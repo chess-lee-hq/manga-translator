@@ -1,4 +1,4 @@
-import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from './bubbleShape';
+import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape, type GlyphMask } from './bubbleShape';
 import { wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 import { columnUnits, fillColumns, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
@@ -58,6 +58,11 @@ export const BUBBLE_FIT = {
   /** 타원의 최소 반지름 (최소 글자 크기 배수). 원문이 한 줄짜리 세로 글이면 타원이 너무 홀쭉해 아무것도 안 들어가므로 */
   ellipseMinRadiusX: 2.5,
   ellipseMinRadiusY: 1.5,
+  /**
+   * 원문 글자 획 마스크가 글자 영역(말풍선 안쪽) 어두운 픽셀을 이 비율 이상 덮으면 마스크만 씀 (말풍선은 칠하지 않음).
+   * 박스에 걸린 테두리·그림도 분모에 들어가 실제 글자를 다 골라도 0.75~0.85가 나오므로 넉넉히 — 이보다 낮으면 글자 고르기가 실패한 것
+   */
+  maskMinCoverage: 0.6,
   /** 흰색을 칠할 범위: 원문 글자 영역 둘레 여백(최소 글자 배수, 후리가나·박스 밖으로 살짝 나간 획까지) · 번역문 줄 둘레 여백(글자 크기 배수) */
   keepOriginalPadEm: 0.6,
   keepTextPadEm: 0.35,
@@ -621,6 +626,8 @@ export type BubblePlan =
     area: BubbleShape;
     /** 이어진 말풍선(연리지)의 나머지 칸: 번역문을 나눠 칸마다 따로 넣음 */
     more?: { fit: BubbleFit; area: BubbleShape }[];
+    /** 원문 글자 획만 지울 마스크 (있으면 먼저 그림). 획을 거의 다 골랐으면 흰색 칠하기(fill)는 비움 */
+    mask?: GlyphMask;
   }
   /** 모양을 쓸 대상이 아님 (직접 옮긴 박스, 맞춤을 끈 박스, 모양 계산 전) → 네모 상자 */
   | { kind: 'box' };
@@ -713,12 +720,25 @@ export function planBubble(
 ): BubblePlan {
   const plan = planBubbleUntrimmed(result, detection, pageWidth, pageHeight, measure, minFont, maxFont);
   if (plan.kind !== 'fit') return plan;
+  // 원문 글자 획을 거의 다 골라냈으면 그 획만 지우고(마스크) 말풍선은 칠하지 않음 — 테두리·안으로 들어온 그림이 그대로 남음.
+  // 글자가 테두리·그림에 붙어 못 고른 획이 많으면 예전처럼 원문 영역+번역문 줄 둘레를 함께 칠함
+  const mask = detection?.glyphMask;
+  if (mask && mask.coverage >= BUBBLE_FIT.maskMinCoverage) {
+    return { ...plan, mask, fit: withFill(plan.fit, EMPTY_FILL), ...(plan.more ? { more: plan.more.map(m => ({ ...m, fit: withFill(m.fit, EMPTY_FILL) })) } : {}) };
+  }
   const keep = keepRects(result.box_2d, pageWidth, pageHeight, minFont);
   return {
     ...plan,
+    ...(mask ? { mask } : {}),
     fit: trimFill(plan.fit, keep, measure),
     ...(plan.more ? { more: plan.more.map(m => ({ ...m, fit: trimFill(m.fit, keep, measure) })) } : {}),
   };
+}
+
+const EMPTY_FILL: BubbleTextLayout['fill'] = { top: 0, rowHeight: 1, rows: [] };
+
+function withFill(fit: BubbleFit, fill: BubbleTextLayout['fill']): BubbleFit {
+  return fit.direction === 'horizontal' ? { ...fit, layout: { ...fit.layout, fill } } : { ...fit, layout: { ...fit.layout, fill } };
 }
 
 /**
@@ -767,8 +787,7 @@ function trimFill(fit: BubbleFit, keep: Rect[], measure: Measure): BubbleFit {
     const r = Math.min(row[1], right);
     return r > l ? [l, r] : null;
   });
-  const fill = { top, rowHeight, rows: trimmed };
-  return fit.direction === 'horizontal' ? { ...fit, layout: { ...fit.layout, fill } } : { ...fit, layout: { ...fit.layout, fill } };
+  return withFill(fit, { top, rowHeight, rows: trimmed });
 }
 
 function planBubbleUntrimmed(
@@ -804,12 +823,15 @@ function planBubbleUntrimmed(
   if (NO_BUBBLE_FAILURES.has(detection.failure)) return { kind: 'box' };
   // 글자 획 일부가 말풍선 밖에 걸쳐 모양을 확정 못 했어도, 찾은 말풍선 안쪽이 있으면 그 안에 놓고 그 안을 칠함
   // (글자 영역 둘레 타원은 글자 영역이 한쪽에 치우치면 말풍선 밖으로 삐져나왔음). 밖에 걸친 원문 획만 남을 수 있음
-  if (detection.interior) {
-    const inner = fitOrOverflow(text, detection.interior, pageWidth, pageHeight, measure, minFont, maxFont);
-    if (inner) return { kind: 'fit', fit: inner, source: 'erase', area: detection.interior };
-  }
   const area = ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont);
   const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, minFont, maxFont);
+  if (detection.interior) {
+    const inner = fitOrOverflow(text, detection.interior, pageWidth, pageHeight, measure, minFont, maxFont);
+    // 안쪽에서 넘치는데 글자 영역 둘레에는 들어가면 그쪽 (안쪽이 이름표 같은 작은 칸이 아니라 주변 배경으로 잡힌 경우 등)
+    if (inner && !(inner.layout.overflow && fit && !fit.layout.overflow)) {
+      return { kind: 'fit', fit: inner, source: 'erase', area: detection.interior };
+    }
+  }
   if (!fit) return { kind: 'box' };
   // 말풍선 안쪽(흰 종이+그 안의 글자)을 글자 영역 범위로 잘라 칠함 — 글자 영역이 그림 쪽으로 삐져나와도 그림은 안 칠함.
   // 그것도 없으면(배경이 너무 작게 잡힘 등) 글자 영역 네모

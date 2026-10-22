@@ -83,7 +83,27 @@ export type BubbleDetection = (
 ) & {
   /** 원문 글자 한 자의 크기 (페이지 높이 기준 0~1000). 번역문 글자 크기를 원본에 맞추는 데 씀 */
   glyph?: number;
+  /** 원문 글자 획만 골라 지울 마스크 (원본 해상도) — 말풍선을 통째로 칠하지 않고 글자만 지움 */
+  glyphMask?: GlyphMask;
 };
+
+/**
+ * 원문 글자 획 마스크. 좌표는 원본 이미지 px. data는 width×height (1 = 지울 픽셀)
+ * coverage: 글자 영역 안 어두운 픽셀 중 마스크가 덮은 비율 — 낮으면(글자가 테두리·그림에 붙어 한 덩어리) 예전 방식으로 함께 칠함
+ */
+export interface GlyphMask {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: Uint8Array;
+  /** 지운 자리를 칠할 종이 색 (글자 주변 밝은 픽셀의 가운데값) */
+  color: [number, number, number];
+  coverage: number;
+  /** 원본 이미지 크기 (화면에서 비율로 놓을 때) */
+  imageWidth: number;
+  imageHeight: number;
+}
 
 /** 말풍선이 아예 없는 글자로 보는 실패 (덮지 않고 옆에 작게 붙임) */
 export const NO_BUBBLE_FAILURES: ReadonlySet<BubbleFailure> = new Set(['not-paper', 'leak', 'no-enclosure']);
@@ -722,6 +742,182 @@ export function estimateGlyphSize(region: PixelRegion, box: PixelBox): number | 
   return sizes[Math.min(sizes.length - 1, Math.floor(sizes.length * 0.75))];
 }
 
+/** 글자 획 마스크 규칙 */
+const GLYPH_MASK = {
+  /** 이보다 어두우면 획 (안티에일리어싱 가장자리는 아래 dilate로 덮음) */
+  inkLuma: 165,
+  /** 글자 영역 둘레 여유 (글자 크기 배수) — 후리가나·문장부호처럼 박스 밖으로 살짝 나간 획 */
+  windowPad: 0.6,
+  /** 한 덩어리의 가로·세로가 글자 크기의 이 배수를 넘으면 글자가 아니라 테두리·그림 */
+  maxComponent: 2.5,
+  /** 지울 때 획 둘레로 넓히는 두께 (글자 크기 배수, 최소 2px) — 인쇄 번짐·JPEG 얼룩까지 (0.08이면 옅은 잔상이 남았음) */
+  dilate: 0.14,
+  /** 종이 색으로 볼 밝기 */
+  paperLuma: 200,
+} as const;
+
+/**
+ * 원문 글자 획만 골라 마스크로 만듭니다. 글자 영역(+여유) 안에 가운데가 있고 글자 크기 2.5배 이하인 획 덩어리 = 글자.
+ * 테두리선·말풍선 안으로 들어온 그림은 크거나 길게 이어져 있어 빠짐. 원본 해상도라 경계가 계단처럼 어긋나지 않음
+ */
+export function buildGlyphMask(
+  region: PixelRegion,
+  box: PixelBox,
+  glyphPx: number,
+  imageWidth: number,
+  imageHeight: number,
+  /** 찾은 말풍선 안쪽 — 덮은 비율을 잴 때 이 안의 어두운 픽셀만 셈 (박스가 테두리·그림에 걸친 부분은 원문이 아님) */
+  area?: BubbleShape | null,
+): GlyphMask | null {
+  const { data, width: rw, height: rh } = region;
+  if (!(glyphPx > 0)) return null;
+  const pad = glyphPx * GLYPH_MASK.windowPad;
+  const wx0 = Math.max(0, Math.floor(box.xmin - pad - region.x));
+  const wy0 = Math.max(0, Math.floor(box.ymin - pad - region.y));
+  const wx1 = Math.min(rw, Math.ceil(box.xmax + pad - region.x));
+  const wy1 = Math.min(rh, Math.ceil(box.ymax + pad - region.y));
+  if (wx1 - wx0 < 2 || wy1 - wy0 < 2) return null;
+  const isInk = (i: number) => lumaAt(data, i * 4) < GLYPH_MASK.inkLuma;
+  const maxSide = glyphPx * GLYPH_MASK.maxComponent;
+  const maxPixels = Math.ceil(maxSide * maxSide);
+
+  const seen = new Uint8Array(rw * rh);
+  const accepted: number[] = [];
+  const stack: number[] = [];
+  const component: number[] = [];
+  for (let y = wy0; y < wy1; y++) {
+    for (let x = wx0; x < wx1; x++) {
+      const start = y * rw + x;
+      if (seen[start] || !isInk(start)) continue;
+      // 덩어리 하나를 끝까지 따라감 (너무 크면 글자가 아님 — 표시만 하고 버림)
+      let minX = x, maxX = x, minY = y, maxY = y;
+      let tooBig = false;
+      component.length = 0;
+      seen[start] = 1;
+      stack.push(start);
+      while (stack.length > 0) {
+        const p = stack.pop()!;
+        const px = p % rw;
+        const py = (p - px) / rw;
+        if (!tooBig) component.push(p);
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        if (!tooBig && (maxX - minX > maxSide || maxY - minY > maxSide || component.length > maxPixels)) tooBig = true;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const qx = px + dx;
+            const qy = py + dy;
+            if (qx < 0 || qy < 0 || qx >= rw || qy >= rh) continue;
+            const q = qy * rw + qx;
+            if (!seen[q] && isInk(q)) {
+              seen[q] = 1;
+              stack.push(q);
+            }
+          }
+        }
+      }
+      if (tooBig) continue;
+      // 가운데가 글자 영역(+여유) 안이어야 글자 (여유 끝에 걸친 그림 조각 제외)
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      if (cx < wx0 || cx >= wx1 || cy < wy0 || cy >= wy1) continue;
+      for (const p of component) accepted.push(p);
+    }
+  }
+  if (accepted.length === 0) return null;
+
+  // 글자 영역 안 어두운 픽셀 중 덮은 비율 (말풍선 안쪽을 알면 그 안만, 테두리 쪽 오차를 빼려고 조금 안쪽까지만)
+  const shrink = glyphPx * 0.15;
+  const insideArea = (x: number, y: number) => {
+    if (!area) return true;
+    const ny = ((y + region.y) / imageHeight) * 1000;
+    const row = area.rows[Math.floor((ny - area.top) / area.rowHeight)];
+    if (!row) return false;
+    const px = x + region.x;
+    return px >= (row[0] / 1000) * imageWidth + shrink && px <= (row[1] / 1000) * imageWidth - shrink;
+  };
+  const bx0 = Math.max(0, Math.floor(box.xmin - region.x));
+  const by0 = Math.max(0, Math.floor(box.ymin - region.y));
+  const bx1 = Math.min(rw, Math.ceil(box.xmax - region.x));
+  const by1 = Math.min(rh, Math.ceil(box.ymax - region.y));
+  const inMask = new Uint8Array(rw * rh);
+  for (const p of accepted) inMask[p] = 1;
+  let ink = 0;
+  let covered = 0;
+  for (let y = by0; y < by1; y++) {
+    for (let x = bx0; x < bx1; x++) {
+      const i = y * rw + x;
+      if (!isInk(i) || !insideArea(x, y)) continue;
+      ink++;
+      if (inMask[i]) covered++;
+    }
+  }
+
+  // 마스크 범위 = 고른 획 + 넓힘
+  const r = Math.max(2, Math.round(glyphPx * GLYPH_MASK.dilate));
+  let mx0 = rw, my0 = rh, mx1 = -1, my1 = -1;
+  for (const p of accepted) {
+    const px = p % rw;
+    const py = (p - px) / rw;
+    if (px < mx0) mx0 = px;
+    if (px > mx1) mx1 = px;
+    if (py < my0) my0 = py;
+    if (py > my1) my1 = py;
+  }
+  mx0 = Math.max(0, mx0 - r);
+  my0 = Math.max(0, my0 - r);
+  mx1 = Math.min(rw - 1, mx1 + r);
+  my1 = Math.min(rh - 1, my1 + r);
+  const mw = mx1 - mx0 + 1;
+  const mh = my1 - my0 + 1;
+  const mask = new Uint8Array(mw * mh);
+  for (const p of accepted) {
+    const px = (p % rw) - mx0;
+    const py = Math.floor(p / rw) - my0;
+    for (let dy = -r; dy <= r; dy++) {
+      const y = py + dy;
+      if (y < 0 || y >= mh) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        const x = px + dx;
+        if (x >= 0 && x < mw) mask[y * mw + x] = 1;
+      }
+    }
+  }
+
+  // 종이 색: 글자 영역(+여유)의 밝은 픽셀 채널별 가운데값
+  const reds: number[] = [];
+  const greens: number[] = [];
+  const blues: number[] = [];
+  for (let y = wy0; y < wy1; y += 2) {
+    for (let x = wx0; x < wx1; x += 2) {
+      const i = (y * rw + x) * 4;
+      if (lumaAt(data, i) < GLYPH_MASK.paperLuma) continue;
+      reds.push(data[i]);
+      greens.push(data[i + 1]);
+      blues.push(data[i + 2]);
+    }
+  }
+  const median = (values: number[]) => {
+    if (values.length === 0) return 255;
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  };
+
+  return {
+    x: region.x + mx0,
+    y: region.y + my0,
+    width: mw,
+    height: mh,
+    data: mask,
+    color: [median(reds), median(greens), median(blues)],
+    coverage: ink > 0 ? covered / ink : 0,
+    imageWidth,
+    imageHeight,
+  };
+}
+
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */
 function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
   const width = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
@@ -771,7 +967,15 @@ export function detectPageBubbleShapes(
       }
     }
     const glyph = region ? estimateGlyphSize(region, boxes[i]) : null;
-    shapes[result.id] = glyph ? { ...detection, glyph: (glyph / height) * 1000 } : detection;
+    // 말풍선이 없는 글자(옆에 붙이기)는 덮지 않으므로 마스크도 만들지 않음
+    const glyphMask = region && glyph && !(detection.failure && NO_BUBBLE_FAILURES.has(detection.failure))
+      ? buildGlyphMask(region, boxes[i], glyph, width, height, detection.shape ?? detection.interior ?? null)
+      : null;
+    shapes[result.id] = {
+      ...detection,
+      ...(glyph ? { glyph: (glyph / height) * 1000 } : {}),
+      ...(glyphMask ? { glyphMask } : {}),
+    };
   });
   return shapes;
 }
