@@ -441,6 +441,21 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
     expect(m.color).toEqual([255, 255, 255]);
   });
 
+  it('글자 영역 안의 가늘고 긴 기호(물결표 「〜〜〜」)도 원문으로 지운다', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 90, 120, 255, 0);
+    c.text(textBox);
+    // 글자 4자 길이의 세로 물결표 (글자 크기 2.5배를 넘지만 가늘고 글자 영역 안)
+    c.rect(318, 260, 322, 330, 20);
+    const m = c.mask({ ...textBox, xmax: 335 }, 16)!;
+    const at = (x: number, y: number) => {
+      const gx = x - m.x;
+      const gy = y - m.y;
+      return gx >= 0 && gy >= 0 && gx < m.width && gy < m.height ? m.data[gy * m.width + gx] : 0;
+    };
+    expect(at(320, 300)).toBe(1);
+  });
+
   it('말풍선 안쪽을 모르면(효과음 등) 마스크를 만들지 않는다', () => {
     const c = canvas(255);
     c.text(textBox);
