@@ -1,6 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Loader2, RefreshCw, Settings2, Trash2, X } from 'lucide-react';
-import { BUILD_INFO, fetchDeployedBuildInfo, formatBuildTime, isNewerBuild, type BuildInfo } from '../lib/buildInfo';
+import { Loader2, Settings2, Trash2, X } from 'lucide-react';
 import { deleteOcrModel, getOcrStatus, isOcrModelDownloaded, loadOcrModel, subscribeOcrStatus } from '../lib/mangaOcr';
 import { OCR_MODEL_APPROX_MB } from '../lib/mangaOcrConfig';
 import { isOverlayBold, isSceneThumbnailEnabled, setOverlayBold, setSceneThumbnailEnabled } from '../lib/translationOptions';
@@ -30,14 +29,6 @@ function OptionRow({ checked, onChange, title, children }: { checked: boolean; o
 export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }: TranslationOptionsModalProps) {
   const [scene, setScene] = useState(isSceneThumbnailEnabled);
   const [bold, setBold] = useState(isOverlayBold);
-  // 이 창을 열 때 배포된 최신 버전을 확인 (오래 열어 둔 탭이면 새로고침 안내)
-  const [deployed, setDeployed] = useState<BuildInfo | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetchDeployedBuildInfo().then(info => { if (alive) setDeployed(info); });
-    return () => { alive = false; };
-  }, []);
-  const outdated = isNewerBuild(deployed);
   const ocrStatus = useSyncExternalStore(subscribeOcrStatus, getOcrStatus);
   const [downloaded, setDownloaded] = useState<boolean | null>(null);
 
@@ -118,28 +109,6 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
           )}
         </div>
         <p className="text-[11px] text-gray-400 mt-3">글자 굵기 외의 옵션은 다음 번역 요청부터 적용됩니다. 이미 번역된 페이지는 그대로입니다.</p>
-
-        <div className="mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-500 space-y-0.5">
-          <div>
-            배포 버전: {formatBuildTime(BUILD_INFO.time) || '개발 중'}
-            {BUILD_INFO.commit && <span className="ml-1 font-mono text-gray-400">({BUILD_INFO.commit})</span>}
-          </div>
-          {BUILD_INFO.latest && <div className="truncate" title={BUILD_INFO.latest}>최근 업데이트: {BUILD_INFO.latest}</div>}
-          {outdated && deployed && (
-            <div className="mt-1.5 flex items-center gap-2 p-2 rounded-md bg-amber-50 border border-amber-200 text-amber-800">
-              <span className="flex-1">
-                새 버전이 나와 있습니다 ({formatBuildTime(deployed.time)}{deployed.latest ? ` · ${deployed.latest}` : ''}). 새로고침하면 적용됩니다.
-              </span>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="flex items-center gap-1 px-2 py-1 rounded bg-amber-500 text-white font-medium hover:bg-amber-600 shrink-0"
-              >
-                <RefreshCw size={11} /> 새로고침
-              </button>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

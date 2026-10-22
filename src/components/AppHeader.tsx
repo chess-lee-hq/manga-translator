@@ -2,6 +2,7 @@ import { ArrowLeftRight, ClipboardCheck, BarChart3, BookOpen, Database, Settings
 import type { GeminiVersion, MainEngine, OpenAiVersion, ScriptStyle, ViewMode } from '../types';
 import { getUsageByModel, sumUsage } from '../lib/usageLog';
 import { formatTokens, useUsageVersion } from './UsageModal';
+import { VersionBadge } from './VersionBadge';
 
 interface AppHeaderProps {
   loadedFilename: string | null;
@@ -142,6 +143,7 @@ export function AppHeader(props: AppHeaderProps) {
         <ImageIcon className="text-blue-600 shrink-0" size={24} />
         {/* 앱 제목보다 파일 이름이 더 중요하므로, 아주 넓은 화면에서만 제목을 보여줌 */}
         <h1 className="hidden min-[2200px]:block text-lg font-bold text-gray-800 mr-2 whitespace-nowrap shrink-0">Manga Translator</h1>
+        <VersionBadge />
         {loadedFilename && (
           // 긴 파일 이름은 남는 공간만큼만 보여주고 말줄임표 처리 (마우스를 올리면 전체 이름)
           <span
