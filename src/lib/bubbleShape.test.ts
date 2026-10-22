@@ -65,7 +65,8 @@ function canvas(fill = 255) {
     const d = detectBubble(region(searchRegionFor(box, W, H)), box, W, H, []);
     return buildGlyphMask(region(searchRegionFor(box, W, H)), box, size, W, H, d.shape ?? d.interior ?? null);
   };
-  return { ellipse, disc, rect, text, detect, why, full, glyph, mask };
+  const regionFor = (box: PixelBox) => region(searchRegionFor(box, W, H));
+  return { ellipse, disc, rect, text, detect, why, full, glyph, mask, regionFor };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -454,6 +455,26 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
       return gx >= 0 && gy >= 0 && gx < m.width && gy < m.height ? m.data[gy * m.width + gx] : 0;
     };
     expect(at(320, 300)).toBe(1);
+  });
+
+  it('같은 세로줄에 이어진 글자는 말풍선 안쪽 판정에서 빠져도 글자로 살린다', () => {
+    const c = canvas(130);
+    c.ellipse(300, 300, 90, 120, 255, 0);
+    c.text(textBox);
+    // 말풍선 안쪽을 위쪽(y 180~300)만으로 준 경우: 아래쪽 글자도 같은 세로줄이라 지워져야 함
+    const upper: BubbleShape = {
+      top: (180 / H) * 1000, rowHeight: (10 / H) * 1000,
+      rows: Array.from({ length: 12 }, () => [(210 / W) * 1000, (390 / W) * 1000] as [number, number]),
+      centerX: 500, centerY: 400,
+    };
+    const m = buildGlyphMask(c.regionFor(textBox), textBox, 16, W, H, upper)!;
+    const at = (x: number, y: number) => {
+      const gx = x - m.x;
+      const gy = y - m.y;
+      return gx >= 0 && gy >= 0 && gx < m.width && gy < m.height ? m.data[gy * m.width + gx] : 0;
+    };
+    expect(at(textBox.xmin + 3, textBox.ymin + 3)).toBe(1);
+    expect(at(textBox.xmin + 3, 345)).toBe(1); // 안쪽 밖이지만 같은 줄
   });
 
   it('말풍선 안쪽을 모르면(효과음 등) 마스크를 만들지 않는다', () => {

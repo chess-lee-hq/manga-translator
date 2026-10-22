@@ -807,6 +807,7 @@ export function buildGlyphMask(
   /** 후보 덩어리 번호 (0 = 후보 아님). 둘레 검사에서 이웃 글자 조각을 종이처럼 보려고 */
   const label = new Uint32Array(rw * rh);
   const candidates: number[][] = [];
+  const boxes: { minX: number; maxX: number; minY: number; maxY: number; inArea: boolean }[] = [];
   const stack: number[] = [];
   for (let y = wy0; y < wy1; y++) {
     for (let x = wx0; x < wx1; x++) {
@@ -851,8 +852,8 @@ export function buildGlyphMask(
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       if (cx < wx0 || cx >= wx1 || cy < wy0 || cy >= wy1) continue;
-      if (!inArea(cx, cy)) continue;
       candidates.push(component);
+      boxes.push({ minX, maxX, minY, maxY, inArea: inArea(cx, cy) });
       for (const p of component) label[p] = candidates.length;
     }
   }
@@ -860,8 +861,11 @@ export function buildGlyphMask(
   // 2) 둘레(획에서 ringDistance 떨어진 곳)가 대부분 종이 색이거나 이웃 글자 조각인 덩어리만 — 그림 선은 다른 선·톤과 얽혀 있음
   //    (빽빽한 한자는 한 조각 둘레에 같은 글자의 다른 조각이 붙어 있어, 이웃 후보 조각은 종이처럼 셈)
   const accepted: number[] = [];
+  const isAccepted = new Uint8Array(candidates.length);
   const d = GLYPH_MASK.ringDistance;
   candidates.forEach((component, index) => {
+    // 말풍선 안쪽(가운데 기준)이 아닌 덩어리는 아래 "줄 이어짐"으로만 살림
+    if (!boxes[index].inArea) return;
     const own = index + 1;
     let ok = 0;
     let ring = 0;
@@ -880,8 +884,48 @@ export function buildGlyphMask(
       }
     }
     if (ring > 0 && ok / ring < GLYPH_MASK.minPaperRing) return;
+    isAccepted[index] = 1;
     for (const p of component) accepted.push(p);
   });
+
+  // 3) 줄 이어짐: 고른 글자들이 이루는 줄(세로쓰기는 세로줄, 가로쓰기는 가로줄) 위에 있는 덩어리는 글자로 살림.
+  //    말풍선 가장자리 줄의 글자(안쪽 판정이 거친 격자라 빠짐)·그림과 가까워 둘레 검사에 떨어진 글자를 구함.
+  //    줄 = 고른 글자들의 가로(세로) 범위를 글자 크기 절반 안팎으로 겹쳐 묶은 것, 줄 길이 ±1글자 안의 덩어리만
+  const vertical = box.ymax - box.ymin >= box.xmax - box.xmin;
+  const lines: { lo: number; hi: number; from: number; to: number }[] = [];
+  boxes.forEach((b, i) => {
+    if (!isAccepted[i]) return;
+    const [lo, hi, from, to] = vertical ? [b.minX, b.maxX, b.minY, b.maxY] : [b.minY, b.maxY, b.minX, b.maxX];
+    const near = lines.find(line => lo <= line.hi + glyphPx * 0.3 && hi >= line.lo - glyphPx * 0.3);
+    if (near) {
+      near.lo = Math.min(near.lo, lo);
+      near.hi = Math.max(near.hi, hi);
+      near.from = Math.min(near.from, from);
+      near.to = Math.max(near.to, to);
+    } else {
+      lines.push({ lo, hi, from, to });
+    }
+  });
+  // 글자 하나뿐인 "줄"은 근거가 약하므로 글자 두 개 길이 이상인 줄만
+  const realLines = lines.filter(line => line.to - line.from >= glyphPx * 1.5 && line.hi - line.lo <= glyphPx * 1.8);
+  // 살린 글자로 줄이 늘어나면 그다음 글자도 이어서 (줄 끝에서 한 글자씩)
+  for (let changed = true; changed;) {
+    changed = false;
+    boxes.forEach((b, i) => {
+      if (isAccepted[i]) return;
+      const [lo, hi, from, to] = vertical ? [b.minX, b.maxX, b.minY, b.maxY] : [b.minY, b.maxY, b.minX, b.maxX];
+      const center = (lo + hi) / 2;
+      const line = realLines.find(l =>
+        center >= l.lo - glyphPx * 0.25 && center <= l.hi + glyphPx * 0.25 &&
+        to >= l.from - glyphPx * 1.2 && from <= l.to + glyphPx * 1.2);
+      if (!line) return;
+      isAccepted[i] = 1;
+      line.from = Math.min(line.from, from);
+      line.to = Math.max(line.to, to);
+      changed = true;
+      for (const p of candidates[i]) accepted.push(p);
+    });
+  }
   if (accepted.length === 0) return null;
 
   // 글자 영역 안 어두운 픽셀 중 덮은 비율 (말풍선 안쪽을 알면 그 안만, 테두리 쪽 오차를 빼려고 조금 안쪽까지만)
