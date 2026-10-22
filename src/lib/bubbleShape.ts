@@ -846,14 +846,16 @@ export function buildGlyphMask(
       const w = maxX - minX + 1;
       const h = maxY - minY + 1;
       const small = w <= maxSide && h <= maxSide;
-      const long = Math.min(w, h) <= thinSide && minX >= wx0 && maxX < wx1 && minY >= wy0 && maxY < wy1;
-      if (!small && !long) continue;
+      const thin = Math.min(w, h) <= thinSide;
+      const inWindow = minX >= wx0 && maxX < wx1 && minY >= wy0 && maxY < wy1;
+      if (!small && !thin) continue;
       // 가운데가 글자 영역(+여유) 안, 그리고 찾은 말풍선 안쪽이어야 글자 (여유 끝에 걸친 그림·말풍선 옆 얼굴 선 제외)
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       if (cx < wx0 || cx >= wx1 || cy < wy0 || cy >= wy1) continue;
       candidates.push(component);
-      boxes.push({ minX, maxX, minY, maxY, inArea: inArea(cx, cy) });
+      // 가늘고 긴 기호가 글자 영역 밖으로 삐져나와 있으면(검출 박스가 짧게 잡힘) 둘레 검사로는 고르지 않고 줄 이어짐으로만
+      boxes.push({ minX, maxX, minY, maxY, inArea: inArea(cx, cy) && (small || inWindow) });
       for (const p of component) label[p] = candidates.length;
     }
   }
