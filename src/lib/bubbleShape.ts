@@ -752,13 +752,20 @@ const GLYPH_MASK = {
   maxComponent: 2.5,
   /** 지울 때 획 둘레로 넓히는 두께 (글자 크기 배수, 최소 2px) — 인쇄 번짐·JPEG 얼룩까지 (0.08이면 옅은 잔상이 남았음) */
   dilate: 0.14,
+  maxDilatePx: 4,
   /** 종이 색으로 볼 밝기 */
   paperLuma: 200,
+  /** 획 둘레(획에서 2px 떨어진 곳) 중 종이 색이어야 하는 비율 — 글자는 흰 종이 위, 그림 선은 다른 선·톤과 얽혀 있음 */
+  minPaperRing: 0.6,
+  ringDistance: 2,
 } as const;
 
 /**
- * 원문 글자 획만 골라 마스크로 만듭니다. 글자 영역(+여유) 안에 가운데가 있고 글자 크기 2.5배 이하인 획 덩어리 = 글자.
- * 테두리선·말풍선 안으로 들어온 그림은 크거나 길게 이어져 있어 빠짐. 원본 해상도라 경계가 계단처럼 어긋나지 않음
+ * 원문 글자 획만 골라 마스크로 만듭니다. 글자 = 아래를 모두 만족하는 획 덩어리:
+ * - 글자 영역(+여유) 안에, 그리고 찾은 말풍선 안쪽에 가운데가 있음 (말풍선 옆 얼굴·옷 선 제외)
+ * - 글자 크기 2.5배 이하 (테두리선·큰 그림 제외)
+ * - 둘레가 대부분 종이 색 (그림 선은 다른 선·톤과 얽혀 있음)
+ * 말풍선 안쪽을 모르면(효과음 등) 만들지 않음. 원본 해상도라 경계가 계단처럼 어긋나지 않음
  */
 export function buildGlyphMask(
   region: PixelRegion,
@@ -770,7 +777,14 @@ export function buildGlyphMask(
   area?: BubbleShape | null,
 ): GlyphMask | null {
   const { data, width: rw, height: rh } = region;
-  if (!(glyphPx > 0)) return null;
+  if (!(glyphPx > 0) || !area) return null;
+  const inArea = (x: number, y: number) => {
+    const ny = ((y + region.y) / imageHeight) * 1000;
+    const row = area.rows[Math.floor((ny - area.top) / area.rowHeight)];
+    if (!row) return false;
+    const nx = ((x + region.x) / imageWidth) * 1000;
+    return nx >= row[0] && nx <= row[1];
+  };
   const pad = glyphPx * GLYPH_MASK.windowPad;
   const wx0 = Math.max(0, Math.floor(box.xmin - pad - region.x));
   const wy0 = Math.max(0, Math.floor(box.ymin - pad - region.y));
@@ -782,6 +796,9 @@ export function buildGlyphMask(
   const maxPixels = Math.ceil(maxSide * maxSide);
 
   const seen = new Uint8Array(rw * rh);
+  // 덩어리마다 다른 번호로 표시 (둘레 검사에서 자기 획인지 가림)
+  const marker = new Uint32Array(rw * rh);
+  let stamp = 1;
   const accepted: number[] = [];
   const stack: number[] = [];
   const component: number[] = [];
@@ -823,6 +840,27 @@ export function buildGlyphMask(
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       if (cx < wx0 || cx >= wx1 || cy < wy0 || cy >= wy1) continue;
+      if (!inArea(cx, cy)) continue;
+      // 둘레(획에서 ringDistance 떨어진 곳)가 대부분 종이 색인지
+      for (const p of component) marker[p] = stamp;
+      let paper = 0;
+      let ring = 0;
+      const d = GLYPH_MASK.ringDistance;
+      for (const p of component) {
+        const px = p % rw;
+        const py = (p - px) / rw;
+        for (const [ox, oy] of [[d, 0], [-d, 0], [0, d], [0, -d]] as const) {
+          const qx = px + ox;
+          const qy = py + oy;
+          if (qx < 0 || qy < 0 || qx >= rw || qy >= rh) continue;
+          const q = qy * rw + qx;
+          if (marker[q] === stamp) continue;
+          ring++;
+          if (lumaAt(data, q * 4) >= GLYPH_MASK.paperLuma) paper++;
+        }
+      }
+      stamp++;
+      if (ring > 0 && paper / ring < GLYPH_MASK.minPaperRing) continue;
       for (const p of component) accepted.push(p);
     }
   }
@@ -856,7 +894,8 @@ export function buildGlyphMask(
   }
 
   // 마스크 범위 = 고른 획 + 넓힘
-  const r = Math.max(2, Math.round(glyphPx * GLYPH_MASK.dilate));
+  // 큰 글씨(효과음)도 번짐 두께는 비슷하므로 위로 묶음 (글자 크기에 비례시키면 큰 덩어리로 번졌음)
+  const r = Math.min(GLYPH_MASK.maxDilatePx, Math.max(2, Math.round(glyphPx * GLYPH_MASK.dilate)));
   let mx0 = rw, my0 = rh, mx1 = -1, my1 = -1;
   for (const p of accepted) {
     const px = p % rw;

@@ -61,7 +61,10 @@ function canvas(fill = 255) {
   const full = (box: PixelBox, others: PixelBox[] = []) =>
     detectBubble(region(searchRegionFor(box, W, H)), box, W, H, others);
   const glyph = (box: PixelBox) => estimateGlyphSize(region(searchRegionFor(box, W, H)), box);
-  const mask = (box: PixelBox, size: number) => buildGlyphMask(region(searchRegionFor(box, W, H)), box, size, W, H);
+  const mask = (box: PixelBox, size: number) => {
+    const d = detectBubble(region(searchRegionFor(box, W, H)), box, W, H, []);
+    return buildGlyphMask(region(searchRegionFor(box, W, H)), box, size, W, H, d.shape ?? d.interior ?? null);
+  };
   return { ellipse, disc, rect, text, detect, why, full, glyph, mask };
 }
 
@@ -436,6 +439,12 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
     expect(at(300, 395)).toBe(0); // 그림
     expect(at(211, 300)).toBe(0); // 왼쪽 테두리선
     expect(m.color).toEqual([255, 255, 255]);
+  });
+
+  it('말풍선 안쪽을 모르면(효과음 등) 마스크를 만들지 않는다', () => {
+    const c = canvas(255);
+    c.text(textBox);
+    expect(c.mask(textBox, 16)).toBeNull();
   });
 
   it('원문이 기준보다 작거나 조금 큰 대사(1.5배 미만)는 모두 기준 크기', () => {
