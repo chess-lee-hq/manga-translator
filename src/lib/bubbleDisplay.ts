@@ -60,15 +60,16 @@ export const isNoBubble = (detection: BubbleDetection | null | undefined) =>
   !!detection && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure);
 
 /**
- * 화면·저장에서 실제로 쓰는 표시 방식. 직접 고른 방식 → 효과음 → 말풍선이 없는 글자 순으로 "작게(옆에 붙임)",
- * 그 밖은 덮기. 말풍선 없는 글자를 덮으면 그 자리의 그림까지 가리므로 원문은 두고 옆에 번역을 붙임
+ * 화면·저장에서 실제로 쓰는 표시 방식. 직접 고른 방식 → 효과음은 "작게(옆에 붙임)", 그 밖은 덮기.
+ * 말풍선이 없는 글자도 덮기 (예전엔 옆에 붙였는데 많아지면 화면을 가려, 2026-10-23 사용자 요청으로 덮기가 기본 — 옆에 붙이기는 직접 고름)
  */
 export function effectiveDisplayMode(
   result: Pick<TranslationResult, 'box_2d' | 'original_text' | 'translated_text' | 'display_mode'>,
-  detection: BubbleDetection | null | undefined,
+  /** 예전엔 말풍선이 없는 글자를 옆에 붙이는 데 썼음 (호출 쪽 호환을 위해 남김) */
+  _detection?: BubbleDetection | null,
 ): DisplayMode {
   if (result.display_mode === 'cover' || result.display_mode === 'tag') return result.display_mode;
-  if (isLikelySfx(result) || isNoBubble(detection)) return 'tag';
+  if (isLikelySfx(result)) return 'tag';
   return 'cover';
 }
 

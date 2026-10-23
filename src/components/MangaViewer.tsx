@@ -95,8 +95,16 @@ export function MangaViewer({
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // 원본 말풍선 모양 (페이지 픽셀을 읽어 비동기로 계산) + 모양·글·페이지 크기가 같으면 배치 결과를 재사용
+  // 보이는 페이지 먼저, 그다음 앞뒤 2장씩 미리 계산 (넘길 때 말풍선 배치가 바로 그려지도록)
+  const shapePages = useMemo(() => {
+    if (visibleIndices.length === 0) return [];
+    const first = Math.min(...visibleIndices);
+    const last = Math.max(...visibleIndices);
+    const around = [last + 1, last + 2, first - 1, first - 2].filter(i => i >= 0 && i < images.length);
+    return [...visibleIndices, ...around];
+  }, [visibleIndices, images.length]);
   const detectionOf = useBubbleShapes(
-    visibleIndices.filter(i => images[i]).map(i => ({ src: images[i].src, results: translationCache[getCacheKey(images[i].file)] || [] })),
+    shapePages.filter(i => images[i]).map(i => ({ src: images[i].src, results: translationCache[getCacheKey(images[i].file)] || [] })),
     scriptStyle === 'overlay',
   );
   /** 덮는 말풍선의 배치 (말풍선 모양 → 타원 → 네모 상자). 모양·글·페이지 크기·설정이 같으면 재사용 */
@@ -251,6 +259,8 @@ export function MangaViewer({
                       />
 
                       {results.map((result, bubbleIndex) => {
+                        // 말풍선 모양 계산 전에는 덮어쓰기를 그리지 않음 — 임시 배치(큰 네모 상자)가 잠깐 보였다가 바뀌며 깜빡였음 (영역 수정 중엔 그대로 보임)
+                        if (scriptStyle === 'overlay' && !isEditingBoxes && !detectionOf.isReady(img.src, result)) return null;
                         const [top0, left0, bottom0, right0] = getDisplayBox(result);
                         const boxWidth = right0 - left0;
                         const boxHeight = bottom0 - top0;

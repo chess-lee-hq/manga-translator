@@ -742,6 +742,9 @@ export function estimateGlyphSize(region: PixelRegion, box: PixelBox): number | 
   return sizes[Math.min(sizes.length - 1, Math.floor(sizes.length * 0.75))];
 }
 
+/** 큰 덩어리를 줄 단위로 잘라 쓸 때 모아 두는 픽셀 수 상한 (넘으면 그 덩어리는 건너뜀) */
+const BIG_COMPONENT_CAP = 60_000;
+
 /** 글자 획 마스크 규칙 */
 const GLYPH_MASK = {
   /** 이보다 어두우면 획 (안티에일리어싱 가장자리는 아래 dilate로 덮음) */
@@ -760,6 +763,8 @@ const GLYPH_MASK = {
   paperLuma: 200,
   /** 획 둘레(획에서 2px 떨어진 곳) 중 종이 색이어야 하는 비율 — 글자는 흰 종이 위, 그림 선은 다른 선·톤과 얽혀 있음 */
   minPaperRing: 0.7,
+  /** 글자 영역 안에 통째로 든 글자 크기 덩어리의 둘레 기준 (테두리선 옆 글자) */
+  minPaperRingInBox: 0.45,
   /** 둘레 검사에서 이 밝기 이상이면 종이 (획 기준 165보다 조금 밝으면 됨) */
   ringPaperLuma: 175,
   ringDistance: 2,
@@ -807,6 +812,8 @@ export function buildGlyphMask(
   /** 후보 덩어리 번호 (0 = 후보 아님). 둘레 검사에서 이웃 글자 조각을 종이처럼 보려고 */
   const label = new Uint32Array(rw * rh);
   const candidates: number[][] = [];
+  /** 글자 크기를 넘는 덩어리 (테두리·그림, 또는 그것에 붙은 글자) */
+  const bigComponents: number[][] = [];
   const boxes: { minX: number; maxX: number; minY: number; maxY: number; inArea: boolean }[] = [];
   const stack: number[] = [];
   for (let y = wy0; y < wy1; y++) {
@@ -823,7 +830,9 @@ export function buildGlyphMask(
         const p = stack.pop()!;
         const px = p % rw;
         const py = (p - px) / rw;
-        if (!tooBig) component.push(p);
+        // 큰 덩어리(테두리·그림에 붙은 글자일 수 있음)도 글자 근처 부분만 잘라 쓰려고, 창(글자 영역+여유) 안 픽셀은 모아 둠
+        // (컷 테두리처럼 페이지 전체로 이어진 덩어리도 창 안 부분만이라 크지 않음)
+        if (component.length < BIG_COMPONENT_CAP && (!tooBig || (px >= wx0 && px < wx1 && py >= wy0 && py < wy1))) component.push(p);
         if (px < minX) minX = px;
         if (px > maxX) maxX = px;
         if (py < minY) minY = py;
@@ -842,7 +851,10 @@ export function buildGlyphMask(
           }
         }
       }
-      if (tooBig) continue;
+      if (tooBig) {
+        if (component.length > 0 && component.length < BIG_COMPONENT_CAP) bigComponents.push(component);
+        continue;
+      }
       const w = maxX - minX + 1;
       const h = maxY - minY + 1;
       const small = w <= maxSide && h <= maxSide;
@@ -885,7 +897,16 @@ export function buildGlyphMask(
         if (label[q] > 0 || lumaAt(data, q * 4) >= GLYPH_MASK.ringPaperLuma) ok++;
       }
     }
-    if (ring > 0 && ok / ring < GLYPH_MASK.minPaperRing) return;
+    // 글자 영역 안에 통째로 들어 있는 글자 한 자 크기 덩어리는 테두리선 바로 옆이라 둘레가 덜 하얘도 글자로 봄
+    // (말풍선 끝에 붙어 쓴 첫 글자 「や」 등)
+    const b = boxes[index];
+    const side = Math.max(b.maxX - b.minX, b.maxY - b.minY) + 1;
+    const slack = glyphPx * 0.3;
+    const insideBox = b.minX + region.x >= box.xmin - slack && b.maxX + region.x <= box.xmax + slack
+      && b.minY + region.y >= box.ymin - slack && b.maxY + region.y <= box.ymax + slack;
+    const glyphLike = insideBox && side >= glyphPx * 0.5 && side <= glyphPx * 1.4;
+    const need = glyphLike ? GLYPH_MASK.minPaperRingInBox : GLYPH_MASK.minPaperRing;
+    if (ring > 0 && ok / ring < need) return;
     isAccepted[index] = 1;
     for (const p of component) accepted.push(p);
   });
@@ -928,6 +949,113 @@ export function buildGlyphMask(
       for (const p of candidates[i]) accepted.push(p);
     });
   }
+  // 4) 테두리·긴 선에 붙어 한 덩어리가 된 글자 (예: 「やァ」에서 이어진 긴 선에 닿은 「生」):
+  //    큰 덩어리 중 줄(세로줄 폭) 안에 든 부분만 지움. 단 줄을 가로질러 양옆으로 이어지는 선(테두리·긴 줄표)은 남김 — 테두리에 구멍이 나지 않게
+  for (const component of bigComponents) {
+    const inBig = new Set(component);
+    for (const line of realLines) {
+      const lo = line.lo - glyphPx * 0.15;
+      const hi = line.hi + glyphPx * 0.15;
+      const from = line.from - glyphPx * 1.2;
+      const to = line.to + glyphPx * 1.2;
+      const picked: number[] = [];
+      let first = Infinity;
+      let last = -Infinity;
+      for (const p of component) {
+        const px = p % rw;
+        const py = (p - px) / rw;
+        const [across, along] = vertical ? [px, py] : [py, px];
+        if (across < lo || across > hi || along < from || along > to) continue;
+        // 이 픽셀을 지나는 가로선(세로쓰기 기준)이 줄 양옆 밖까지 이어지면 가로지르는 선
+        let a = across;
+        let b = across;
+        const stepTo = (k: number) => (vertical ? py * rw + k : k * rw + px);
+        while (a > 0 && inBig.has(stepTo(a - 1))) a--;
+        while (b < (vertical ? rw : rh) - 1 && inBig.has(stepTo(b + 1))) b++;
+        // (글자 자기 가로획은 줄 폭보다 조금 넓을 수 있어 양옆으로 반 글자 넘게 이어질 때만 가로지르는 선)
+        if (a < lo - glyphPx * 0.5 && b > hi + glyphPx * 0.5) continue;
+        picked.push(p);
+        first = Math.min(first, along);
+        last = Math.max(last, along);
+      }
+      // 줄 방향으로 글자 일부만큼(0.4글자)은 있어야 — 테두리 끝자락 몇 점은 무시
+      if (picked.length > 0 && last - first >= glyphPx * 0.4) for (const p of picked) accepted.push(p);
+    }
+  }
+
+  // 5) 테두리선에 닿아 한 덩어리가 된 글자 (줄을 이루지 못한 짧은 줄의 글자, 예: 말풍선 위 끝에 붙은 「や」):
+  //    큰 덩어리 중 글자 영역 안에서 가로·세로로 길게 이어지지 않은 픽셀(테두리선이 아님)만 모아 글자 크기 조각이면 지움
+  const runLimit = glyphPx * 1.3;
+  for (const component of bigComponents) {
+    const inBig = new Set(component);
+    const run = (p: number, dx: number, dy: number) => {
+      let n = 0;
+      let x = p % rw;
+      let y = (p - x) / rw;
+      while (n <= runLimit) {
+        x += dx;
+        y += dy;
+        if (x < 0 || y < 0 || x >= rw || y >= rh || !inBig.has(y * rw + x)) break;
+        n++;
+      }
+      return n;
+    };
+    const picked = new Set<number>();
+    for (const p of component) {
+      const x = p % rw;
+      const y = (p - x) / rw;
+      if (x + region.x < box.xmin || x + region.x >= box.xmax || y + region.y < box.ymin || y + region.y >= box.ymax) continue;
+      if (run(p, 1, 0) + run(p, -1, 0) + 1 > runLimit) continue;
+      if (run(p, 0, 1) + run(p, 0, -1) + 1 > runLimit) continue;
+      picked.add(p);
+    }
+    // 고른 픽셀끼리 이어진 조각마다: 글자 한 자의 일부~한 자 크기이고 둘레가 어느 정도 종이면 글자
+    const done = new Set<number>();
+    for (const start of picked) {
+      if (done.has(start)) continue;
+      const piece: number[] = [];
+      const todo = [start];
+      done.add(start);
+      let minX = rw, maxX = -1, minY = rh, maxY = -1;
+      while (todo.length > 0) {
+        const p = todo.pop()!;
+        piece.push(p);
+        const x = p % rw;
+        const y = (p - x) / rw;
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const q = (y + dy) * rw + x + dx;
+            if (picked.has(q) && !done.has(q)) {
+              done.add(q);
+              todo.push(q);
+            }
+          }
+        }
+      }
+      const side = Math.max(maxX - minX, maxY - minY) + 1;
+      if (side < glyphPx * 0.4 || side > glyphPx * 1.4 || piece.length < 6) continue;
+      let ok = 0;
+      let ring = 0;
+      const pieceSet = new Set(piece);
+      for (const p of piece) {
+        const x = p % rw;
+        const y = (p - x) / rw;
+        for (const [ox, oy] of [[d, 0], [-d, 0], [0, d], [0, -d]] as const) {
+          const qx = x + ox;
+          const qy = y + oy;
+          if (qx < 0 || qy < 0 || qx >= rw || qy >= rh) continue;
+          const q = qy * rw + qx;
+          if (pieceSet.has(q)) continue;
+          ring++;
+          if (lumaAt(data, q * 4) >= GLYPH_MASK.ringPaperLuma) ok++;
+        }
+      }
+      if (ring > 0 && ok / ring < GLYPH_MASK.minPaperRingInBox) continue;
+      for (const p of piece) accepted.push(p);
+    }
+  }
+
   if (accepted.length === 0) return null;
 
   // 글자 영역 안 어두운 픽셀 중 덮은 비율 (말풍선 안쪽을 알면 그 안만, 테두리 쪽 오차를 빼려고 조금 안쪽까지만)

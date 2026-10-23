@@ -15,8 +15,11 @@ import { columnUnits, fillColumns, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, 
  */
 
 export const BUBBLE_FIT = {
-  /** 말풍선 맞춤에서 허용하는 가장 작은 글자 (배율 100% 화면 px). 이보다 작아져야 하면 맞춤을 포기 */
-  minFontPx: 12,
+  /**
+   * 말풍선 맞춤에서 허용하는 가장 작은 글자 (배율 100% 화면 px). 이보다 작아져야 하면 넘침.
+   * 12였는데 원문 글자가 아주 작은 말풍선(화면에서 8px 안팎)은 어떻게 배치해도 넘쳐, 네모 상자와 같은 10으로
+   */
+  minFontPx: 10,
   /**
    * 말풍선 맞춤에서 쓰는 가장 큰 글자 (배율 100% 화면 px). 네모 상자(28)보다 낮게 잡아
    * 큰 말풍선에서도 글자가 꽉 차지 않고 말풍선마다 크기가 비슷하게 (단행본처럼 여백이 남음)
@@ -591,16 +594,38 @@ export function fitIntoShape(
   minFont: number,
   maxFont: number,
 ): BubbleFit | null {
+  const vertical = () => layoutBubbleVertical(text, shape, pageWidth, pageHeight, minFont, maxFont);
+  // 가로 배치가 한 줄에 두세 글자씩 잘게 쪼개진 기둥이면(원문이 세로쓰기인 좁은 말풍선) 세로가 들어가는 한 세로가 더 읽기 좋음
+  const horizontal = (layout: BubbleTextLayout): BubbleFit => {
+    if (isChoppy(layout)) {
+      const v = vertical();
+      if (v) return { direction: 'vertical', layout: v };
+    }
+    return { direction: 'horizontal', layout };
+  };
   const keepWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, false);
-  if (keepWords) return { direction: 'horizontal', layout: keepWords };
+  if (keepWords) return horizontal(keepWords);
   const slight = layoutBubbleSlightOverflow(text, shape, pageWidth, pageHeight, measure, minFont, maxFont);
-  if (slight) return { direction: 'horizontal', layout: slight };
+  if (slight) return horizontal(slight);
   if (isTallShape(shape, pageWidth, pageHeight)) {
-    const vertical = layoutBubbleVertical(text, shape, pageWidth, pageHeight, minFont, maxFont);
-    if (vertical) return { direction: 'vertical', layout: vertical };
+    const v = vertical();
+    if (v) return { direction: 'vertical', layout: v };
   }
   const breakWords = layoutBubbleText(text, shape, pageWidth, pageHeight, measure, minFont, maxFont, true);
-  return breakWords ? { direction: 'horizontal', layout: breakWords } : null;
+  if (breakWords) return horizontal(breakWords);
+  // 가로로는 어떻게도 넘치는데 세로로는 들어가면 넘치게 두는 것보다 세로가 나음
+  if (!isTallShape(shape, pageWidth, pageHeight)) {
+    const v = vertical();
+    if (v) return { direction: 'vertical', layout: v };
+  }
+  return null;
+}
+
+/** 한 줄 평균 2.5글자 이하로 5줄 이상 — 가로로 쓰기엔 너무 잘게 쪼개진 배치 */
+function isChoppy(layout: BubbleTextLayout): boolean {
+  if (layout.lines.length < 5) return false;
+  const chars = layout.lines.reduce((sum, line) => sum + Array.from(line.text.replace(/\s/g, '')).length, 0);
+  return chars / layout.lines.length <= 2.5;
 }
 
 /**

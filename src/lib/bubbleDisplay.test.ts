@@ -135,13 +135,13 @@ describe('wantsBubbleFit (원본 말풍선 모양에 맞춰 넣을 대상)', () 
   });
 });
 
-describe('effectiveDisplayMode — 말풍선 없는 글자는 옆에 붙이기', () => {
+describe('effectiveDisplayMode — 말풍선 없는 글자도 덮기 (옆에 붙이기는 직접 고름)', () => {
   const line = { box_2d: [400, 400, 500, 600] as [number, number, number, number], original_text: 'ナレーションの文章', translated_text: '나레이션 문장입니다' };
   const someShape = { top: 0, rowHeight: 1, rows: [], centerX: 0, centerY: 0 };
 
-  it('그림·스크린톤 위(not-paper)나 흰 바탕에 떠 있는(leak) 글자는 작게(옆에)', () => {
-    expect(effectiveDisplayMode(line, { shape: null, failure: 'not-paper' })).toBe('tag');
-    expect(effectiveDisplayMode(line, { shape: null, failure: 'leak' })).toBe('tag');
+  it('그림·스크린톤 위(not-paper)나 흰 바탕에 떠 있는(leak) 글자도 덮기', () => {
+    expect(effectiveDisplayMode(line, { shape: null, failure: 'not-paper' })).toBe('cover');
+    expect(effectiveDisplayMode(line, { shape: null, failure: 'leak' })).toBe('cover');
   });
 
   it('말풍선이 있거나 모양만 못 딴 경우, 모양 계산 전에는 덮기', () => {
@@ -151,6 +151,6 @@ describe('effectiveDisplayMode — 말풍선 없는 글자는 옆에 붙이기',
   });
 
   it('직접 고른 방식이 우선', () => {
-    expect(effectiveDisplayMode({ ...line, display_mode: 'cover' }, { shape: null, failure: 'not-paper' })).toBe('cover');
+    expect(effectiveDisplayMode({ ...line, display_mode: 'tag' }, { shape: null, failure: 'not-paper' })).toBe('tag');
   });
 });
