@@ -601,8 +601,24 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     expect(lowest).toBeLessThan(700);
   });
 
-  it('말풍선 없는 글자·모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {
-    expect(planBubble(result(), { shape: null, failure: 'not-paper' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
+  it('말풍선 없는 글자는 둥근 상자 안에 말풍선과 같은 규칙으로 (세로로 긴 상자는 위아래를 써서 옆으로 안 삐져나감)', () => {
+    // 세로로 긴 표시 박스 (원문 세로쓰기 해설)
+    const tall = result({ box_2d: [300, 470, 700, 530], translated_text: '진짜 노림수는 가리가네산이다!' });
+    const plan = planBubble(tall, { shape: null, failure: 'not-paper' }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind).toBe('fit');
+    if (plan.kind !== 'fit') return;
+    expect(plan.fit.layout.overflow).toBe(false);
+    const [, x0, , x1] = [300, 470 - 9, 700, 530 + 9]; // 표시 박스는 가로 1.3배
+    if (plan.fit.direction === 'horizontal') {
+      for (const line of plan.fit.layout.lines) {
+        const half = measure(line.text, plan.fit.layout.fontSize) / 2;
+        expect(line.cx - half).toBeGreaterThanOrEqual(x0 - 1);
+        expect(line.cx + half).toBeLessThanOrEqual(x1 + 1);
+      }
+    }
+  });
+
+  it('모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {
     expect(planBubble(result(), undefined, 1000, 1000, measure, 12, 20).kind).toBe('box');
     expect(planBubble(result({ fit_bubble: false }), { shape: null, failure: 'merged' }, 1000, 1000, measure, 12, 20).kind).toBe('box');
   });

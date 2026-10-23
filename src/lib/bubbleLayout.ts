@@ -1,7 +1,7 @@
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape, type GlyphMask } from './bubbleShape';
 import { wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
-import { columnUnits, fillColumns, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
+import { columnUnits, fillColumns, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
 
 /**
  * 원본 말풍선 모양 안에 번역문을 배치합니다. (화면과 이미지 저장이 같은 계산 사용)
@@ -550,6 +550,69 @@ export function isTallShape(shape: BubbleShape, pageWidth: number, pageHeight: n
   return width > 0 && height / width >= BUBBLE_FIT.verticalMinAspect;
 }
 
+/** 말풍선 넓이가 표시용 박스의 이 배수를 넘으면 원문 자리 둘레(박스의 localScale배)로 잘라 씀 */
+const LOCALIZE = { areaRatio: 4, scale: 1.8 } as const;
+
+function shapeArea(shape: BubbleShape): number {
+  return shape.rows.reduce((sum, row) => sum + (row ? row[1] - row[0] : 0), 0) * shape.rowHeight;
+}
+
+/** 큰 말풍선 모양을 원문 자리(표시용 박스를 키운 범위)로 잘라, 가운데를 원문 자리로 */
+export function localizeShape(shape: BubbleShape, box: [number, number, number, number]): BubbleShape {
+  const [ymin, xmin, ymax, xmax] = box;
+  const boxArea = (ymax - ymin) * (xmax - xmin);
+  if (!(boxArea > 0) || shapeArea(shape) <= boxArea * LOCALIZE.areaRatio) return shape;
+  const cx = (xmin + xmax) / 2;
+  const cy = (ymin + ymax) / 2;
+  const halfW = ((xmax - xmin) / 2) * LOCALIZE.scale;
+  const halfH = ((ymax - ymin) / 2) * LOCALIZE.scale;
+  const rows = shape.rows.map((row, i) => {
+    if (!row) return null;
+    const y = shape.top + (i + 0.5) * shape.rowHeight;
+    if (y < cy - halfH || y > cy + halfH) return null;
+    const l = Math.max(row[0], cx - halfW);
+    const r = Math.min(row[1], cx + halfW);
+    return r > l ? ([l, r] as [number, number]) : null;
+  });
+  const first = rows.findIndex(Boolean);
+  if (first < 0) return shape;
+  const last = rows.length - 1 - [...rows].reverse().findIndex(Boolean);
+  const safe = shape.safeRows?.slice(first, last + 1).map((row, k) => {
+    const clip = rows[first + k];
+    if (!row || !clip) return null;
+    const l = Math.max(row[0], clip[0]);
+    const r = Math.min(row[1], clip[1]);
+    return r > l ? ([l, r] as [number, number]) : null;
+  });
+  return {
+    top: shape.top + first * shape.rowHeight,
+    rowHeight: shape.rowHeight,
+    rows: rows.slice(first, last + 1),
+    ...(safe ? { safeRows: safe } : {}),
+    centerX: cx,
+    centerY: cy,
+  };
+}
+
+/** 표시용 박스(0~1000)를 모서리가 둥근 흰 상자 모양으로 (radiusPx: 그리는 좌표계 px) */
+export function roundedBoxShape(box: [number, number, number, number], pageWidth: number, pageHeight: number, radiusPx: number): BubbleShape {
+  const [ymin, xmin, ymax, xmax] = box;
+  const rows = 48;
+  const rowHeight = (ymax - ymin) / rows;
+  const heightPx = ((ymax - ymin) / 1000) * pageHeight;
+  const widthPx = ((xmax - xmin) / 1000) * pageWidth;
+  const r = Math.max(0, Math.min(radiusPx, heightPx / 2, widthPx / 2));
+  const shapeRows: [number, number][] = [];
+  for (let i = 0; i < rows; i++) {
+    const yPx = ((i + 0.5) / rows) * heightPx;
+    const dy = Math.max(0, r - Math.min(yPx, heightPx - yPx));
+    const insetPx = r - Math.sqrt(Math.max(0, r * r - dy * dy));
+    const inset = (insetPx / pageWidth) * 1000;
+    shapeRows.push([xmin + inset, xmax - inset]);
+  }
+  return { top: ymin, rowHeight, rows: shapeRows, centerX: (xmin + xmax) / 2, centerY: (ymin + ymax) / 2 };
+}
+
 /**
  * 말풍선은 있어 보이는데 테두리를 못 딴 경우 번역문을 놓을 타원 (0~1000).
  * 글자 영역 네 모서리를 지나는 타원보다 조금 크게. 흰색은 이 타원이 아니라 원문 글자 영역만 칠함 (planBubble)
@@ -745,6 +808,8 @@ export function planBubble(
 ): BubblePlan {
   const plan = planBubbleUntrimmed(result, detection, pageWidth, pageHeight, measure, minFont, maxFont);
   if (plan.kind !== 'fit') return plan;
+  // 말풍선 없는 글자의 둥근 상자는 상자 전체를 칠함 (원문이 그림·톤 위라 일부만 지우면 얼룩져 보임)
+  if (detection && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure)) return plan;
   // 원문 글자 획을 거의 다 골라냈으면 그 획만 지우고(마스크) 말풍선은 칠하지 않음 — 테두리·안으로 들어온 그림이 그대로 남음.
   // 글자가 테두리·그림에 붙어 못 고른 획이 많으면 예전처럼 원문 영역+번역문 줄 둘레를 함께 칠함
   const mask = detection?.glyphMask;
@@ -842,10 +907,19 @@ function planBubbleUntrimmed(
         };
       }
     }
-    const fit = fitOrOverflow(text, detection.shape, pageWidth, pageHeight, measure, minFont, maxFont);
-    return fit ? { kind: 'fit', fit, source: 'bubble', area: detection.shape } : { kind: 'box' };
+    // 말풍선이 원문 글자 영역보다 훨씬 크면(큰 말풍선에 짧은 글, 컷 테두리 안 흰 바탕 전체가 잡힌 경우)
+    // 무게중심이 원문 자리에서 멀어 번역문이 엉뚱한 곳(그림 가운데)으로 감 → 원문 자리 둘레로 잘라 그 안에
+    const local = localizeShape(detection.shape, getDisplayBox(result));
+    const fit = fitOrOverflow(text, local, pageWidth, pageHeight, measure, minFont, maxFont);
+    return fit ? { kind: 'fit', fit, source: 'bubble', area: local } : { kind: 'box' };
   }
-  if (NO_BUBBLE_FAILURES.has(detection.failure)) return { kind: 'box' };
+  // 말풍선이 없는 글자(그림·톤 위, 테두리 없는 해설): 표시용 박스를 둥근 흰 상자로 보고 말풍선과 같은 규칙으로 배치
+  // (예전 네모 상자 배치는 높이를 안 쓰고 폭에만 맞춰, 세로로 긴 상자에서 긴 어절이 옆으로 삐져나왔음)
+  if (NO_BUBBLE_FAILURES.has(detection.failure)) {
+    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+    return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
+  }
   // 글자 획 일부가 말풍선 밖에 걸쳐 모양을 확정 못 했어도, 찾은 말풍선 안쪽이 있으면 그 안에 놓고 그 안을 칠함
   // (글자 영역 둘레 타원은 글자 영역이 한쪽에 치우치면 말풍선 밖으로 삐져나왔음). 밖에 걸친 원문 획만 남을 수 있음
   const area = ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont);
