@@ -253,8 +253,14 @@ export function MangaViewer({
                       <img
                         src={img.src}
                         alt={`Manga Page ${imgIndex + 1}`}
-                        className="block transition-all duration-200"
-                        style={{ height: `calc((100vh - ${VIEWER_CHROME_PX}px) * ${scale})`, width: 'auto', objectFit: 'contain' }}
+                        className="block"
+                        // 너비를 이미지 비율로 미리 정해 둠 — width:auto면 새 페이지 이미지가 읽히기 전 너비가 0이라,
+                        // 페이지 비율(%)로 놓인 번역문이 가운데 세로 한 줄로 몰렸다가 펴지며 깜빡였음
+                        style={{
+                          height: `calc((100vh - ${VIEWER_CHROME_PX}px) * ${scale})`,
+                          width: img.width > 0 && img.height > 0 ? `calc((100vh - ${VIEWER_CHROME_PX}px) * ${scale} * ${img.width / img.height})` : 'auto',
+                          objectFit: 'contain',
+                        }}
                         draggable={false}
                       />
 
