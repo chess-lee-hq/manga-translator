@@ -149,6 +149,9 @@ const BUBBLE_RULE = {
   lobeWideGap: 1.5,
   /** 한쪽 칸에 원문 글자가 이 비율도 없으면 나누지 않음 */
   lobeMinInk: 0.22,
+  /** 엇갈린 말풍선: 양쪽 글자 묶음의 시작·끝이 글자 이만큼 어긋나고, 틈이 글자 lobeOffsetGap 이상이면 나눔 */
+  lobeOffsetGlyphs: 1.5,
+  lobeOffsetGap: 0.6,
   /** 나눈 양쪽 글자 폭이 모두 글자 이만큼 이하면 한 줄을 쪼갠 것이므로 나누지 않음 */
   lobeSingleLineGlyphs: 1.6,
   /**
@@ -586,8 +589,28 @@ function detectOnce(
         for (let k = first; k < gap.start; k++) sideA = Math.max(sideA, lenAt(k));
         let sideB = 0;
         for (let k = gap.end; k <= last; k++) sideB = Math.max(sideB, lenAt(k));
-        const ratio = neck / Math.max(1, Math.min(sideA, sideB));
+        let ratio = neck / Math.max(1, Math.min(sideA, sideB));
         const wide = gaps.length > 1 && gap.end - gap.start >= median * BUBBLE_RULE.lobeWideGap;
+        // 엇갈린 말풍선: 틈 양쪽 글자 묶음이 시작하는 높이(세로쓰기)·위치가 글자 1.5자 넘게 어긋나고 틈이 글자 0.6자 이상이면
+        // 잘록한 목이 없어도(두 말풍선이 비스듬히 겹쳐 붙음) 따로 나눔 — 한 말풍선 안의 줄은 대개 같은 높이에서 시작
+        if (glyphCells > 0 && gap.end - gap.start >= glyphCells * BUBBLE_RULE.lobeOffsetGap) {
+          const startOf = (from: number, to: number) => {
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (let k = from; k < to; k++) {
+              for (let b = b0; b < b1; b++) {
+                if (!counted(at(a0 + k, b))) continue;
+                lo = Math.min(lo, b);
+                hi = Math.max(hi, b);
+              }
+            }
+            return { lo, hi };
+          };
+          const A = startOf(first, gap.start);
+          const B = startOf(gap.end, last + 1);
+          const offset = Math.max(Math.abs(A.lo - B.lo), Math.abs(A.hi - B.hi));
+          if (offset >= glyphCells * BUBBLE_RULE.lobeOffsetGlyphs) ratio = Math.min(ratio, BUBBLE_RULE.lobeNeck - 0.01);
+        }
         if (!(ratio < BUBBLE_RULE.lobeNeck || (wide && ratio < BUBBLE_RULE.lobeLooseNeck))) continue;
         if (glyphCells > 0) {
           // 자르는 선과 나란한 방향으로 본 양쪽 글자 폭: 둘 다 글자 1.6자 이하면 한 줄
@@ -616,11 +639,34 @@ function detectOnce(
     const sides = axis === 'x'
       ? [(i: number) => coord(i) >= cut, (i: number) => coord(i) < cut]
       : [(i: number) => coord(i) < cut, (i: number) => coord(i) >= cut];
+    // 말풍선 안쪽을 양쪽 글자에서 동시에 채워 나가 먼저 닿은 쪽 몫으로 (곧은 선으로 자르면 비스듬히 붙은 말풍선은 남의 칸을 먹음)
+    const owner = new Int8Array(gw * gh).fill(-1);
+    const queue: number[] = [];
+    sides.forEach((side, k) => {
+      for (let gy = gby0; gy < gby1; gy++) {
+        for (let gx = gbx0; gx < gbx1; gx++) {
+          const i = gy * gw + gx;
+          if (counted(i) && side(i) && owner[i] < 0) {
+            owner[i] = k;
+            queue.push(i);
+          }
+        }
+      }
+    });
+    for (let head = 0; head < queue.length; head++) {
+      const i = queue[head];
+      for (const n of [i - 1, i + 1, i - gw, i + gw]) {
+        if (n >= 0 && n < gw * gh && owner[n] < 0 && inside(n)) {
+          owner[n] = owner[i];
+          queue.push(n);
+        }
+      }
+    }
     let totalInk = 0;
     const lobes: BubbleLobe[] = [];
     const inks: number[] = [];
-    for (const side of sides) {
-      const part = shapeOf(i => inside(i) && side(i));
+    for (const [k, side] of sides.entries()) {
+      const part = shapeOf(i => inside(i) && owner[i] === k);
       if (!part || part.area < boxCells * BUBBLE_RULE.minEnclosureRatio * 0.5) return undefined;
       let n = 0;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
