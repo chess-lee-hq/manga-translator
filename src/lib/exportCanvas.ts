@@ -181,7 +181,6 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   // 화면 CSS 1px이 원본 이미지에서 몇 px인지
   const cssPx = height / Math.max(1, options.displayPageHeight);
   const minFont = OVERLAY_STYLE.minFontPx * options.viewScale * cssPx;
-  const maxFont = OVERLAY_STYLE.maxFontPx * options.viewScale * cssPx;
   const { measure, setFont } = createTextMeasurer(options.fontFamily || DEFAULT_FONT_FAMILY, ctx);
 
   // 원본 말풍선 모양 (화면과 같은 규칙으로 찾음). 말풍선이 없는 글자를 옆에 붙이는 판단에도 쓰므로
@@ -227,6 +226,8 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     if (!(boxWidth > 0 && boxHeight > 0)) continue;
 
     const text = result.translated_text ?? '';
+    // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (화면과 같은 규칙)
+    const boxMaxFont = Math.max(minFont, bubbleMaxFont(result));
     const cx = ((xmin + xmax) / 2 / 1000) * width;
     const cy = ((ymin + ymax) / 2 / 1000) * height;
     const shadowBlur = OVERLAY_STYLE.shadowBlurPx * cssPx * outputScale;
@@ -234,13 +235,13 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
 
     // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
     if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {
-      const layout = layoutVerticalText(text, boxWidth, boxHeight, minFont, maxFont, cssPx);
+      const layout = layoutVerticalText(text, boxWidth, boxHeight, minFont, boxMaxFont, cssPx);
       drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
       drawVerticalColumns(ctx, layout, cx, cy, setFont);
       continue;
     }
 
-    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, maxFont);
+    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, boxMaxFont);
     const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx);
     drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);

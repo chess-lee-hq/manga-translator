@@ -428,7 +428,8 @@ export function MangaViewer({
                           const boxPixelWidth = (boxWidth / 1000) * pageWidth;
                           const boxPixelHeight = (boxHeight / 1000) * pageHeight;
                           const minFont = OVERLAY_STYLE.minFontPx * scale;
-                          const maxFont = OVERLAY_STYLE.maxFontPx * scale;
+                          // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (직접 그린·옮긴 영역도 상자를 꽉 채우도록 키우지 않음)
+                          const maxFont = Math.max(minFont, maxFontOf(result));
                           const textDirection = resolveTextDirection(result, boxPixelWidth, boxPixelHeight, minFont, 1);
                           const verticalLayout = textDirection === 'vertical'
                             ? layoutVerticalText(result.translated_text, boxPixelWidth, boxPixelHeight, minFont, maxFont, 1)
@@ -438,7 +439,7 @@ export function MangaViewer({
                             <span
                               className="bg-white text-gray-900 flex flex-col items-center justify-center"
                               style={{
-                                fontSize: `clamp(${OVERLAY_STYLE.minFontPx * scale}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${OVERLAY_STYLE.maxFontPx * scale}px)`,
+                                fontSize: `clamp(${minFont}px, min(${maxCqi}cqi, ${maxCqh}cqh), ${maxFont}px)`,
                                 fontWeight: OVERLAY_STYLE.fontWeight,
                                 lineHeight: OVERLAY_STYLE.lineHeight,
                                 // 어절 단위로 줄바꿈하고, 한 어절이 줄보다 길 때만 overflowWrap이 글자 단위로 자동으로 끊음
