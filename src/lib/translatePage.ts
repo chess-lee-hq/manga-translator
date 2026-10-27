@@ -12,6 +12,7 @@ import { buildJoinHint, buildLengthHint, estimateCharLimits } from './charBudget
 import { createTextMeasurer } from './overlayLayout';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
+import { stripFurigana } from './prompt';
 import { sanitizeResults } from './results';
 import { applyQualityRetry, assessCell, REVIEW_LABELS, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
@@ -71,9 +72,25 @@ export function fillJoinedGaps(translations: GridTranslationResult[], cells: Gri
   return translations.map(t => (fixed.has(t.id) ? { ...t, translated_text: fixed.get(t.id)! } : t));
 }
 
+/** 다시 물어봐도 번역이 빈 칸에 붙이는 검토 표시 */
+export const MISSING_TRANSLATION_REVIEW = '번역 빠짐 — 원문 그대로 둠';
+
+/**
+ * 다시 물어봐도 번역이 빈 칸: 원문 글자가 있으면 버리지 않고 원문을 그대로 넣고 검토 표시
+ * (빈 칸은 결과에서 빠져 번역도 원문 지우기도 안 됐음 — 「……何」. 검토 목록에서 찾아 손으로 고칠 수 있게)
+ */
+export function keepUntranslatedCells(translations: GridTranslationResult[]): GridTranslationResult[] {
+  return translations.map(t => {
+    if (t.translated_text?.trim()) return t;
+    const original = stripFurigana(t.original_text ?? '').trim();
+    if (!/[\p{L}\p{N}]/u.test(original)) return t;
+    return { ...t, translated_text: original, review: MISSING_TRANSLATION_REVIEW };
+  });
+}
+
 /** 모델이 같은 칸 번호를 두 번 돌려주는 경우가 있어(중복 번역의 원인) 첫 번째 응답만 사용합니다. */
 export function mapGridToResults(translations: GridTranslationResult[], cells: GridCellInfo[], width: number, height: number): RawTranslationResult[] {
-  translations = fillJoinedGaps(translations, cells);
+  translations = keepUntranslatedCells(fillJoinedGaps(translations, cells));
   const used = new Set<number>();
   const results: RawTranslationResult[] = [];
   for (const t of translations) {
@@ -92,7 +109,7 @@ export function mapGridToPages(
   cells: GridCellInfo[],
   sizeOf: (pageId: string) => { width: number; height: number },
 ): Map<string, RawTranslationResult[]> {
-  translations = fillJoinedGaps(translations, cells);
+  translations = keepUntranslatedCells(fillJoinedGaps(translations, cells));
   const used = new Set<number>();
   const byPage = new Map<string, RawTranslationResult[]>();
   for (const t of translations) {

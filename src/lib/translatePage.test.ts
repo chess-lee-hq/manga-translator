@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fillJoinedGaps, mapGridToPages, mapGridToResults } from './translatePage';
+import { fillJoinedGaps, keepUntranslatedCells, mapGridToPages, mapGridToResults, MISSING_TRANSLATION_REVIEW } from './translatePage';
 import type { BoundingBox } from './yoloPostprocess';
 
 const box = (over: Partial<BoundingBox> = {}) =>
@@ -87,5 +87,25 @@ describe('fillJoinedGaps — 이어진 말풍선 칸에 몰아 쓴 번역 나누
       { id: 2, original_text: '領民に慕われる五郎様は', translated_text: '백성의 신망을 얻으신 고로 님은 오다에게도 중요한 인물이옵니다' },
     ] as never, cells as never);
     expect(out[0].translated_text).toBe('…');
+  });
+});
+
+describe('keepUntranslatedCells — 다시 물어봐도 번역이 빈 칸', () => {
+  it('원문 글자가 있으면 버리지 않고 원문을 그대로 넣고 검토 표시 (「……何」)', () => {
+    const out = keepUntranslatedCells([
+      { id: 1, original_text: '……何', translated_text: '' },
+      { id: 2, original_text: '是は!?', translated_text: '이건!?' },
+    ] as never);
+    expect(out[0]).toMatchObject({ translated_text: '……何', review: MISSING_TRANSLATION_REVIEW });
+    expect(out[1].translated_text).toBe('이건!?');
+    expect(out[1].review).toBeUndefined();
+  });
+
+  it('원문도 비었거나 기호뿐이면(그림을 글자로 잘못 잡은 자리) 그대로 둬서 빠지게 함', () => {
+    const out = keepUntranslatedCells([
+      { id: 1, original_text: '', translated_text: '' },
+      { id: 2, original_text: '……', translated_text: ' ' },
+    ] as never);
+    expect(out.map(t => t.translated_text.trim())).toEqual(['', '']);
   });
 });

@@ -560,6 +560,17 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     expect(((Math.max(...rows.map(r => r[1])) - Math.min(...rows.map(r => r[0]))) / 1000) * W).toBeLessThanOrEqual(104);
   });
 
+  it('찾은 모양의 가운데가 원문 자리에서 크게 벗어나면(옆 흰 컷 바탕까지 번짐) 원문 자리에 넣는다', () => {
+    // 원문은 오른쪽(x 600~700), 잡힌 모양은 왼쪽 흰 바탕까지 넓게(x 100~720) → 무게중심이 원문 자리 밖
+    const shape = ellipseShapeForBox([300, 100, 700, 720], 1000, 1000);
+    const plan = planBubble(result({ translated_text: '송구하오나', box_2d: [400, 600, 600, 700] }), { shape }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind === 'fit' && plan.panel).toBe(true);
+    if (plan.kind !== 'fit') return;
+    const cx = plan.fit.direction === 'horizontal' ? plan.fit.layout.lines[0].cx : plan.fit.layout.columns[0].cx;
+    expect(cx).toBeGreaterThan(590);
+    expect(cx).toBeLessThan(710);
+  });
+
   it('찾은 말풍선에 안 들어가면 네모 상자로 덮지 않고 넘침으로 표시', () => {
     const shape = ellipseShapeForBox([480, 480, 520, 520], 1000, 1000);
     const plan = planBubble(result({ translated_text: '가'.repeat(80), box_2d: [490, 490, 510, 510] }), { shape }, 1000, 1000, measure, 12, 20);

@@ -572,10 +572,18 @@ function boxCoverage(shape: BubbleShape, box: [number, number, number, number]):
 
 /** 말풍선 넓이가 표시용 박스의 이 배수를 넘으면 원문 자리 둘레(박스의 localScale배)로 잘라 씀 */
 // 1.5배: 이름표 위 흰 옷까지 한 모양으로 잡혀(1.6배) 번역문이 옷 쪽(무게중심)으로 가던 경우까지. 보통 말풍선은 잘라도 거의 그대로
-const LOCALIZE = { areaRatio: 1.5, scale: 1.8 } as const;
+const LOCALIZE = { areaRatio: 1.5, scale: 1.8, strayRatio: 1 } as const;
 
 function shapeArea(shape: BubbleShape): number {
   return shape.rows.reduce((sum, row) => sum + (row ? row[1] - row[0] : 0), 0) * shape.rowHeight;
+}
+
+/** 모양의 무게중심이 원문 글자 영역(0~1000)을 그 폭·높이의 절반만큼 넓힌 범위 밖에 있음 */
+function strayedFrom(shape: BubbleShape, box: [number, number, number, number]): boolean {
+  const [ymin, xmin, ymax, xmax] = box;
+  const padX = ((xmax - xmin) / 2) * LOCALIZE.strayRatio;
+  const padY = ((ymax - ymin) / 2) * LOCALIZE.strayRatio;
+  return shape.centerX < xmin - padX || shape.centerX > xmax + padX || shape.centerY < ymin - padY || shape.centerY > ymax + padY;
 }
 
 /** 큰 말풍선 모양을 원문 자리(표시용 박스를 키운 범위)로 잘라, 가운데를 원문 자리로 */
@@ -941,6 +949,13 @@ function planBubbleUntrimmed(
     }
     // 말풍선이 원문 글자 영역보다 훨씬 크면(큰 말풍선에 짧은 글, 컷 테두리 안 흰 바탕 전체가 잡힌 경우)
     // 무게중심이 원문 자리에서 멀어 번역문이 엉뚱한 곳(그림 가운데)으로 감 → 원문 자리 둘레로 잘라 그 안에
+    // 찾은 모양의 무게중심이 원문 자리에서 크게 벗어나면 말풍선이 아니라 옆의 흰 컷 바탕까지 번져 잡힌 것
+    // (「……」 말풍선이 흰 바탕 컷과 맞닿음 — 번역문이 말풍선 밖 그림 위로 갔음) → 원문 자리의 둥근 상자에 들어가면 그쪽
+    if (strayedFrom(detection.shape, result.box_2d)) {
+      const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+      const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+      if (panelFit && !panelFit.layout.overflow) return { kind: 'fit', fit: panelFit, source: 'erase', area: panel, panel: true };
+    }
     const local = localizeShape(detection.shape, getDisplayBox(result));
     const fit = fitOrOverflow(text, local, pageWidth, pageHeight, measure, minFont, maxFont);
     // 넘치는데 표시용 박스가 찾은 모양 안에 거의 다 들면(잡힌 모양이 무늬 있는 옷·그림까지 번져 안쪽이 잘게 끊김 — 이름표 등)
