@@ -1536,6 +1536,15 @@ OpenAI 프롬프트 캐시는 **앞부분이 1,024토큰 이상** 이전 요청�
 
 되돌리기: `git revert 566d9c5`
 
+## 추가 수정 62 — OpenAI 6.1 Terra로, Luna 제거 (2026-10-28)
+시작 전 태그: `backup/before-terra61-2026-10-28` (= 72da45b). 커밋 ebe9ee0.
+- OpenAI 선택지: 6.1 Terra(기본, `gpt-6.1-terra`) / 6.1 Sol. 5.6 Terra·6 Luna 제거
+- GPT-6.1 Terra: 2026-10-26 출시, API 입력 $1 · 출력 $5 (1M 토큰, 5.6 Terra $2/$12의 절반 이하). 캐시 읽기 단가는 확인 못 함 — 사용량 창 단가는 OpenAI 가격표에서 직접 넣을 것
+- 예전에 Luna를 골라 뒀으면 6.1 Terra로 자동 전환, 'terra'를 골라 뒀으면 그대로 6.1 Terra로 바뀜 (설정 값 이름은 그대로 'terra')
+- 사용량 창의 옛 `gpt-5.6-terra` 기록은 그대로 남음 (새 기록은 `gpt-6.1-terra` 줄)
+
+되돌리기: `git revert ebe9ee0`
+
 ---
 
 ## 이번 패치 범위 밖 (다음 후보)
