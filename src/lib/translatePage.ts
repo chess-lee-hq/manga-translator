@@ -7,6 +7,7 @@ import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type 
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { splitTextBoxesByBubble } from './bubbleShape';
+import { splitTranslation } from './bubbleLayout';
 import { buildJoinHint, buildLengthHint, estimateCharLimits } from './charBudget';
 import { createTextMeasurer } from './overlayLayout';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
@@ -36,8 +37,43 @@ function toBox2d(box: BoundingBox, width: number, height: number): Box2d {
   return [(box.ymin / height) * 1000, (box.xmin / width) * 1000, (box.ymax / height) * 1000, (box.xmax / width) * 1000];
 }
 
+/**
+ * 이어진 말풍선을 나눈 칸(같은 joinGroup)에서 모델이 한 칸에 몰아 쓰고 나머지를 비웠으면,
+ * 몰아 쓴 번역문을 칸별 원문 길이 비율에 가장 가까운 문장 끝에서 나눠 채움 (빈 칸은 화면에서 빠져 원문이 그대로 남았음 — 「然らば」)
+ * 나눌 수 없으면(문장이 하나뿐) 빈 칸에 이어지는 말임을 뜻하는 "…"를 넣어 원문만은 지워지게 함
+ */
+export function fillJoinedGaps(translations: GridTranslationResult[], cells: GridCellInfo[]): GridTranslationResult[] {
+  const groupOf = new Map(cells.map(c => [c.id, c.box.joinGroup]));
+  const groups = new Map<number, GridTranslationResult[]>();
+  for (const t of translations) {
+    const g = groupOf.get(t.id);
+    if (g === undefined) continue;
+    groups.set(g, [...(groups.get(g) ?? []), t]);
+  }
+  const fixed = new Map<number, string>();
+  for (const members of groups.values()) {
+    const sorted = [...members].sort((a, b) => a.id - b.id);
+    const filled = sorted.filter(t => t.translated_text?.trim());
+    const empty = sorted.filter(t => !t.translated_text?.trim());
+    if (filled.length !== 1 || empty.length === 0 || sorted.length !== 2) continue;
+    const weight = (t: GridTranslationResult) => Math.max(1, Array.from((t.original_text ?? '').replace(/\s/g, '')).length);
+    const total = weight(sorted[0]) + weight(sorted[1]);
+    const parts = splitTranslation(filled[0].translated_text, [weight(sorted[0]) / total, weight(sorted[1]) / total]);
+    if (parts) {
+      fixed.set(sorted[0].id, parts[0]);
+      fixed.set(sorted[1].id, parts[1]);
+    } else {
+      fixed.set(empty[0].id, '…');
+    }
+  }
+  if (fixed.size === 0) return translations;
+  console.info(`[연리지] 한 칸에 몰아 쓴 번역 ${fixed.size}칸을 나눠 채움`);
+  return translations.map(t => (fixed.has(t.id) ? { ...t, translated_text: fixed.get(t.id)! } : t));
+}
+
 /** 모델이 같은 칸 번호를 두 번 돌려주는 경우가 있어(중복 번역의 원인) 첫 번째 응답만 사용합니다. */
 export function mapGridToResults(translations: GridTranslationResult[], cells: GridCellInfo[], width: number, height: number): RawTranslationResult[] {
+  translations = fillJoinedGaps(translations, cells);
   const used = new Set<number>();
   const results: RawTranslationResult[] = [];
   for (const t of translations) {
@@ -56,6 +92,7 @@ export function mapGridToPages(
   cells: GridCellInfo[],
   sizeOf: (pageId: string) => { width: number; height: number },
 ): Map<string, RawTranslationResult[]> {
+  translations = fillJoinedGaps(translations, cells);
   const used = new Set<number>();
   const byPage = new Map<string, RawTranslationResult[]>();
   for (const t of translations) {

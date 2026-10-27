@@ -1377,7 +1377,8 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
         blank = 0;
       } else if (cur.lo >= 0) {
         blank++;
-        if (blank > glyph * 0.8 || k === counts.length) {
+        // 위아래로 나눌 땐 이 방향이 줄과 줄 사이(가로)라 줄 간격·후리가나만큼은 이어진 것으로 봄 — 옆 줄(「籠ったとて」)이 빠졌음
+        if (blank > glyph * (stacked ? 2 : 0.8) || k === counts.length) {
           if (cur.ink > best.ink) best = { ...cur };
           cur = { lo: -1, hi: -1, ink: 0 };
         }

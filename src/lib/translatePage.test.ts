@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapGridToPages, mapGridToResults } from './translatePage';
+import { fillJoinedGaps, mapGridToPages, mapGridToResults } from './translatePage';
 import type { BoundingBox } from './yoloPostprocess';
 
 const box = (over: Partial<BoundingBox> = {}) =>
@@ -59,5 +59,33 @@ describe('mapGridToPages — 여러 페이지를 묶은 격자 되돌리기', ()
     ], cells, sizeOf);
     expect(byPage.get('B')!.map(r => r.translated_text)).toEqual(['다']);
     expect(byPage.has('A')).toBe(false);
+  });
+});
+
+describe('fillJoinedGaps — 이어진 말풍선 칸에 몰아 쓴 번역 나누기', () => {
+  const box = (joinGroup?: number) => ({ xmin: 0, ymin: 0, xmax: 1, ymax: 1, confidence: 1, classId: 3, ...(joinGroup ? { joinGroup } : {}) });
+  const cells = [
+    { id: 1, box: box(1), pageId: 'p' },
+    { id: 2, box: box(1), pageId: 'p' },
+    { id: 3, box: box(), pageId: 'p' },
+  ];
+
+  it('한 칸에 몰아 쓰고 다른 칸을 비우면 문장 끝에서 나눠 채운다', () => {
+    const out = fillJoinedGaps([
+      { id: 1, original_text: '何より', translated_text: '' },
+      { id: 2, original_text: 'かつて自ら治めた高遠城を見捨てるとは承服し難し', translated_text: '무엇보다! 한때 직접 다스리던 다카토오성을 버리시다니 납득하기 어렵소.' },
+      { id: 3, original_text: 'x', translated_text: '' },
+    ] as never, cells as never);
+    expect(out[0].translated_text).toBe('무엇보다!');
+    expect(out[1].translated_text).toBe('한때 직접 다스리던 다카토오성을 버리시다니 납득하기 어렵소.');
+    expect(out[2].translated_text).toBe('');
+  });
+
+  it('나눌 문장 끝이 없으면 빈 칸에 "…" (원문은 지워지게)', () => {
+    const out = fillJoinedGaps([
+      { id: 1, original_text: '然らば', translated_text: '' },
+      { id: 2, original_text: '領民に慕われる五郎様は', translated_text: '백성의 신망을 얻으신 고로 님은 오다에게도 중요한 인물이옵니다' },
+    ] as never, cells as never);
+    expect(out[0].translated_text).toBe('…');
   });
 });
