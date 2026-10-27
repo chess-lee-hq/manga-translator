@@ -71,6 +71,24 @@ export function estimateCharLimits(image: HTMLImageElement | HTMLCanvasElement, 
   });
 }
 
+/**
+ * 이어진 말풍선을 나눈 칸끼리 알려 줌 — 칸마다 따로 번역하되 한 사람이 이어서 하는 말이라 문장이 자연스럽게 이어지게
+ * (나눈 칸은 box.joinGroup이 같음, bubbleShape.splitTextBoxesByBubble)
+ */
+export function buildJoinHint(cells: { id: number; box: { joinGroup?: number } }[]): string {
+  const groups = new Map<number, number[]>();
+  for (const cell of cells) {
+    const g = cell.box.joinGroup;
+    if (g === undefined) continue;
+    groups.set(g, [...(groups.get(g) ?? []), cell.id]);
+  }
+  const lines = [...groups.values()].filter(ids => ids.length >= 2).map(ids => `- ${ids.map(id => `#${id}`).join(' → ')}`);
+  if (lines.length === 0) return '';
+  return `# 이어진 말풍선 (붙어 있는 말풍선을 칸마다 나눈 것 — 같은 사람이 이어서 하는 말)
+${lines.join('\n')}
+칸마다 그 칸의 원문만 번역해 따로 출력하되, 앞 칸에서 이어지는 말이니 순서대로 읽었을 때 한 문장처럼 자연스럽게 이어지게 해. 한 칸에 몰아 쓰지 마.`;
+}
+
 /** 프롬프트에 붙일 칸별 글자 수 한도 (한도가 있는 칸만) */
 export function buildLengthHint(cells: { id: number; charLimit?: number | null }[]): string {
   const limited = cells.filter((c): c is { id: number; charLimit: number } => typeof c.charLimit === 'number');

@@ -7,7 +7,7 @@ import { createGridImage, loadImage, readFileAsDataURL, type GridCellInfo, type 
 import { retranslateTextOpenAI, shortenTranslationOpenAI, translateFullPageOpenAI, translateGridImageOpenAI } from './openai';
 import { sortTextByReadingOrder } from './readingOrder';
 import { splitTextBoxesByBubble } from './bubbleShape';
-import { buildLengthHint, estimateCharLimits } from './charBudget';
+import { buildJoinHint, buildLengthHint, estimateCharLimits } from './charBudget';
 import { createTextMeasurer } from './overlayLayout';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
@@ -148,7 +148,7 @@ function viaOpenAiGrid(apiKey: string, version: OpenAiVersion, parts: GridPrompt
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
-      lengthHint: buildLengthHint(grid.cells),
+      lengthHint: [buildLengthHint(grid.cells), buildJoinHint(grid.cells)].filter(Boolean).join('\n\n'),
       ...(scenes?.length ? { sceneImages: scenes } : {}),
     });
 }
@@ -159,7 +159,7 @@ function viaGeminiGrid(apiKey: string, version: '3.6' | '3.8', parts: GridPrompt
       ...parts,
       pageCellCounts,
       speakerHint: buildSpeakerHint(grid.cells),
-      lengthHint: buildLengthHint(grid.cells),
+      lengthHint: [buildLengthHint(grid.cells), buildJoinHint(grid.cells)].filter(Boolean).join('\n\n'),
       ...(scenes?.length ? { sceneImages: scenes.map(inlineImage) } : {}),
     });
 }

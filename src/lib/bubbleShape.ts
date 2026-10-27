@@ -1265,7 +1265,10 @@ const TEXT_SPLIT = {
   /** 양쪽 묶음의 시작·끝 위치가 글자 이만큼 넘게 어긋나야 */
   offsetGlyphs: 1.5,
   /** 한쪽 묶음에 글자 획이 이 비율 이상 */
-  minInk: 0.2,
+  minInk: 0.08,
+  /** 한쪽 묶음이 위·아래 끝 모두 글자 이만큼 넘게 같은 쪽으로 밀려 있으면, 틈은 글자 shiftedMinGapGlyphs면 됨 */
+  shiftGlyphs: 1.5,
+  shiftedMinGapGlyphs: 0.4,
   /** 위아래로 쌓인 말풍선: 모든 줄을 가로지르는 빈 띠가 글자 이만큼 이상 */
   stackGapGlyphs: 1.2,
 } as const;
@@ -1340,9 +1343,11 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
     while (k < on.length && on[k]) k++;
     runs.push({ start, end: k });
   }
-  // 글자 0.2자보다 가는 "줄"은 테두리 조각(짧은 세로선)이라 빼고, 그 자리는 틈으로
+  // 글자 0.45자보다 가는 "줄"(후리가나·테두리 조각)과 획이 아주 적은 줄(보통 줄의 25% 미만)은 빼고, 그 자리는 틈으로
+  // — 줄 사이 후리가나가 두 말풍선 사이 틈을 메워 못 나눴음 (「何より」/「かつて自ら治めた」)
   for (let k = runs.length - 1; k >= 0; k--) {
-    if (runs[k].end - runs[k].start < glyph * 0.2) {
+    const peakOf = Math.max(...profile.slice(runs[k].start, runs[k].end));
+    if (runs[k].end - runs[k].start < glyph * 0.45 || peakOf < typical * 0.25) {
       for (let a = runs[k].start; a < runs[k].end; a++) on[a] = false;
       runs.splice(k, 1);
     }
@@ -1352,17 +1357,33 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
   const sorted = [...gaps].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   const total = profile.reduce((a, b) => a + b, 0);
+  // 묶음의 시작·끝: 줄 방향 투영에서 글자 간격(0.8자) 안으로 이어진 가장 큰 덩어리만 — 테두리 곡선 조각은 떨어져 있어 빠짐
   const extent = (from: number, to: number) => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (let a = a0 + from; a < a0 + to; a++) {
-      for (let b = b0; b < b1; b++) {
-        if (!isInk(a, b)) continue;
-        lo = Math.min(lo, b);
-        hi = Math.max(hi, b);
+    const counts: number[] = [];
+    for (let b = b0; b < b1; b++) {
+      let n = 0;
+      for (let a = a0 + from; a < a0 + to; a++) if (isInk(a, b)) n++;
+      counts.push(n);
+    }
+    let best = { lo: Infinity, hi: -Infinity, ink: 0 };
+    let cur = { lo: -1, hi: -1, ink: 0 };
+    let blank = 0;
+    for (let k = 0; k <= counts.length; k++) {
+      const n = k < counts.length ? counts[k] : 0;
+      if (n > 0) {
+        if (cur.lo < 0) cur = { lo: k, hi: k, ink: 0 };
+        cur.hi = k;
+        cur.ink += n;
+        blank = 0;
+      } else if (cur.lo >= 0) {
+        blank++;
+        if (blank > glyph * 0.8 || k === counts.length) {
+          if (cur.ink > best.ink) best = { ...cur };
+          cur = { lo: -1, hi: -1, ink: 0 };
+        }
       }
     }
-    return { lo, hi };
+    return { lo: best.lo + b0, hi: best.hi + b0 };
   };
   let best: { cut: number; gap: number } | null = null;
   gaps.forEach((gap, i) => {
@@ -1374,11 +1395,20 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
       if (gap < glyph * TEXT_SPLIT.stackGapGlyphs) return;
       if (cut - runs[0].start < glyph * 0.8 || runs[runs.length - 1].end - runs[i + 1].start < glyph * 0.8) return;
     } else {
-      if (gap < glyph * TEXT_SPLIT.minGapGlyphs) return;
-      if (gaps.length > 1 && gap < median * TEXT_SPLIT.minGapRatio) return;
       const A = extent(runs[0].start, cut);
       const B = extent(runs[i + 1].start, runs[runs.length - 1].end);
-      if (Math.max(Math.abs(A.lo - B.lo), Math.abs(A.hi - B.hi)) < glyph * TEXT_SPLIT.offsetGlyphs) return;
+      const dTop = B.lo - A.lo;
+      const dBottom = B.hi - A.hi;
+      // 한쪽 묶음이 위·아래 끝 모두 같은 쪽으로 통째로 밀려 있으면(비스듬히 붙은 다른 말풍선) 틈이 좁아도 나눔.
+      // 한 말풍선 안의 짧은 줄은 위나 아래 한쪽만 짧아지거나(가운데 정렬) 양쪽이 반대로 줄어듦
+      const shifted = Math.sign(dTop) === Math.sign(dBottom) && Math.min(Math.abs(dTop), Math.abs(dBottom)) >= glyph * TEXT_SPLIT.shiftGlyphs;
+      if (shifted) {
+        if (gap < glyph * TEXT_SPLIT.shiftedMinGapGlyphs) return;
+      } else {
+        if (gap < glyph * TEXT_SPLIT.minGapGlyphs) return;
+        if (gaps.length > 1 && gap < median * TEXT_SPLIT.minGapRatio) return;
+        if (Math.max(Math.abs(dTop), Math.abs(dBottom)) < glyph * TEXT_SPLIT.offsetGlyphs) return;
+      }
     }
     if (!best || gap > best.gap) best = { cut: cut + Math.floor(gap / 2), gap };
   });
@@ -1411,18 +1441,20 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
  * 그래야 AI가 칸마다 따로 번역하고, 화면에서도 칸마다 제 번역문이 들어감. (같은 요청 안이라 비용 그대로)
  * 나눈 칸은 읽는 순서대로 원래 자리에 넣으므로 순서가 유지됩니다.
  */
-export function splitTextBoxesByBubble<T extends PixelBox>(image: HTMLImageElement | HTMLCanvasElement, boxes: T[]): T[] {
+export function splitTextBoxesByBubble<T extends PixelBox>(image: HTMLImageElement | HTMLCanvasElement, boxes: T[]): (T & { joinGroup?: number })[] {
   if (boxes.length === 0) return boxes;
+  let group = 0;
   const reader = createPixelReader(image);
   const { width, height } = reader;
-  const out: T[] = [];
+  const out: (T & { joinGroup?: number })[] = [];
   boxes.forEach((box, i) => {
     const region = reader.read(searchRegionFor(box, width, height));
     const detection = region ? detectBubble(region, box, width, height, boxes.filter((_, j) => j !== i)) : null;
     const lobes = detection?.shape ? detection.lobes : undefined;
     if (lobes) {
       console.info(`[연리지] 글자 영역 하나를 이어진 말풍선 ${lobes.length}칸으로 나눔`);
-      for (const lobe of lobes) out.push({ ...box, ...lobe.box });
+      group++;
+      for (const lobe of lobes) out.push({ ...box, ...lobe.box, joinGroup: group });
       return;
     }
     // 말풍선 모양으로 못 나눈 경우(모양을 못 찾음, 테두리가 컷 선으로 열려 두 칸이 한 덩어리로 잡힘 등)에도
@@ -1430,7 +1462,8 @@ export function splitTextBoxesByBubble<T extends PixelBox>(image: HTMLImageEleme
     const parts = region ? splitByTextColumns(region, box) : null;
     if (parts) {
       console.info('[연리지] 말풍선 모양 없이 글자 줄 배치로 두 칸으로 나눔');
-      for (const part of parts) out.push({ ...box, ...part });
+      group++;
+      for (const part of parts) out.push({ ...box, ...part, joinGroup: group });
       return;
     }
     out.push(box);

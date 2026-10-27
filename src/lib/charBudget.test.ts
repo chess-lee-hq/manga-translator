@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLengthHint, sampleSentence } from './charBudget';
+import { buildJoinHint, buildLengthHint, sampleSentence } from './charBudget';
 import { buildGridPromptParts } from './translationPrompt';
 
 describe('charBudget', () => {
@@ -20,5 +20,19 @@ describe('charBudget', () => {
     const parts = buildGridPromptParts({ expectedCells: 3, glossary: [], lengthHint: buildLengthHint([{ id: 1, charLimit: 9 }]) } as never);
     expect(parts.volatile).toContain('#1 9자');
     expect(parts.stable).not.toContain('칸별 글자 수');
+  });
+});
+
+describe('buildJoinHint', () => {
+  it('나눈 칸끼리 "이어지는 말"로 묶어 알려 준다', () => {
+    const hint = buildJoinHint([
+      { id: 1, box: {} },
+      { id: 2, box: { joinGroup: 1 } },
+      { id: 3, box: { joinGroup: 1 } },
+      { id: 4, box: { joinGroup: 2 } },
+    ]);
+    expect(hint).toContain('#2 → #3');
+    expect(hint).not.toContain('#4');
+    expect(buildJoinHint([{ id: 1, box: {} }])).toBe('');
   });
 });
