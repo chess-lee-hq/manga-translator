@@ -40,7 +40,7 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     const results = await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
 
     const body = sentBody(fetchMock);
-    expect(body.model).toBe('gpt-5.6-terra');
+    expect(body.model).toBe('gpt-6.1-terra');
     expect(body.messages.at(-1).content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,GRID', detail: 'high' } });
     expect(results).toEqual([{ id: 1, original_text: 'あ', translated_text: '가' }]);
     // 요청은 이 한 번뿐 (다른 엔진을 거치지 않음)
@@ -77,10 +77,9 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
   });
 
   it.each([
-    ['terra', 'gpt-5.6-terra'],
+    ['terra', 'gpt-6.1-terra'],
     ['sol', 'gpt-6.1-sol'],
-    ['luna', 'gpt-6-luna'],
-  ] as const)('헤더에서 고른 %s는 %s 모델로 보낸다 (세대가 섞여 있어 표로 매핑)', async (version, model) => {
+  ] as const)('헤더에서 고른 %s는 %s 모델로 보낸다 ', async (version, model) => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI(version, 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
@@ -108,7 +107,7 @@ describe('translateFullPageOpenAI (말풍선을 못 찾았을 때)', () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse(JSON.stringify({ cells })));
     vi.stubGlobal('fetch', fetchMock);
 
-    const results = await translateFullPageOpenAI('luna', 'sk-test', 'data:image/jpeg;base64,PAGE');
+    const results = await translateFullPageOpenAI('terra', 'sk-test', 'data:image/jpeg;base64,PAGE');
 
     // 오른쪽 위부터 읽어야 함
     expect(results.map(r => r.translated_text)).toEqual(['오른쪽 위', '왼쪽 위']);
@@ -127,7 +126,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"notes":"- 주인공: 반말","glossary":[{"original":"雷神流","translated":"뇌신류"}]}'));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await summarizeWorkNotesOpenAI('luna', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
+    const result = await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }], '- 기존 노트', '', ['リョウ']);
 
     expect(result).toEqual({ notes: '- 주인공: 반말', glossary: [{ original: '雷神流', translated: '뇌신류' }] });
     expect(realCalls(fetchMock)).toHaveLength(1);
@@ -140,13 +139,13 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
 
   it('모델이 JSON 형식을 어기면 응답 전체를 노트로 쓴다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse('- 주인공: 반말')));
-    expect(await summarizeWorkNotesOpenAI('luna', 'sk-test', [{ original: 'あ', translated: '가' }])).toEqual({ notes: '- 주인공: 반말', glossary: [] });
+    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [{ original: 'あ', translated: '가' }])).toEqual({ notes: '- 주인공: 반말', glossary: [] });
   });
 
   it('대사가 없으면 요청하지 않고 기존 노트를 유지한다', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    expect(await summarizeWorkNotesOpenAI('luna', 'sk-test', [], '- 기존 노트')).toEqual({ notes: '- 기존 노트', glossary: [] });
+    expect(await summarizeWorkNotesOpenAI('terra', 'sk-test', [], '- 기존 노트')).toEqual({ notes: '- 기존 노트', glossary: [] });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -154,7 +153,7 @@ describe('작품 노트·문장 재번역도 같은 엔진으로 처리한다', 
     const fetchMock = vi.fn().mockResolvedValue(okResponse('권왕이다'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await retranslateTextOpenAI('luna', 'sk-test', '拳王だ', { glossary: { 拳王: '권왕', 南斗: '남두' } });
+    await retranslateTextOpenAI('terra', 'sk-test', '拳王だ', { glossary: { 拳王: '권왕', 南斗: '남두' } });
 
     const prompt = sentPrompt(fetchMock);
     expect(prompt).toContain('拳王 -> 권왕');
@@ -235,7 +234,7 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
     ]);
     expect(sentPrompt(fetchMock)).toContain('장면 이미지');
     // 캐시 준비 요청(장면 이미지 없음)은 모델 이름 줄로, 본 요청은 '· 장면' 줄로
-    expect(Object.keys(getUsageByModel('session'))).toContain('gpt-5.6-terra · 장면');
+    expect(Object.keys(getUsageByModel('session'))).toContain('gpt-6.1-terra · 장면');
   });
 
   it('장면 이미지가 없으면 프롬프트에도 안내가 없고 모델 이름 그대로 집계한다', async () => {
@@ -243,7 +242,7 @@ describe('[실험] 장면 이미지 함께 보내기', () => {
     vi.stubGlobal('fetch', fetchMock);
     await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,GRID'], 1);
     expect(sentPrompt(fetchMock)).not.toContain('장면 이미지');
-    expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-5.6-terra']);
+    expect(Object.keys(getUsageByModel('session'))).toEqual(['gpt-6.1-terra']);
   });
 });
 
@@ -399,7 +398,7 @@ describe('캐시 준비 (이미지 요청은 캐시에 쓰지 않으므로 글�
     const fetchMock = vi.fn().mockResolvedValue(reply(0));
     vi.stubGlobal('fetch', fetchMock);
     for (let i = 0; i < 10; i++) {
-      await translateGridImageOpenAI('luna', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: `## 노트 C${i}` });
+      await translateGridImageOpenAI('terra', 'sk-test', ['data:image/jpeg;base64,A'], 1, { context: `## 노트 C${i}` });
     }
     // 처음 8번은 준비, 그 뒤로는 안 함
     expect(fetchMock.mock.calls.filter(isWarmup)).toHaveLength(8);

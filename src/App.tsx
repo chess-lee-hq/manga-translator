@@ -66,15 +66,15 @@ const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
 const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
 /**
- * 고른 OpenAI 모델. 예전 키(openai-version)에는 한동안 기본값이던 6 Luna가 남아 있을 수 있어,
- * 새 키로 옮기면서 Luna는 기본값(5.6 Terra)으로 되돌린다. Sol을 골라 뒀던 사람은 그대로 Sol.
+ * 고른 OpenAI 모델 (6.1 Terra / 6.1 Sol). 예전에 6 Luna를 골라 뒀으면 기본값(6.1 Terra)으로. Sol을 골라 뒀던 사람은 그대로 Sol.
  */
 const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-model';
 const LEGACY_OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';
 
 function loadOpenAiVersion(): OpenAiVersion {
   const saved = localStorage.getItem(OPENAI_VERSION_STORAGE_KEY);
-  if (saved === 'terra' || saved === 'sol' || saved === 'luna') return saved;
+  if (saved === 'terra' || saved === 'sol') return saved;
+  if (saved === 'luna') return 'terra';
   return localStorage.getItem(LEGACY_OPENAI_VERSION_STORAGE_KEY) === 'sol' ? 'sol' : 'terra';
 }
 /** 1차 번역을 맡는 엔진(메인/서브 역할) — 기본은 OpenAI */
@@ -83,7 +83,7 @@ const MAIN_ENGINE_STORAGE_KEY = 'manga-translator-main-engine';
 const hasDraggedFiles = (e: ReactDragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
 function App() {
-  // 메인은 기본 OpenAI(5.6 Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
+  // 메인은 기본 OpenAI(6.1 Terra), Gemini는 보조 — 헤더의 스위치 버튼으로 역할을 통째로 바꿀 수 있음
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem(GOOGLE_KEY_STORAGE) || '');
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE) || '');
   const [geminiVersion, setGeminiVersion] = useState<GeminiVersion>(() => {

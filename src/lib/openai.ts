@@ -18,20 +18,18 @@ import {
 import { SCENE_USAGE_VARIANT } from './sceneThumbnail';
 import { recordUsage } from './usageLog';
 
-type OpenAiVersion = 'terra' | 'sol' | 'luna';
+type OpenAiVersion = 'terra' | 'sol';
 type HttpError = Error & { status?: number; retryAfterMs?: number };
 
 /**
  * 헤더에서 고르는 이름 → 실제 모델 ID.
- * 세대가 섞여 있어(5.6 / 6) 이름만 이어 붙이지 않고 표로 둡니다.
- * - terra: 기본값. 일본어 인식이 안정적
+ * - terra: 기본값. GPT-6.1 Terra (2026-10-26 출시, 입력 $1 · 출력 $5 / 1M — 5.6 Terra의 절반)
  * - sol: 가장 강한 인식·번역 (품질 검사 재요청의 승격 대상이기도 함)
- * - luna: 시험용. 고어체·붓글씨체 원문을 잘못 읽는 경우가 있어 지켜보는 중
+ * (5.6 Terra·6 Luna는 2026-10-28 사용자 요청으로 뺌)
  */
 const OPENAI_MODELS: Record<OpenAiVersion, string> = {
-  terra: 'gpt-5.6-terra',
+  terra: 'gpt-6.1-terra',
   sol: 'gpt-6.1-sol',
-  luna: 'gpt-6-luna',
 };
 
 const modelFor = (openAiVersion: OpenAiVersion) => OPENAI_MODELS[openAiVersion] ?? OPENAI_MODELS.terra;
