@@ -561,7 +561,7 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
 
   it('찾은 말풍선에 안 들어가면 네모 상자로 덮지 않고 넘침으로 표시', () => {
     const shape = ellipseShapeForBox([480, 480, 520, 520], 1000, 1000);
-    const plan = planBubble(result({ translated_text: '가'.repeat(80) }), { shape }, 1000, 1000, measure, 12, 20);
+    const plan = planBubble(result({ translated_text: '가'.repeat(80), box_2d: [490, 490, 510, 510] }), { shape }, 1000, 1000, measure, 12, 20);
     expect(plan.kind).toBe('fit');
     expect(plan.kind === 'fit' && plan.source).toBe('bubble');
     expect(plan.kind === 'fit' && plan.fit.layout.overflow).toBe(true);
@@ -616,6 +616,14 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
         expect(line.cx + half).toBeLessThanOrEqual(x1 + 1);
       }
     }
+  });
+
+  it('찾은 모양이 원문 글자 영역을 거의 못 품으면(옷·배경을 잘못 잡음) 글자 영역의 둥근 상자에', () => {
+    const elsewhere = ellipseShapeForBox([100, 100, 200, 200], 1000, 1000);
+    const plan = planBubble(result(), { shape: elsewhere }, 1000, 1000, measure, 12, 20);
+    expect(plan.kind === 'fit' && plan.source).toBe('erase');
+    if (plan.kind !== 'fit' || plan.fit.direction !== 'horizontal') return;
+    for (const line of plan.fit.layout.lines) expect(line.top).toBeGreaterThan(400);
   });
 
   it('모양 계산 전·맞춤을 끈 항목은 네모 상자', () => {

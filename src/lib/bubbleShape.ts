@@ -1266,6 +1266,8 @@ const TEXT_SPLIT = {
   offsetGlyphs: 1.5,
   /** 한쪽 묶음에 글자 획이 이 비율 이상 */
   minInk: 0.2,
+  /** 위아래로 쌓인 말풍선: 모든 줄을 가로지르는 빈 띠가 글자 이만큼 이상 */
+  stackGapGlyphs: 1.2,
 } as const;
 
 /**
@@ -1273,13 +1275,20 @@ const TEXT_SPLIT = {
  * 두 묶음이면 각각의 글자 범위(원본 px)를 돌려줌. 아니면 null. 읽는 순서(세로쓰기 오른쪽 먼저, 가로쓰기 위 먼저)
  */
 export function splitByTextColumns(region: PixelRegion, box: PixelBox): PixelBox[] | null {
+  // 1) 줄 사이 틈으로 (나란히 엇갈린 말풍선) 2) 줄 방향의 빈 띠로 (위아래로 쌓인 말풍선 — 「しかし」 아래 「不慮の儀」)
+  return splitAlong(region, box, false) ?? splitAlong(region, box, true);
+}
+
+function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): PixelBox[] | null {
   const glyph = estimateGlyphSize(region, box);
   if (!glyph) return null;
   const x0 = Math.max(0, Math.floor(box.xmin - region.x));
   const y0 = Math.max(0, Math.floor(box.ymin - region.y));
   const x1 = Math.min(region.width, Math.ceil(box.xmax - region.x));
   const y1 = Math.min(region.height, Math.ceil(box.ymax - region.y));
-  const vertical = y1 - y0 >= x1 - x0;
+  const writingVertical = y1 - y0 >= x1 - x0;
+  // vertical: 프로필을 가로(x)로 셈. 세로쓰기는 줄 사이(x)로, 쌓인 말풍선은 줄 방향(y)으로
+  const vertical = stacked ? !writingVertical : writingVertical;
   const [a0, a1, b0, b1] = vertical ? [x0, x1, y0, y1] : [y0, y1, x0, x1];
   // 글자 획만: 가로·세로로 글자 1.5자 넘게 곧게 이어진 선(말풍선 테두리·컷 선)은 빼고 셈 — 두 말풍선 사이 테두리 조각이 틈을 메웠음
   const bw = x1 - x0;
@@ -1357,14 +1366,20 @@ export function splitByTextColumns(region: PixelRegion, box: PixelBox): PixelBox
   };
   let best: { cut: number; gap: number } | null = null;
   gaps.forEach((gap, i) => {
-    if (gap < glyph * TEXT_SPLIT.minGapGlyphs) return;
-    if (gaps.length > 1 && gap < median * TEXT_SPLIT.minGapRatio) return;
     const cut = runs[i].end;
     const before = profile.slice(0, cut).reduce((a, b) => a + b, 0);
     if (Math.min(before, total - before) < total * TEXT_SPLIT.minInk) return;
-    const A = extent(runs[0].start, cut);
-    const B = extent(runs[i + 1].start, runs[runs.length - 1].end);
-    if (Math.max(Math.abs(A.lo - B.lo), Math.abs(A.hi - B.hi)) < glyph * TEXT_SPLIT.offsetGlyphs) return;
+    if (stacked) {
+      // 줄 방향으로 모든 줄을 가로지르는 빈 띠: 한 말풍선 안에선 다른 줄이 메우므로 거의 없음 (한 줄짜리 띄어쓰기는 1글자 남짓)
+      if (gap < glyph * TEXT_SPLIT.stackGapGlyphs) return;
+      if (cut - runs[0].start < glyph * 0.8 || runs[runs.length - 1].end - runs[i + 1].start < glyph * 0.8) return;
+    } else {
+      if (gap < glyph * TEXT_SPLIT.minGapGlyphs) return;
+      if (gaps.length > 1 && gap < median * TEXT_SPLIT.minGapRatio) return;
+      const A = extent(runs[0].start, cut);
+      const B = extent(runs[i + 1].start, runs[runs.length - 1].end);
+      if (Math.max(Math.abs(A.lo - B.lo), Math.abs(A.hi - B.hi)) < glyph * TEXT_SPLIT.offsetGlyphs) return;
+    }
     if (!best || gap > best.gap) best = { cut: cut + Math.floor(gap / 2), gap };
   });
   if (!best) return null;
@@ -1387,7 +1402,7 @@ export function splitByTextColumns(region: PixelRegion, box: PixelBox): PixelBox
   };
   const first = boxOf(0, cutAt);
   const second = boxOf(cutAt, profile.length);
-  // 세로쓰기는 오른쪽(뒤쪽) 묶음이 먼저
+  // 좌우로 나눴으면 오른쪽 묶음이 먼저(일본 만화), 위아래로 나눴으면 위가 먼저
   return vertical ? [second, first] : [first, second];
 }
 
