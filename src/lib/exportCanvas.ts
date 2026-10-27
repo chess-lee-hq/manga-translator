@@ -230,8 +230,9 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     const boxMaxFont = Math.max(minFont, bubbleMaxFont(result));
     const cx = ((xmin + xmax) / 2 / 1000) * width;
     const cy = ((ymin + ymax) / 2 / 1000) * height;
-    const shadowBlur = OVERLAY_STYLE.shadowBlurPx * cssPx * outputScale;
-    const shadowOffsetY = OVERLAY_STYLE.shadowOffsetYPx * cssPx * outputScale;
+    // 원문을 덮는 상자는 그림자 없이 (사용자 요청 — 말풍선 밖 작은 딱지만 그림자)
+    const shadowBlur = 0;
+    const shadowOffsetY = 0;
 
     // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
     if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {

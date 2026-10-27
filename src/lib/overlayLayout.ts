@@ -159,6 +159,8 @@ export const VERTICAL_TEXT = {
   columnWidth: 1.1,
   /** 가로로 썼을 때 한 줄에 이 글자 수도 못 들어가면 세로쓰기 (흰 영역을 넘치는 경우) */
   minCharsPerLine: 3,
+  /** 세로쓰기 상자에서 마지막 열에 이 칸 수 이하만 남으면 열을 줄이고 상자를 세로로 늘림 */
+  maxOrphanCells: 2,
   /** 한 글자뿐이면 세로·가로가 같으므로 가로로 둠 */
   minChars: 2,
 } as const;
@@ -270,13 +272,29 @@ export function layoutVerticalText(
   const build = (fontSize: number) => {
     const cellHeight = fontSize * VERTICAL_TEXT.cellHeight;
     const columnWidth = fontSize * VERTICAL_TEXT.columnWidth;
-    const capacity = Math.max(1, (boxHeight - padY * 2) / cellHeight);
+    let capacity = Math.max(1, (boxHeight - padY * 2) / cellHeight);
 
-    const columns = fillColumns(paragraphs, () => capacity);
+    let columns = fillColumns(paragraphs, () => capacity);
+    let extended = false;
+    // 마지막 열에 한두 글자만 남으면(「…골짜/기」) 열을 하나 줄이고 영역을 그만큼 세로로 늘림
+    const leftover = columns.length >= 2 ? columnUnits(columns[columns.length - 1]) : Infinity;
+    if (leftover <= VERTICAL_TEXT.maxOrphanCells) {
+      const target = columns.length - 1;
+      for (let grow = capacity + 0.5; grow <= capacity + VERTICAL_TEXT.maxOrphanCells * target + 0.5; grow += 0.5) {
+        const fewer = fillColumns(paragraphs, () => grow);
+        if (fewer.length <= target) {
+          columns = fewer;
+          capacity = grow;
+          extended = true;
+          break;
+        }
+      }
+    }
     const rows = Math.max(1, ...columns.map(columnUnits));
     return {
       fontSize,
       columns,
+      extended,
       contentWidth: columns.length * columnWidth + padX * 2,
       contentHeight: rows * cellHeight + padY * 2,
     };
@@ -291,7 +309,8 @@ export function layoutVerticalText(
 
   for (let fontSize = maxFontSize; fontSize >= minFontSize; fontSize -= step) {
     const built = build(fontSize);
-    if (built.contentWidth <= boxWidth && built.contentHeight <= boxHeight) return toLayout(built);
+    // 남은 한두 글자를 열로 따로 두지 않으려고 세로로 늘린 배치는 높이가 상자를 넘어도 받음
+    if (built.contentWidth <= boxWidth && (built.contentHeight <= boxHeight || built.extended)) return toLayout(built);
   }
   return toLayout(build(minFontSize));
 }

@@ -453,7 +453,6 @@ export function MangaViewer({
                                 minHeight: '100%',
                                 padding: `${OVERLAY_STYLE.paddingYPx}px ${OVERLAY_STYLE.paddingXPx}px`,
                                 borderRadius: `${OVERLAY_STYLE.radiusPx}px`,
-                                boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx}px ${OVERLAY_STYLE.shadowBlurPx}px rgba(0, 0, 0, 0.15)`,
                               }}
                             >
                               {result.translated_text}

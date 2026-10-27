@@ -88,3 +88,17 @@ describe('verticalCells — 세로쓰기 칸 나누기', () => {
     expect(layout.columns).toHaveLength(1);
   });
 });
+
+describe('layoutVerticalText — 마지막 열에 한두 글자만 남으면 한 줄로', () => {
+  it('「시나노국 기소 골짜기」가 두 열(…골짜/기)로 갈리지 않고 상자를 세로로 늘려 한 열', () => {
+    // 세로 9칸 남짓 들어가는 좁은 상자 (10글자 + 띄어쓰기 2)
+    const layout = layoutVerticalText('시나노국 기소 골짜기', 30, 130, 10, 12, 1);
+    expect(layout.columns).toHaveLength(1);
+    expect(layout.height).toBeGreaterThan(130);
+  });
+
+  it('남는 글자가 많으면 그대로 여러 열', () => {
+    const layout = layoutVerticalText('가나다라마바사아자차카타파하', 60, 80, 10, 12, 1);
+    expect(layout.columns.length).toBeGreaterThanOrEqual(2);
+  });
+});

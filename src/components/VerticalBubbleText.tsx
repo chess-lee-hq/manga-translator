@@ -42,7 +42,6 @@ export function VerticalBubbleText({ layout }: VerticalBubbleTextProps) {
         fontSize: layout.fontSize,
         fontWeight: OVERLAY_STYLE.fontWeight,
         borderRadius: OVERLAY_STYLE.radiusPx,
-        boxShadow: `0 ${OVERLAY_STYLE.shadowOffsetYPx}px ${OVERLAY_STYLE.shadowBlurPx}px rgba(0, 0, 0, 0.15)`,
       }}
     >
       {layout.columns.map((column, columnIndex) => (
