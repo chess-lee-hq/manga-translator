@@ -13,6 +13,8 @@
  * 붙은 말풍선(두 말풍선이 이어져 한 영역)은 대사마다 동시에 채워 나가 가까운 쪽으로 나눔 → 말풍선마다 자기 모양
  */
 
+import { decodeRle, isTextMask, splitByTextLines, type TextMask, type TextPixels } from './textPixels';
+
 export interface PixelBox {
   xmin: number;
   ymin: number;
@@ -1195,6 +1197,58 @@ export function buildGlyphMask(
   };
 }
 
+/**
+ * 저장해 둔 원문 글자 획(글자 픽셀 모델)으로 지울 마스크를 만듦. 인쇄 번짐까지 덮도록 buildGlyphMask와 같은 두께로 넓히고,
+ * 종이 색은 획 둘레의 밝은 픽셀 가운데값
+ */
+export function glyphMaskFromText(region: PixelRegion, textMask: TextMask, glyphPx: number, imageWidth: number, imageHeight: number): GlyphMask | null {
+  const bits = decodeRle(textMask.rle, textMask.w * textMask.h);
+  const r = Math.min(GLYPH_MASK.maxDilatePx, Math.max(2, Math.round(glyphPx * GLYPH_MASK.dilate)));
+  const mw = textMask.w + r * 2;
+  const mh = textMask.h + r * 2;
+  const mask = new Uint8Array(mw * mh);
+  let any = false;
+  for (let y = 0; y < textMask.h; y++) {
+    for (let x = 0; x < textMask.w; x++) {
+      if (!bits[y * textMask.w + x]) continue;
+      any = true;
+      for (let dy = 0; dy <= r * 2; dy++) mask.fill(1, (y + dy) * mw + x, (y + dy) * mw + x + r * 2 + 1);
+    }
+  }
+  if (!any) return null;
+  const reds: number[] = [];
+  const greens: number[] = [];
+  const blues: number[] = [];
+  for (let y = textMask.y; y < textMask.y + textMask.h; y += 2) {
+    for (let x = textMask.x; x < textMask.x + textMask.w; x += 2) {
+      const rx = x - region.x;
+      const ry = y - region.y;
+      if (rx < 0 || ry < 0 || rx >= region.width || ry >= region.height) continue;
+      const i = (ry * region.width + rx) * 4;
+      if (lumaAt(region.data, i) < GLYPH_MASK.paperLuma) continue;
+      reds.push(region.data[i]);
+      greens.push(region.data[i + 1]);
+      blues.push(region.data[i + 2]);
+    }
+  }
+  const median = (values: number[]) => {
+    if (values.length === 0) return 255;
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  };
+  return {
+    x: textMask.x - r,
+    y: textMask.y - r,
+    width: mw,
+    height: mh,
+    data: mask,
+    color: [median(reds), median(greens), median(blues)],
+    coverage: 1,
+    imageWidth,
+    imageHeight,
+  };
+}
+
 /** 원본 이미지를 한 번 그려두고 글자 영역마다 픽셀을 읽어 모양을 찾습니다. */
 function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
   const width = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
@@ -1220,7 +1274,7 @@ function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
 /** 한 페이지의 글자 영역마다 말풍선 모양을 찾습니다. 찾지 못한 항목은 이유와 함께 */
 export function detectPageBubbleShapes(
   image: HTMLImageElement | HTMLCanvasElement,
-  results: { id: string; box_2d: [number, number, number, number] }[],
+  results: { id: string; box_2d: [number, number, number, number]; text_mask?: TextMask }[],
 ): Record<string, BubbleDetection> {
   const reader = createPixelReader(image);
   const { width, height } = reader;
@@ -1245,9 +1299,13 @@ export function detectPageBubbleShapes(
     }
     const glyph = region ? estimateGlyphSize(region, boxes[i]) : null;
     // 말풍선이 없는 글자(옆에 붙이기)는 덮지 않으므로 마스크도 만들지 않음
-    const glyphMask = region && glyph && !(detection.failure && NO_BUBBLE_FAILURES.has(detection.failure))
-      ? buildGlyphMask(region, boxes[i], glyph, width, height, detection.shape ?? detection.interior ?? null)
-      : null;
+    const covers = region && glyph && !(detection.failure && NO_BUBBLE_FAILURES.has(detection.failure));
+    // 글자 픽셀 모델이 찾은 획이 있으면 그것만 지움 (예전 규칙은 테두리·그림 조각까지 골랐음)
+    const glyphMask = !covers
+      ? null
+      : isTextMask(result.text_mask)
+        ? glyphMaskFromText(region, result.text_mask, glyph, width, height)
+        : buildGlyphMask(region, boxes[i], glyph, width, height, detection.shape ?? detection.interior ?? null);
     shapes[result.id] = {
       ...detection,
       ...(glyph ? { glyph: (glyph / height) * 1000 } : {}),
@@ -1618,13 +1676,28 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
  * 그래야 AI가 칸마다 따로 번역하고, 화면에서도 칸마다 제 번역문이 들어감. (같은 요청 안이라 비용 그대로)
  * 나눈 칸은 읽는 순서대로 원래 자리에 넣으므로 순서가 유지됩니다.
  */
-export function splitTextBoxesByBubble<T extends PixelBox>(image: HTMLImageElement | HTMLCanvasElement, boxes: T[]): (T & { joinGroup?: number })[] {
+export function splitTextBoxesByBubble<T extends PixelBox>(
+  image: HTMLImageElement | HTMLCanvasElement,
+  boxes: T[],
+  /** 글자 픽셀 모델 결과 — 있으면 그 글자 줄로만 나눔 (구름 테두리·그림 조각에 흔들리던 아래 규칙 대신) */
+  textPixels?: TextPixels | null,
+): (T & { joinGroup?: number })[] {
   if (boxes.length === 0) return boxes;
   let group = 0;
   const reader = createPixelReader(image);
   const { width, height } = reader;
   const out: (T & { joinGroup?: number })[] = [];
   boxes.forEach((box, i) => {
+    // 글자 픽셀 모델이 있으면 그 글자 줄로만 판단 (줄이 하나도 없으면 그림을 잘못 잡은 칸이라 나누지 않음 — 칼자루를 두 칸으로 나눴음)
+    if (textPixels) {
+      const parts = splitByTextLines(textPixels.lines, box);
+      if (parts) {
+        console.info(`[연리지] 글자 줄로 말풍선 ${parts.length}칸으로 나눔`);
+        group++;
+        for (const part of parts) out.push({ ...box, ...part, joinGroup: group });
+      } else out.push(box);
+      return;
+    }
     const region = reader.read(searchRegionFor(box, width, height));
     const detection = region ? detectBubble(region, box, width, height, boxes.filter((_, j) => j !== i)) : null;
     const lobes = detection?.shape ? detection.lobes : undefined;

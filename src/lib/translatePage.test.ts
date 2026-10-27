@@ -109,3 +109,19 @@ describe('keepUntranslatedCells — 다시 물어봐도 번역이 빈 칸', () =
     expect(out.map(t => t.translated_text.trim())).toEqual(['', '']);
   });
 });
+
+describe('원문 글자 획(text_mask)을 번역 결과로 넘김', () => {
+  it('칸에 붙여 둔 글자 획을 결과에 그대로 남긴다', () => {
+    const textMask = { x: 10, y: 20, w: 3, h: 2, rle: '1,2,3' };
+    const cells = [
+      { id: 1, pageId: 'page', box: { xmin: 10, ymin: 20, xmax: 13, ymax: 22, confidence: 1, classId: 3, textMask } },
+      { id: 2, pageId: 'page', box: { xmin: 50, ymin: 50, xmax: 60, ymax: 60, confidence: 1, classId: 3 } },
+    ];
+    const out = mapGridToResults([
+      { id: 1, original_text: 'あ', translated_text: '아' },
+      { id: 2, original_text: 'い', translated_text: '이' },
+    ], cells as never, 100, 100);
+    expect(out[0].text_mask).toEqual(textMask);
+    expect(out[1].text_mask).toBeUndefined();
+  });
+});

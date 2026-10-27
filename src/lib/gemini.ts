@@ -1,3 +1,4 @@
+import type { TextMask } from './textPixels';
 import { parseJsonResponse } from './prompt';
 import { sortMangaBoxesByTier } from './readingOrder';
 import { fullPageToResult, gridResponseToResults, type FullPageWire, type GridResponseWire, type PolishChangeWire } from './responseShape';
@@ -37,6 +38,8 @@ export interface TranslationResult {
   review?: string;
   /** 로컬 OCR(manga-ocr)로 한 번 더 읽은 원문. 있으면 교차 검증을 마친 말풍선 (빈 문자열 = 읽은 글자 없음) */
   ocr_text?: string;
+  /** 글자 픽셀 모델이 찾은 원문 글자 획 — 있으면 원문을 이 획만 지움 (박스를 직접 고치면 지워짐) */
+  text_mask?: TextMask;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

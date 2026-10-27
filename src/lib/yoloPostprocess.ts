@@ -1,3 +1,5 @@
+import type { TextMask } from './textPixels';
+
 export interface BoundingBox {
   xmin: number;
   ymin: number;
@@ -7,6 +9,8 @@ export interface BoundingBox {
   classId: number;
   /** 이어진 말풍선을 번역 전에 나눈 칸끼리 같은 번호 (번역 프롬프트에 "이어지는 말"로 알려 줌) */
   joinGroup?: number;
+  /** 글자 픽셀 모델이 찾은 이 칸의 원문 글자 획 (번역 결과의 text_mask로 저장) */
+  textMask?: TextMask;
 }
 
 /** 640×640 레터박스 입력을 원본 이미지 좌표로 되돌리기 위한 정보 */

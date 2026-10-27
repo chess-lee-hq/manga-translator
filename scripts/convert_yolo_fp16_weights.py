@@ -1,5 +1,5 @@
 """
-YOLO ONNX 모델의 Conv 가중치·편향을 float16으로 저장해 파일 크기를 절반으로 줄입니다.
+YOLO·글자 픽셀 모델(comic-text-detector) ONNX의 Conv·ConvTranspose 가중치·편향을 float16으로 저장해 파일 크기를 절반으로 줄입니다.
 
 - 저장만 float16이고, 그래프 앞쪽의 Cast 노드가 실행 시 float32로 되돌리므로 계산 경로는 원본과 같습니다.
 - 브라우저(onnxruntime-web, WASM)에서 float16 연산 커널이 없어도 그대로 동작합니다.
@@ -8,6 +8,7 @@ YOLO ONNX 모델의 Conv 가중치·편향을 float16으로 저장해 파일 크
 사용법:
   python3 -m venv .venv && .venv/bin/pip install onnx numpy
   .venv/bin/python scripts/convert_yolo_fp16_weights.py 원본.onnx public/manga109_yolo_s_fp16w.onnx
+  .venv/bin/python scripts/convert_yolo_fp16_weights.py comictextdetector.pt.onnx public/comictextdetector_fp16w.onnx
 """
 import os
 import sys
@@ -24,7 +25,7 @@ def convert(src: str, dst: str) -> None:
 
     targets = []
     for node in graph.node:
-        if node.op_type != 'Conv':
+        if node.op_type not in ('Conv', 'ConvTranspose'):
             continue
         for i in (1, 2):  # 가중치, 편향
             if len(node.input) > i and node.input[i] in initializers:

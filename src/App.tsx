@@ -461,7 +461,7 @@ function App() {
   };
 
   const handleBoxChange = (imgIndex: number, id: string, box: Box2d) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true, ocr_text: undefined } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true, ocr_text: undefined, text_mask: undefined } : r)));
   };
 
   /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */

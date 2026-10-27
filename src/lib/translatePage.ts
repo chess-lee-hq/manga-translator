@@ -16,6 +16,7 @@ import { stripFurigana } from './prompt';
 import { sanitizeResults } from './results';
 import { applyQualityRetry, assessCell, REVIEW_LABELS, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
+import { detectTextPixels, textMaskFor, type TextPixels } from './textPixels';
 import type { BoundingBox } from './yoloPostprocess';
 
 const base64Of = (dataUrl: string) => dataUrl.split(',')[1];
@@ -88,6 +89,11 @@ export function keepUntranslatedCells(translations: GridTranslationResult[]): Gr
   });
 }
 
+/** 결과에 함께 남기는 것: 검토 표시, 원문 글자 획 */
+function extrasOf(t: GridTranslationResult, cell: GridCellInfo) {
+  return { ...(t.review ? { review: t.review } : {}), ...(cell.box.textMask ? { text_mask: cell.box.textMask } : {}) };
+}
+
 /** 모델이 같은 칸 번호를 두 번 돌려주는 경우가 있어(중복 번역의 원인) 첫 번째 응답만 사용합니다. */
 export function mapGridToResults(translations: GridTranslationResult[], cells: GridCellInfo[], width: number, height: number): RawTranslationResult[] {
   translations = keepUntranslatedCells(fillJoinedGaps(translations, cells));
@@ -98,7 +104,7 @@ export function mapGridToResults(translations: GridTranslationResult[], cells: G
     const cell = cells.find(c => c.id === t.id);
     if (!cell) continue;
     used.add(t.id);
-    results.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...(t.review ? { review: t.review } : {}) });
+    results.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...extrasOf(t, cell) });
   }
   return results;
 }
@@ -119,7 +125,7 @@ export function mapGridToPages(
     used.add(t.id);
     const { width, height } = sizeOf(cell.pageId);
     const list = byPage.get(cell.pageId) ?? [];
-    list.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...(t.review ? { review: t.review } : {}) });
+    list.push({ original_text: t.original_text, translated_text: t.translated_text, box_2d: toBox2d(cell.box, width, height), ...extrasOf(t, cell) });
     byPage.set(cell.pageId, list);
   }
   return byPage;
@@ -133,21 +139,32 @@ function orderForSpread(results: TranslationResult[], isSpread: boolean): Transl
 }
 
 /** 이어진 말풍선 두 칸에 걸친 글자 영역을 칸별로 나눔 (실패해도 번역은 그대로 진행) */
-function splitJoinedBubbles(image: HTMLImageElement, boxes: BoundingBox[]): BoundingBox[] {
+function splitJoinedBubbles(image: HTMLImageElement, boxes: BoundingBox[], textPixels: TextPixels | null): BoundingBox[] {
   try {
-    return splitTextBoxesByBubble(image, boxes);
+    return splitTextBoxesByBubble(image, boxes, textPixels);
   } catch (error) {
     console.warn('이어진 말풍선 나누기 실패 — 그대로 번역합니다:', error);
     return boxes;
   }
 }
 
+/** 칸마다 원문 글자 획을 붙여 둠 (후리가나·문장부호가 들도록 칸 짧은 변의 20%+4px 여유) */
+function withTextMasks(boxes: BoundingBox[], textPixels: TextPixels | null, width: number, height: number): BoundingBox[] {
+  if (!textPixels) return boxes;
+  return boxes.map(box => {
+    const pad = Math.min(box.xmax - box.xmin, box.ymax - box.ymin) * 0.2 + 4;
+    const textMask = textMaskFor(textPixels, box, pad, width, height);
+    return textMask ? { ...box, textMask } : box;
+  });
+}
+
 /** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
 async function detectPage(image: HTMLImageElement, pageId: string) {
-  const { boxes: detections, darkRatio } = await detectSpeechBubbles(image);
-  const boxes = splitJoinedBubbles(image, sortTextByReadingOrder(detections));
+  // 대사 위치(YOLO)와 글자 획·줄(글자 픽셀 모델)을 동시에 — 각자 워커라 같이 돌아감
+  const [{ boxes: detections, darkRatio }, textPixels] = await Promise.all([detectSpeechBubbles(image), detectTextPixels(image)]);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
+  const boxes = withTextMasks(splitJoinedBubbles(image, sortTextByReadingOrder(detections), textPixels), textPixels, width, height);
   const speakers = assignSpeakers(boxes, detections, width, height).map(s => (s ? `${pageId}|${s}` : null));
   const known = speakers.filter(Boolean).length;
   if (boxes.length > 0) {

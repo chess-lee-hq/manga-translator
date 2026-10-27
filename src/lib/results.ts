@@ -1,5 +1,6 @@
 import { TAG_SCALE_MAX, TAG_SCALE_MIN } from './bubbleDisplay';
 import { normalizeEllipsis } from './ellipsis';
+import { isTextMask } from './textPixels';
 import type { TranslationResult } from './gemini';
 
 function isValidBox(box: unknown): box is [number, number, number, number] {
@@ -41,5 +42,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
       review: typeof r.review === 'string' && r.review ? r.review : undefined,
       ocr_text: typeof r.ocr_text === 'string' ? r.ocr_text : undefined,
+      text_mask: isTextMask(r.text_mask) ? r.text_mask : undefined,
     }));
 }
