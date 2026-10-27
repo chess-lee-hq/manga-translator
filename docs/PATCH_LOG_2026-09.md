@@ -1581,6 +1581,22 @@ OpenAI 프롬프트 캐시는 **앞부분이 1,024토큰 이상** 이전 요청�
 
 되돌리기: `git revert 0dd8896`
 
+## 추가 수정 66 — 글자 픽셀 모델(comic-text-detector) 도입 (2026-10-28)
+시작 전 태그: `backup/before-text-detector-2026-10-28` (= 72947ee). 커밋 807cdd9.
+- 배경: 말풍선 나누기·원문 지우기를 픽셀 규칙으로 하다 보니 해상도·구름 테두리에 따라 한 곳을 고치면 다른 곳이 어긋남 (63~65). 사용자와 비교 후 도입 결정
+- 모델: [dmMaze/comic-text-detector](https://github.com/dmMaze/comic-text-detector) GPL-3.0, manga-image-translator 배포 ONNX(94.7MB, sha256 1a86ace7…). `scripts/convert_yolo_fp16_weights.py`가 ConvTranspose도 변환하게 → `public/comictextdetector_fp16w.onnx` 46MB
+- `textDetector.worker.ts`: 1024 레터박스(가운데, 회색 114) → seg(글자 획, >0.3)·det 첫 지도(줄 가운데, >0.3 덩어리 = 글자 줄). 이 Mac 브라우저 WASM 한 페이지 약 5초 (YOLO와 동시)
+- `textPixels.ts`
+  - `splitByTextLines`: 글자 영역 안 줄(폭 0.5배 넓힘)을 좌우 1.8자 안 + 위아래 절반 이상 겹침, 또는 줄표로 끊긴 같은 줄(좌우 겹침 + 위아래 0.8자 안)로 묶음. 2~4묶음이면 칸으로 나눔
+  - `textMaskFor`: 칸 범위(짧은 변 20%+4px 여유)의 글자 획을 원본 px run-length로 → 결과 `text_mask` (한 페이지 약 9KB)
+- `splitTextBoxesByBubble(image, boxes, textPixels)`: 모델 결과가 있으면 글자 줄로만 판단 (예전 모양·줄 규칙은 모델 실패 시만)
+- `detectPageBubbleShapes`: `text_mask`가 있으면 `glyphMaskFromText`(획 둘레 2~4px 넓힘, 종이 색 가운데값)로 지움. 박스를 직접 고치면 text_mask 지움(App)
+- 확인 (사용자 원본 4장, 헤드리스 크롬 — 내장 브라우저 창이 숨겨져 워커가 멈춰서): 「然らば」·「新府に/兄者に」·「何より」·「兄四郎/織田に」·「武田領民/織田が」 모두 칸별로, 글자만 지워지고 테두리·꼬리·그림 보존. 칼자루를 칸으로 나누던 것 없어짐
+- 한계: 「……」만 있는 말풍선은 줄로 안 잡혀 옆 말풍선과 한 칸. 한 말풍선 안에서 엇갈린 외침(「飲め」/「飲めーいっ」)은 두 칸. 이 업데이트 전에 번역한 페이지는 예전 방식(다시 번역하면 적용). 그래픽 가속(WebGPU)은 배포 후 검토
+- 테스트 372개
+
+되돌리기: `git revert 807cdd9` (모델 파일도 함께 빠짐)
+
 ---
 
 ## 이번 패치 범위 밖 (다음 후보)
