@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bubbleCapacity, uniformFontTargets, ellipseShapeForBox, fillOutline, fitIntoShape, layoutBubbleOverflow, layoutBubbleText, layoutBubbleVertical, planBubble, splitTranslation, wrapToWidths } from './bubbleLayout';
-import { buildGlyphMask, detectBubble, detectBubbleShape, estimateGlyphSize, NO_BUBBLE_FAILURES, searchRegionFor, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
+import { buildGlyphMask, detectBubble, detectBubbleShape, estimateGlyphSize, NO_BUBBLE_FAILURES, searchRegionFor, splitByTextColumns, type BubbleShape, type PixelBox, type PixelRegion } from './bubbleShape';
 
 const W = 600;
 const H = 600;
@@ -66,7 +66,8 @@ function canvas(fill = 255) {
     return buildGlyphMask(region(searchRegionFor(box, W, H)), box, size, W, H, d.shape ?? d.interior ?? null);
   };
   const regionFor = (box: PixelBox) => region(searchRegionFor(box, W, H));
-  return { ellipse, disc, rect, text, detect, why, full, glyph, mask, regionFor };
+  const split = (box: PixelBox) => splitByTextColumns(region(searchRegionFor(box, W, H)), box);
+  return { ellipse, disc, rect, text, detect, why, full, glyph, mask, regionFor, split };
 }
 
 const textBox: PixelBox = { xmin: 270, ymin: 240, xmax: 330, ymax: 360 };
@@ -636,5 +637,49 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     const corner = shape.rows[Math.floor((400 - shape.top) / shape.rowHeight)];
     expect(corner![0]).toBeLessThanOrEqual(400);
     expect(corner![1]).toBeGreaterThanOrEqual(600);
+  });
+});
+
+describe('splitByTextColumns — 글자 줄 배치로 붙은 말풍선 나누기', () => {
+  const covers = (part: PixelBox, area: PixelBox) =>
+    part.xmin <= area.xmin + 2 && part.ymin <= area.ymin + 2 && part.xmax >= area.xmax - 2 && part.ymax >= area.ymax - 2;
+
+  it('위아래로 비켜 붙은 말풍선: 줄들이 같은 높이에 모인 묶음마다 나누고, 옆 줄도 빠뜨리지 않는다 (「新府に籠ったとて」/「兄者に勝機は」)', () => {
+    const c = canvas();
+    const top = { xmin: 350, ymin: 100, xmax: 394, ymax: 220 };
+    const bottom = { xmin: 326, ymin: 252, xmax: 370, ymax: 372 };
+    c.text(top);
+    c.text(bottom);
+    const parts = c.split({ xmin: 320, ymin: 90, xmax: 400, ymax: 380 });
+    expect(parts).toHaveLength(2);
+    expect(covers(parts![0], { xmin: 352, ymin: 102, xmax: 390, ymax: 218 })).toBe(true);
+    expect(covers(parts![1], { xmin: 328, ymin: 254, xmax: 366, ymax: 370 })).toBe(true);
+    expect(parts![0].ymax).toBeLessThan(parts![1].ymin);
+  });
+
+  it('오른쪽 위 짧은 줄만 따로 비켜 있으면(「然らば」) 그 줄을 먼저, 나머지 줄들을 다음 칸으로', () => {
+    const c = canvas();
+    c.text({ xmin: 380, ymin: 100, xmax: 400, ymax: 182 });
+    c.text({ xmin: 290, ymin: 170, xmax: 356, ymax: 320 });
+    const parts = c.split({ xmin: 284, ymin: 92, xmax: 404, ymax: 326 });
+    expect(parts).toHaveLength(2);
+    expect(covers(parts![0], { xmin: 382, ymin: 102, xmax: 398, ymax: 178 })).toBe(true);
+    expect(parts![0].xmin).toBeGreaterThan(360);
+    expect(covers(parts![1], { xmin: 292, ymin: 172, xmax: 352, ymax: 308 })).toBe(true);
+  });
+
+  it('한 말풍선 안 길이가 다른 줄(가운데 정렬한 짧은 줄)은 나누지 않는다', () => {
+    const c = canvas();
+    c.text({ xmin: 310, ymin: 100, xmax: 376, ymax: 300 });
+    c.text({ xmin: 288, ymin: 160, xmax: 310, ymax: 242 });
+    expect(c.split({ xmin: 282, ymin: 92, xmax: 382, ymax: 306 })).toBeNull();
+  });
+
+  it('말줄임표 앞뒤로 떨어진 한 글자(「ぐ……む」)는 나누지 않는다', () => {
+    const c = canvas();
+    c.text({ xmin: 300, ymin: 100, xmax: 320, ymax: 120 });
+    for (const y of [136, 152, 168]) c.rect(308, y, 312, y + 4, 20);
+    c.text({ xmin: 300, ymin: 200, xmax: 320, ymax: 220 });
+    expect(c.split({ xmin: 296, ymin: 96, xmax: 324, ymax: 224 })).toBeNull();
   });
 });

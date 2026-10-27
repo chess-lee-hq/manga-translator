@@ -1271,6 +1271,8 @@ const TEXT_SPLIT = {
   shiftedMinGapGlyphs: 0.4,
   /** 위아래로 쌓인 말풍선: 모든 줄을 가로지르는 빈 띠가 글자 이만큼 이상 */
   stackGapGlyphs: 1.2,
+  /** 위아래 양쪽 다 글자 이만큼 이상 길어야 — 말줄임표 앞뒤로 떨어진 한 글자(「ぐ……む」「……何」)를 두 말풍선으로 나눴음 */
+  stackMinGlyphs: 2,
 } as const;
 
 /**
@@ -1278,24 +1280,41 @@ const TEXT_SPLIT = {
  * 두 묶음이면 각각의 글자 범위(원본 px)를 돌려줌. 아니면 null. 읽는 순서(세로쓰기 오른쪽 먼저, 가로쓰기 위 먼저)
  */
 export function splitByTextColumns(region: PixelRegion, box: PixelBox): PixelBox[] | null {
+  // 0) 세로 글자 줄끼리 높이가 겹치는지로 (말풍선마다 줄들이 같은 높이에 모여 있음 — 「新府に籠ったとて」 아래 「兄者に勝機は」)
   // 1) 줄 사이 틈으로 (나란히 엇갈린 말풍선) 2) 줄 방향의 빈 띠로 (위아래로 쌓인 말풍선 — 「しかし」 아래 「不慮の儀」)
-  return splitAlong(region, box, false) ?? splitAlong(region, box, true);
+  return splitByColumnGroups(region, box) ?? splitAlong(region, box, false) ?? splitAlong(region, box, true);
 }
 
-function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): PixelBox[] | null {
-  const glyph = estimateGlyphSize(region, box);
-  if (!glyph) return null;
+/** 글자 줄 묶기 기준 (글자 크기 배수) */
+const COLUMN_GROUP = {
+  /** 획을 위아래로 이만큼 늘려 붙임: 한 줄 안의 글자 사이(작은 っ 포함)는 이어지고, 위아래 말풍선 사이 틈(1자 넘게)은 안 이어짐 */
+  joinY: 0.45,
+  /** 좌우로는 이만큼: 한 글자의 부수·후리가나는 붙고, 비스듬히 붙은 말풍선의 줄 사이(0.6자 남짓)는 안 붙음 */
+  joinX: 0.2,
+  /** 이웃한 두 줄이 같은 말풍선: 좌우 틈이 이 이하이고, 짧은 줄 높이의 이 비율 이상 위아래로 겹침 */
+  maxColumnGap: 1.5,
+  minOverlap: 0.5,
+  /**
+   * 묶음 하나가 따로 서려면: 글자 획이 전체의 이 비율 이상, 높이가 글자 이만큼 이상 (아니면 가까운 묶음에 붙임 —
+   * 「!?」·줄표 끝, 말줄임표 앞뒤로 떨어진 한 글자 「ぐ……む」「……何」)
+   */
+  minInk: 0.08,
+  minHeight: 2,
+  /** 글자 크기(0.5자 이상)만 한 획 덩어리가 이만큼은 있어야 (말줄임표 점만 있는 묶음은 따로 안 세움) */
+  minChars: 2,
+  maxGroups: 3,
+  /** 이보다 큰 획 덩어리는 글자가 아님 */
+  maxPieceGlyphs: 1.6,
+} as const;
+
+/** 글자 영역 안 원문 글자 획 (가로·세로로 글자 1.5자 넘게 곧게 이어진 선 — 말풍선 테두리·컷 선 — 은 뺌) */
+function textInkOf(region: PixelRegion, box: PixelBox, glyph: number) {
   const x0 = Math.max(0, Math.floor(box.xmin - region.x));
   const y0 = Math.max(0, Math.floor(box.ymin - region.y));
   const x1 = Math.min(region.width, Math.ceil(box.xmax - region.x));
   const y1 = Math.min(region.height, Math.ceil(box.ymax - region.y));
-  const writingVertical = y1 - y0 >= x1 - x0;
-  // vertical: 프로필을 가로(x)로 셈. 세로쓰기는 줄 사이(x)로, 쌓인 말풍선은 줄 방향(y)으로
-  const vertical = stacked ? !writingVertical : writingVertical;
-  const [a0, a1, b0, b1] = vertical ? [x0, x1, y0, y1] : [y0, y1, x0, x1];
-  // 글자 획만: 가로·세로로 글자 1.5자 넘게 곧게 이어진 선(말풍선 테두리·컷 선)은 빼고 셈 — 두 말풍선 사이 테두리 조각이 틈을 메웠음
-  const bw = x1 - x0;
-  const bh = y1 - y0;
+  const bw = Math.max(0, x1 - x0);
+  const bh = Math.max(0, y1 - y0);
   const raw = new Uint8Array(bw * bh);
   for (let y = 0; y < bh; y++) {
     for (let x = 0; x < bw; x++) raw[y * bw + x] = lumaAt(region.data, ((y + y0) * region.width + x + x0) * 4) < GLYPH_INK_LUMA ? 1 : 0;
@@ -1320,10 +1339,167 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
       y = e;
     }
   }
+  const ink = new Uint8Array(bw * bh);
+  for (let i = 0; i < ink.length; i++) ink[i] = raw[i] && !longLine[i] ? 1 : 0;
+  return { ink, x0, y0, bw, bh };
+}
+
+/** mask를 좌우 rx, 위아래 ry칸만큼 늘림 */
+function dilate(mask: Uint8Array, w: number, h: number, rx: number, ry: number): Uint8Array {
+  const horizontal = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let last = -Infinity;
+    for (let x = 0; x < w; x++) if (mask[y * w + x]) last = x; else if (x - last <= rx) horizontal[y * w + x] = 1;
+    last = Infinity;
+    for (let x = w - 1; x >= 0; x--) if (mask[y * w + x]) { last = x; horizontal[y * w + x] = 1; } else if (last - x <= rx) horizontal[y * w + x] = 1;
+  }
+  const out = new Uint8Array(w * h);
+  for (let x = 0; x < w; x++) {
+    let last = -Infinity;
+    for (let y = 0; y < h; y++) if (horizontal[y * w + x]) last = y; else if (y - last <= ry) out[y * w + x] = 1;
+    last = Infinity;
+    for (let y = h - 1; y >= 0; y--) if (horizontal[y * w + x]) { last = y; out[y * w + x] = 1; } else if (last - y <= ry) out[y * w + x] = 1;
+  }
+  return out;
+}
+
+/** mask의 이어진 덩어리들. 범위·개수는 ink에 해당하는 픽셀로 셈 */
+function inkPieces(mask: Uint8Array, w: number, h: number, ink: Uint8Array) {
+  const seen = new Uint8Array(w * h);
+  const pieces: { xmin: number; xmax: number; ymin: number; ymax: number; ink: number; pixels: number[] }[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    const piece = { xmin: Infinity, xmax: -Infinity, ymin: Infinity, ymax: -Infinity, ink: 0, pixels: [] as number[] };
+    seen[start] = 1;
+    stack.push(start);
+    while (stack.length) {
+      const i = stack.pop()!;
+      const x = i % w;
+      const y = (i - x) / w;
+      piece.pixels.push(i);
+      if (ink[i]) {
+        piece.ink++;
+        piece.xmin = Math.min(piece.xmin, x);
+        piece.xmax = Math.max(piece.xmax, x);
+        piece.ymin = Math.min(piece.ymin, y);
+        piece.ymax = Math.max(piece.ymax, y);
+      }
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (mask[j] && !seen[j]) {
+            seen[j] = 1;
+            stack.push(j);
+          }
+        }
+      }
+    }
+    pieces.push(piece);
+  }
+  return pieces;
+}
+
+/**
+ * 세로쓰기 글자 줄을 찾아 말풍선별로 묶음: 한 말풍선의 줄들은 같은 높이에 나란히 놓이고(위아래가 겹침),
+ * 붙은 다른 말풍선의 줄은 그보다 위나 아래로 비켜나 있음. 두세 묶음이면 묶음마다 글자 범위(원본 px, 읽는 순서), 아니면 null
+ */
+function splitByColumnGroups(region: PixelRegion, box: PixelBox): PixelBox[] | null {
+  const glyph = estimateGlyphSize(region, box);
+  if (!glyph) return null;
+  const { ink, x0, y0, bw, bh } = textInkOf(region, box, glyph);
+  if (bw === 0 || bh === 0) return null;
+  // 글자보다 큰 획 덩어리(구름 말풍선의 울퉁불퉁한 테두리·그림 조각·줄표)는 빼고 글자만
+  const maxPiece = glyph * COLUMN_GROUP.maxPieceGlyphs;
+  const pieces = inkPieces(ink, bw, bh, ink).filter(piece => {
+    const big = piece.xmax - piece.xmin + 1 > maxPiece || piece.ymax - piece.ymin + 1 > maxPiece;
+    if (big) for (const i of piece.pixels) ink[i] = 0;
+    return !big;
+  });
+  const joined = dilate(ink, bw, bh, Math.round(glyph * COLUMN_GROUP.joinX), Math.round(glyph * COLUMN_GROUP.joinY));
+  // 늘린 획의 덩어리 하나 = 글자 줄 하나 (범위는 실제 획 기준)
+  const columns = inkPieces(joined, bw, bh, ink).filter(c => c.ink > 0).map(c => ({ ...c, chars: 0 }));
+  // 줄마다 글자 크기만 한 획 덩어리 수 (말줄임표 점·잡티는 글자로 안 셈)
+  const columnOf = new Int32Array(bw * bh).fill(-1);
+  columns.forEach((c, k) => { for (const i of c.pixels) columnOf[i] = k; });
+  for (const piece of pieces) {
+    const k = columnOf[piece.pixels[0]];
+    if (k >= 0 && Math.max(piece.xmax - piece.xmin, piece.ymax - piece.ymin) + 1 >= glyph * 0.5) columns[k].chars++;
+  }
+  const total = columns.reduce((n, c) => n + c.ink, 0);
+  // 잡티는 빼고 셈
+  const real = columns.filter(c => c.ink >= total * 0.005);
+  if (real.length < 2) return null;
+  // 같은 말풍선끼리 이음: 좌우로 가깝고 위아래로 충분히 겹치는 줄
+  const parent = real.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < real.length; i++) {
+    for (let j = i + 1; j < real.length; j++) {
+      const a = real[i];
+      const b = real[j];
+      const gapX = Math.max(a.xmin, b.xmin) - Math.min(a.xmax, b.xmax);
+      const overlapY = Math.min(a.ymax, b.ymax) - Math.max(a.ymin, b.ymin);
+      const shorter = Math.min(a.ymax - a.ymin, b.ymax - b.ymin) + 1;
+      if (gapX <= glyph * COLUMN_GROUP.maxColumnGap && overlapY >= shorter * COLUMN_GROUP.minOverlap) parent[find(i)] = find(j);
+    }
+  }
+  type Group = { xmin: number; xmax: number; ymin: number; ymax: number; ink: number; chars: number };
+  const byRoot = new Map<number, Group>();
+  real.forEach((c, i) => {
+    const g = byRoot.get(find(i));
+    if (!g) byRoot.set(find(i), { xmin: c.xmin, xmax: c.xmax, ymin: c.ymin, ymax: c.ymax, ink: c.ink, chars: c.chars });
+    else Object.assign(g, { xmin: Math.min(g.xmin, c.xmin), xmax: Math.max(g.xmax, c.xmax), ymin: Math.min(g.ymin, c.ymin), ymax: Math.max(g.ymax, c.ymax), ink: g.ink + c.ink, chars: g.chars + c.chars });
+  });
+  const groups = [...byRoot.values()];
+  // 작은 묶음(「!?」·줄표 뒤 몇 글자·잡티)은 따로 세우지 않고 가장 가까운 큰 묶음에 붙임
+  const standsAlone = (g: Group) =>
+    g.ink >= total * COLUMN_GROUP.minInk && g.ymax - g.ymin + 1 >= glyph * COLUMN_GROUP.minHeight && g.chars >= COLUMN_GROUP.minChars;
+  const big = groups.filter(standsAlone);
+  if (big.length < 2 || big.length > COLUMN_GROUP.maxGroups) return null;
+  const distance = (a: Group, b: Group) => Math.hypot(
+    Math.max(0, Math.max(a.xmin, b.xmin) - Math.min(a.xmax, b.xmax)),
+    Math.max(0, Math.max(a.ymin, b.ymin) - Math.min(a.ymax, b.ymax)),
+  );
+  for (const small of groups.filter(g => !standsAlone(g))) {
+    const near = big.reduce((p, q) => (distance(small, q) < distance(small, p) ? q : p));
+    Object.assign(near, { xmin: Math.min(near.xmin, small.xmin), xmax: Math.max(near.xmax, small.xmax), ymin: Math.min(near.ymin, small.ymin), ymax: Math.max(near.ymax, small.ymax) });
+  }
+  // 나눈 묶음끼리 범위가 겹치면(작은 묶음을 붙이다 서로 파고듦) 확실하지 않으니 나누지 않음
+  for (let i = 0; i < big.length; i++) {
+    for (let j = i + 1; j < big.length; j++) {
+      const a = big[i];
+      const b = big[j];
+      if (Math.min(a.xmax, b.xmax) > Math.max(a.xmin, b.xmin) && Math.min(a.ymax, b.ymax) > Math.max(a.ymin, b.ymin)) return null;
+    }
+  }
+  // 읽는 순서: 위아래로 비켜 있으면 위 먼저, 아니면 오른쪽 먼저
+  big.sort((a, b) => (a.ymax < b.ymin ? -1 : b.ymax < a.ymin ? 1 : b.xmax - a.xmax));
+  const pad = Math.max(2, glyph * 0.15);
+  return big.map(g => ({
+    xmin: Math.max(box.xmin, region.x + x0 + g.xmin - pad),
+    ymin: Math.max(box.ymin, region.y + y0 + g.ymin - pad),
+    xmax: Math.min(box.xmax, region.x + x0 + g.xmax + 1 + pad),
+    ymax: Math.min(box.ymax, region.y + y0 + g.ymax + 1 + pad),
+  }));
+}
+
+function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): PixelBox[] | null {
+  const glyph = estimateGlyphSize(region, box);
+  if (!glyph) return null;
+  const { ink, x0, y0, bw, bh } = textInkOf(region, box, glyph);
+  const x1 = x0 + bw;
+  const y1 = y0 + bh;
+  const writingVertical = y1 - y0 >= x1 - x0;
+  // vertical: 프로필을 가로(x)로 셈. 세로쓰기는 줄 사이(x)로, 쌓인 말풍선은 줄 방향(y)으로
+  const vertical = stacked ? !writingVertical : writingVertical;
+  const [a0, a1, b0, b1] = vertical ? [x0, x1, y0, y1] : [y0, y1, x0, x1];
+  // 글자 획만 셈 — 두 말풍선 사이 테두리 조각이 틈을 메웠음
   const isInk = (a: number, b: number) => {
     const [x, y] = vertical ? [a - x0, b - y0] : [b - x0, a - y0];
-    const i = y * bw + x;
-    return raw[i] === 1 && !longLine[i];
+    return ink[y * bw + x] === 1;
   };
   const profile: number[] = [];
   for (let a = a0; a < a1; a++) {
@@ -1394,7 +1570,7 @@ function splitAlong(region: PixelRegion, box: PixelBox, stacked: boolean): Pixel
     if (stacked) {
       // 줄 방향으로 모든 줄을 가로지르는 빈 띠: 한 말풍선 안에선 다른 줄이 메우므로 거의 없음 (한 줄짜리 띄어쓰기는 1글자 남짓)
       if (gap < glyph * TEXT_SPLIT.stackGapGlyphs) return;
-      if (cut - runs[0].start < glyph * 0.8 || runs[runs.length - 1].end - runs[i + 1].start < glyph * 0.8) return;
+      if (cut - runs[0].start < glyph * TEXT_SPLIT.stackMinGlyphs || runs[runs.length - 1].end - runs[i + 1].start < glyph * TEXT_SPLIT.stackMinGlyphs) return;
     } else {
       const A = extent(runs[0].start, cut);
       const B = extent(runs[i + 1].start, runs[runs.length - 1].end);
