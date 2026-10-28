@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Loader2, Settings2, Trash2, X } from 'lucide-react';
 import { deleteOcrModel, getOcrStatus, isOcrModelDownloaded, loadOcrModel, subscribeOcrStatus } from '../lib/mangaOcr';
 import { OCR_MODEL_APPROX_MB } from '../lib/mangaOcrConfig';
-import { isOverlayBold, isSceneThumbnailEnabled, setOverlayBold, setSceneThumbnailEnabled } from '../lib/translationOptions';
+import { isBubbleFitDefault, isOverlayBold, isSceneThumbnailEnabled, setBubbleFitDefault, setOverlayBold, setSceneThumbnailEnabled } from '../lib/translationOptions';
 
 interface TranslationOptionsModalProps {
   /** 로컬 OCR 교차 검증을 켰는지 (App이 들고 있어야 켜자마자 검증이 시작됨) */
@@ -25,10 +25,11 @@ function OptionRow({ checked, onChange, title, children }: { checked: boolean; o
   );
 }
 
-/** 번역 요청 방식을 바꾸는 옵션들 (다음 번역 요청부터 적용) + 덮어쓰기 글자 굵기(바로 적용) */
+/** 번역 요청 방식을 바꾸는 옵션들 (다음 번역 요청부터 적용) + 덮어쓰기 글자 굵기·말풍선 맞춤(바로 적용) */
 export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }: TranslationOptionsModalProps) {
   const [scene, setScene] = useState(isSceneThumbnailEnabled);
   const [bold, setBold] = useState(isOverlayBold);
+  const [fitBubble, setFitBubble] = useState(isBubbleFitDefault);
   const ocrStatus = useSyncExternalStore(subscribeOcrStatus, getOcrStatus);
   const [downloaded, setDownloaded] = useState<boolean | null>(null);
 
@@ -75,6 +76,15 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
             title="굵은 글씨로 덮어쓰기"
           >
             끄면(기본) 단행본처럼 중간 굵기로, 켜면 예전처럼 아주 굵게 씁니다. 화면과 이미지 저장에 바로 적용되고 번역 요청과는 상관없습니다.
+          </OptionRow>
+
+          <OptionRow
+            checked={fitBubble}
+            onChange={next => { setBubbleFitDefault(next); setFitBubble(next); }}
+            title="원본 말풍선 모양에 맞춰 넣기"
+          >
+            켜면(기본) 번역문을 원본 말풍선 모양에 맞춰 넣고, 끄면 모든 말풍선을 글자 영역의 네모 상자로 덮습니다.
+            말풍선마다 바꾼 설정(말풍선 위 버튼)은 그대로 따릅니다. 화면과 이미지 저장에 바로 적용됩니다.
           </OptionRow>
 
           <OptionRow

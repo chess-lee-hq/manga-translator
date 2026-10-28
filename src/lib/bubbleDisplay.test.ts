@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { effectiveDisplayMode, isLikelySfx, layoutTags, resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN, wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
 
@@ -132,6 +132,15 @@ describe('wantsBubbleFit (원본 말풍선 모양에 맞춰 넣을 대상)', () 
     expect(wantsBubbleFit(bubble({ ...speech, fit_bubble: false }))).toBe(false);
     expect(wantsBubbleFit(bubble({ ...speech, is_edited_box: true, fit_bubble: true }))).toBe(true);
     expect(wantsBubbleFit(bubble({ ...speech, display_mode: 'tag', fit_bubble: true }))).toBe(false);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('번역 옵션에서 끄면 모두 네모 상자로 덮되, 말풍선마다 직접 켠 것은 그대로', () => {
+    const saved = new Map([['manga-fit-bubble', 'false']]);
+    vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: () => {} });
+    expect(wantsBubbleFit(bubble(speech))).toBe(false);
+    expect(wantsBubbleFit(bubble({ ...speech, fit_bubble: true }))).toBe(true);
   });
 });
 

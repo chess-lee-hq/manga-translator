@@ -47,6 +47,18 @@ export function subscribeOverlayFont(listener: () => void) {
 }
 export const getOverlayFontVersion = () => fontVersion;
 
+/**
+ * 덮어쓰기를 원본 말풍선 모양에 맞춰 넣을지 (기본 켬). 끄면 모든 말풍선을 네모 상자로 덮고,
+ * 말풍선마다 고른 설정(fit_bubble)이 있으면 그것을 따름. 바꾸면 굵기처럼 바로 다시 그림
+ */
+const FIT_BUBBLE_KEY = 'manga-fit-bubble';
+export const isBubbleFitDefault = () => readFlag(FIT_BUBBLE_KEY, true);
+export function setBubbleFitDefault(enabled: boolean) {
+  writeFlag(FIT_BUBBLE_KEY, enabled);
+  fontVersion++;
+  fontListeners.forEach(listener => listener());
+}
+
 /** 시험해 보려고 기본으로 켜 둠. 효과가 없으면 끄거나 기능째 걷어냄 */
 export const isSceneThumbnailEnabled = () => readFlag(SCENE_KEY, true);
 export const setSceneThumbnailEnabled = (enabled: boolean) => writeFlag(SCENE_KEY, enabled);

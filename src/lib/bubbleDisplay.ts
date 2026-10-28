@@ -2,6 +2,7 @@ import { NO_BUBBLE_FAILURES, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { getDisplayBox, OVERLAY_STYLE, wrapText, type Box } from './overlayLayout';
 import { stripFurigana } from './prompt';
+import { isBubbleFitDefault } from './translationOptions';
 
 /** cover: 원문을 흰 말풍선으로 덮음 / tag: 원문(효과음 등)은 그대로 두고 바깥에 작은 딱지 */
 export type DisplayMode = 'cover' | 'tag';
@@ -80,7 +81,7 @@ export function effectiveDisplayMode(
 export function wantsBubbleFit(result: Pick<TranslationResult, 'box_2d' | 'original_text' | 'translated_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble'>): boolean {
   if (resolveDisplayMode(result) !== 'cover' || result.fit_bubble === false) return false;
   if (result.fit_bubble === true) return true;
-  return !result.is_edited_box && result.text_direction !== 'vertical';
+  return isBubbleFitDefault() && !result.is_edited_box && result.text_direction !== 'vertical';
 }
 
 export interface Rect {
