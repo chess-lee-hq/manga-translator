@@ -17,7 +17,7 @@ import { sanitizeResults } from './results';
 import { applyQualityRetry, assessCell, REVIEW_LABELS, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
 import { detectTextPixels, textMaskFor, type TextPixels } from './textPixels';
-import type { BoundingBox } from './yoloPostprocess';
+import { mergeSplitTextLines, type BoundingBox } from './yoloPostprocess';
 
 const base64Of = (dataUrl: string) => dataUrl.split(',')[1];
 const mimeOf = (dataUrl: string) => dataUrl.slice(5, dataUrl.indexOf(';'));
@@ -164,7 +164,7 @@ async function detectPage(image: HTMLImageElement, pageId: string) {
   const [{ boxes: detections, darkRatio }, textPixels] = await Promise.all([detectSpeechBubbles(image), detectTextPixels(image)]);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
-  const boxes = withTextMasks(splitJoinedBubbles(image, sortTextByReadingOrder(detections), textPixels), textPixels, width, height);
+  const boxes = withTextMasks(splitJoinedBubbles(image, sortTextByReadingOrder(mergeSplitTextLines(detections)), textPixels), textPixels, width, height);
   const speakers = assignSpeakers(boxes, detections, width, height).map(s => (s ? `${pageId}|${s}` : null));
   const known = speakers.filter(Boolean).length;
   if (boxes.length > 0) {

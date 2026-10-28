@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateIoU, containmentRatio, mergeDetections, nonMaxSuppression, postprocess } from './yoloPostprocess';
+import { calculateIoU, containmentRatio, mergeDetections, mergeSplitTextLines, nonMaxSuppression, postprocess } from './yoloPostprocess';
 
 // 출력 [1, 8, 3]: 행 = cx, cy, w, h, class0..3 / 열 = 후보
 const rows = [
@@ -64,5 +64,21 @@ describe('mergeDetections (원본 + 색 반전 결과 합치기)', () => {
     expect(merged).toHaveLength(2);
     expect(merged[0].confidence).toBeCloseTo(0.9);
     expect(merged[1].xmin).toBe(300);
+  });
+});
+
+describe('mergeSplitTextLines — 긴 글자 줄을 두 박스로 겹쳐 잡은 것 합치기', () => {
+  const text = (xmin: number, ymin: number, xmax: number, ymax: number, classId = 3) => ({ xmin, ymin, xmax, ymax, confidence: 0.5, classId });
+
+  it('같은 세로줄의 앞부분·뒷부분 박스(겹침)는 하나로 (「其の外…」『信長公記』)', () => {
+    const out = mergeSplitTextLines([text(121, 119, 166, 771), text(121, 410, 163, 1089)]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ xmin: 121, ymin: 119, xmax: 166, ymax: 1089 });
+  });
+
+  it('나란한 다른 줄·조금만 겹친 박스·글자가 아닌 박스는 그대로', () => {
+    expect(mergeSplitTextLines([text(100, 100, 140, 400), text(130, 100, 170, 400)])).toHaveLength(2);
+    expect(mergeSplitTextLines([text(100, 100, 140, 400), text(100, 380, 140, 700)])).toHaveLength(2);
+    expect(mergeSplitTextLines([text(100, 100, 140, 400, 2), text(100, 200, 140, 600, 2)])).toHaveLength(2);
   });
 });

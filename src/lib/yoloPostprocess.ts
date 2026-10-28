@@ -111,3 +111,37 @@ export function containmentRatio(b1: BoundingBox, b2: BoundingBox): number {
   const smaller = Math.min(boxArea(b1), boxArea(b2));
   return smaller > 0 ? intersectionArea(b1, b2) / smaller : 0;
 }
+
+const SPLIT_LINE = { minOverlap: 0.3, minAcross: 0.8 } as const;
+
+/**
+ * 긴 글자 줄 하나를 YOLO가 위·아래(또는 좌·우) 두 박스로 겹쳐 잡은 경우 하나로 합칩니다.
+ * (세로 해설 「其の外、ちりぢりに…討死候」『信長公記』가 앞부분·뒷부분 두 칸으로 번역돼 내용이 겹쳤음)
+ * 같은 줄 = 글자 박스(classId 3)끼리 줄 폭 방향으로 거의 겹치고(좁은 쪽 폭의 80% 이상), 서로 작은 쪽 넓이의 30% 이상 겹침.
+ * 나란한 다른 말풍선은 폭 방향으로 이렇게 겹치지 않고, 완전히 겹친 중복은 NMS가 이미 버림
+ */
+export function mergeSplitTextLines(boxes: BoundingBox[]): BoundingBox[] {
+  const out = [...boxes];
+  const sameLine = (a: BoundingBox, b: BoundingBox) => {
+    if (a.classId !== 3 || b.classId !== 3 || containmentRatio(a, b) < SPLIT_LINE.minOverlap) return false;
+    const tall = a.ymax - a.ymin >= a.xmax - a.xmin && b.ymax - b.ymin >= b.xmax - b.xmin;
+    const wide = a.ymax - a.ymin < a.xmax - a.xmin && b.ymax - b.ymin < b.xmax - b.xmin;
+    if (!tall && !wide) return false;
+    const [lo1, hi1, lo2, hi2] = tall ? [a.xmin, a.xmax, b.xmin, b.xmax] : [a.ymin, a.ymax, b.ymin, b.ymax];
+    const across = Math.min(hi1, hi2) - Math.max(lo1, lo2);
+    return across >= Math.min(hi1 - lo1, hi2 - lo2) * SPLIT_LINE.minAcross;
+  };
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < out.length && !merged; i++) {
+      for (let j = i + 1; j < out.length && !merged; j++) {
+        if (!sameLine(out[i], out[j])) continue;
+        const [a, b] = [out[i], out[j]];
+        out[i] = { ...a, xmin: Math.min(a.xmin, b.xmin), ymin: Math.min(a.ymin, b.ymin), xmax: Math.max(a.xmax, b.xmax), ymax: Math.max(a.ymax, b.ymax), confidence: Math.max(a.confidence, b.confidence) };
+        out.splice(j, 1);
+        merged = true;
+      }
+    }
+  }
+  return out;
+}
