@@ -504,6 +504,23 @@ describe('원문 글자 크기 재기 · 페이지 글자 크기 통일', () => 
     expect(c.glyph(tight)).toBe(16);
   });
 
+  it('빈 칸을 옮기거나 지워도 나머지 말풍선 글자 크기는 그대로 (기준을 칸별로 기억)', () => {
+    const page = [{ id: 'k1', glyph: 18 }, { id: 'k2', glyph: 20 }, { id: 'k3', glyph: 22 }, { id: 'kEmpty', glyph: 30 }];
+    const first = uniformFontTargets(page, 1000, 10, 60, true);
+    expect(first.get('k1')).toBe(22);
+    // 빈 칸 삭제 → 예전엔 가운데값이 22→20으로 바뀌어 다른 글자 크기·줄바꿈이 바뀌었음
+    const afterDelete = uniformFontTargets(page.slice(0, 3), 1000, 10, 60, true);
+    expect(afterDelete.get('k1')).toBe(22);
+    // 기억하지 않으면 새로 잼
+    expect(uniformFontTargets(page.slice(0, 3), 1000, 10, 60).get('k1')).toBe(20);
+  });
+
+  it('직접 고친 영역은 기준을 정할 때 빼고, 강조 크기도 쓰지 않는다', () => {
+    const targets = uniformFontTargets([{ id: 'a', glyph: 20 }, { id: 'b', glyph: 20 }, { id: 'moved', glyph: 40, edited: true }], 1000, 10, 60);
+    expect(targets.get('a')).toBe(20);
+    expect(targets.get('moved')).toBe(20);
+  });
+
   it('원문 크기를 하나도 못 재면 비워 둠 (예전 기본 크기 사용)', () => {
     expect(uniformFontTargets([{ id: 'a' }], 1000, 10, 60).size).toBe(0);
   });
@@ -569,6 +586,15 @@ describe('planBubble — 덮는 말풍선 배치 고르기', () => {
     const cx = plan.fit.direction === 'horizontal' ? plan.fit.layout.lines[0].cx : plan.fit.layout.columns[0].cx;
     expect(cx).toBeGreaterThan(590);
     expect(cx).toBeLessThan(710);
+  });
+
+  it('좁은 말풍선이어도 기준 크기의 80% 아래로는 줄이지 않고 넘침으로 (칸마다 글자 크기가 들쭉날쭉했음)', () => {
+    const shape = ellipseShapeForBox([400, 480, 600, 520], 1000, 1000);
+    const narrow = result({ translated_text: '그렇다면 말이오', box_2d: [420, 485, 580, 515] });
+    const old = planBubble(narrow, { shape }, 1000, 1000, measure, 10, 20);
+    const floored = planBubble(narrow, { shape }, 1000, 1000, measure, 10, 20, 16);
+    expect(old.kind === 'fit' && old.fit.layout.fontSize).toBeLessThan(16);
+    expect(floored.kind === 'fit' && floored.fit.layout.fontSize).toBeGreaterThanOrEqual(16);
   });
 
   it('찾은 말풍선에 안 들어가면 네모 상자로 덮지 않고 넘침으로 표시', () => {

@@ -1,11 +1,11 @@
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
-import { BUBBLE_FIT, fillOutline, planBubble, uniformFontTargets, type BubbleFit } from './bubbleLayout';
+import { BUBBLE_FIT, fillOutline, fontFloor, planBubble, uniformFontTargets, type BubbleFit } from './bubbleLayout';
 import { glyphMaskCanvas } from './glyphMaskImage';
 import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
 import {
-  columnUnits, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
+  columnUnits, createTextMeasurer, estimateFontRatios, getCoverBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
   resolveTextDirection, VERTICAL_CORNER_OFFSET, VERTICAL_TEXT, type VerticalCell, type VerticalLayout,
 } from './overlayLayout';
 
@@ -198,10 +198,11 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
 
   // 글자 크기: 화면과 같은 규칙으로 페이지 기준 크기 하나에 통일 (원문이 확실히 큰 대사만 크게)
   const fontTargets = uniformFontTargets(
-    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: shapes[r.id]?.glyph })),
+    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: shapes[r.id]?.glyph, edited: r.is_edited_box })),
     height,
     BUBBLE_FIT.minFontPx * options.viewScale * cssPx,
     BUBBLE_FIT.maxEmphasisPx * options.viewScale * cssPx,
+    true,
   );
   const bubbleMaxFont = (result: TranslationResult) => fontTargets.get(result.id) ?? BUBBLE_FIT.maxFontPx * options.viewScale * cssPx;
 
@@ -209,7 +210,8 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   for (const result of results) {
     if (modeOf(result) === 'tag') continue;
 
-    const plan = planBubble(result, shapes[result.id], width, height, measure, BUBBLE_FIT.minFontPx * options.viewScale * cssPx, bubbleMaxFont(result));
+    const fitMin = BUBBLE_FIT.minFontPx * options.viewScale * cssPx;
+    const plan = planBubble(result, shapes[result.id], width, height, measure, fitMin, bubbleMaxFont(result), fontFloor(fitMin, bubbleMaxFont(result)));
     if (plan.kind === 'fit') {
       // 원문 글자 획만 종이 색으로 지움 (원본 해상도 좌표 그대로)
       const maskCanvas = plan.mask ? glyphMaskCanvas(plan.mask) : null;
@@ -219,7 +221,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
       continue;
     }
 
-    const displayBox = getDisplayBox(result);
+    const displayBox = getCoverBox(result);
     const [ymin, xmin, ymax, xmax] = displayBox;
     const boxWidth = ((xmax - xmin) / 1000) * width;
     const boxHeight = ((ymax - ymin) / 1000) * height;
@@ -228,6 +230,8 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     const text = result.translated_text ?? '';
     // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (화면과 같은 규칙)
     const boxMaxFont = Math.max(minFont, bubbleMaxFont(result));
+    // 상자에 안 들어가도 기준 크기의 80%까지만 줄임 (화면과 같은 규칙)
+    const boxMinFont = fontFloor(minFont, boxMaxFont);
     const cx = ((xmin + xmax) / 2 / 1000) * width;
     const cy = ((ymin + ymax) / 2 / 1000) * height;
     // 원문을 덮는 상자는 그림자 없이 (사용자 요청 — 말풍선 밖 작은 딱지만 그림자)
@@ -235,14 +239,14 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     const shadowOffsetY = 0;
 
     // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
-    if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {
-      const layout = layoutVerticalText(text, boxWidth, boxHeight, minFont, boxMaxFont, cssPx);
+    if (resolveTextDirection(result, boxWidth, boxHeight, boxMinFont, cssPx) === 'vertical') {
+      const layout = layoutVerticalText(text, boxWidth, boxHeight, boxMinFont, boxMaxFont, cssPx);
       drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
       drawVerticalColumns(ctx, layout, cx, cy, setFont);
       continue;
     }
 
-    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, minFont, boxMaxFont);
+    const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, boxMinFont, boxMaxFont);
     const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx);
     drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);

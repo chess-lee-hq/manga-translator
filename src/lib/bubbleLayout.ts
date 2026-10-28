@@ -1,7 +1,7 @@
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape, type GlyphMask } from './bubbleShape';
 import { wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
-import { columnUnits, fillColumns, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
+import { columnUnits, fillColumns, getCoverBox, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
 
 /**
  * 원본 말풍선 모양 안에 번역문을 배치합니다. (화면과 이미지 저장이 같은 계산 사용)
@@ -769,23 +769,40 @@ export const UNIFORM_FONT = {
  * 목표는 "최대" 크기 — 말풍선에 안 들어가면 그만큼만 줄어듦
  */
 export function uniformFontTargets(
-  items: { id: string; glyph?: number }[],
+  items: { id: string; glyph?: number; edited?: boolean }[],
   pageHeight: number,
   minFont: number,
   maxFont: number,
+  /** 칸 id(번역 결과 id)별로 정한 기준을 기억 — 빈 칸 하나를 옮기거나 지워도 나머지 말풍선 글자 크기가 바뀌지 않게 */
+  remember = false,
 ): Map<string, number> {
   const targets = new Map<string, number>();
-  const glyphs = items.map(i => i.glyph).filter((g): g is number => !!g && g > 0).sort((a, b) => a - b);
-  if (glyphs.length === 0) return targets;
-  const base = glyphs[Math.floor(glyphs.length / 2)];
+  // 직접 고친 영역은 원문 크기를 새 자리에서 다시 잰 값이라(그림·빈칸) 기준에도 강조에도 쓰지 않음
+  const measured = (list: typeof items) => list.map(i => i.glyph).filter((g): g is number => !!g && g > 0).sort((a, b) => a - b);
+  const glyphs = measured(items.filter(i => !i.edited));
+  const fallback = measured(items);
+  const remembered = remember ? items.map(i => REMEMBERED_BASE.get(i.id)).filter((b): b is number => b !== undefined).sort((a, b) => a - b) : [];
+  const pool = glyphs.length > 0 ? glyphs : fallback;
+  if (remembered.length === 0 && pool.length === 0) return targets;
+  const base = remembered.length > 0 ? remembered[Math.floor(remembered.length / 2)] : pool[Math.floor(pool.length / 2)];
+  if (remember) for (const item of items) REMEMBERED_BASE.set(item.id, base);
   const toPx = (glyph: number) => Math.min(maxFont, Math.max(minFont, (glyph / 1000) * pageHeight * UNIFORM_FONT.koreanScale));
   for (const item of items) {
-    const ratio = item.glyph ? item.glyph / base : 1;
+    const ratio = item.glyph && !item.edited ? item.glyph / base : 1;
     const scale = ratio >= UNIFORM_FONT.emphasisRatio ? Math.min(UNIFORM_FONT.maxRatio, ratio) : 1;
     targets.set(item.id, toPx(base * scale));
   }
   return targets;
 }
+
+/** 번역 결과 id → 그 페이지 기준 글자 크기(원문 글자 크기, 페이지 높이 1000 기준). 다시 번역하면 id가 새로 생겨 새로 정함 */
+const REMEMBERED_BASE = new Map<string, number>();
+
+/** 말풍선에 안 들어갈 때 줄여도 되는 가장 작은 글자: 목표 크기의 이 배율 (그보다 작아져야 하면 넘침 — 칸마다 글자 크기가 들쭉날쭉했음) */
+export const FONT_FLOOR_RATIO = 0.8;
+
+/** 목표 크기에서 줄일 수 있는 하한 (절대 하한 minFont 이상) */
+export const fontFloor = (minFont: number, target: number) => Math.max(minFont, target * FONT_FLOOR_RATIO);
 
 /** 번역문을 나눌 수 있는 자리: 문장부호(. ! ? … ~ 。) 뒤, 줄바꿈 */
 const SENTENCE_END = /[.!?…~。！？]+["'」』)\]]*\s*|\n+/g;
@@ -836,8 +853,10 @@ export function planBubble(
   measure: Measure,
   minFont: number,
   maxFont: number,
+  /** 안 들어갈 때 줄일 수 있는 하한 (없으면 minFont). 페이지 기준 크기의 80% — 칸마다 글자 크기가 들쭉날쭉하지 않게 */
+  floorFont: number = minFont,
 ): BubblePlan {
-  const plan = planBubbleUntrimmed(result, detection, pageWidth, pageHeight, measure, minFont, maxFont);
+  const plan = planBubbleUntrimmed(result, detection, pageWidth, pageHeight, measure, minFont, maxFont, Math.min(maxFont, Math.max(minFont, floorFont)));
   if (plan.kind !== 'fit') return plan;
   // 말풍선 없는 글자의 둥근 상자는 상자 전체를 칠함 (원문이 그림·톤 위라 일부만 지우면 얼룩져 보임)
   if (detection && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure)) return plan;
@@ -922,13 +941,14 @@ function planBubbleUntrimmed(
   measure: Measure,
   minFont: number,
   maxFont: number,
+  floorFont: number,
 ): BubblePlan {
   if (!detection || !wantsBubbleFit(result)) return { kind: 'box' };
   const text = result.translated_text ?? '';
   // 찾은 모양이 원문 글자 영역을 60%도 못 품으면 엉뚱한 흰 영역(옷·배경)을 잡은 것 → 글자 영역을 둥근 상자로 (이름표 등)
   if (detection.shape && boxCoverage(detection.shape, result.box_2d) < BUBBLE_FIT.minBoxCoverage) {
-    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
-    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }
   if (detection.shape) {
@@ -936,7 +956,7 @@ function planBubbleUntrimmed(
     const lobes = detection.lobes;
     const parts = lobes ? splitTranslation(text, lobes.map(l => l.inkShare)) : null;
     if (lobes && parts) {
-      const fits = parts.map((part, k) => fitOrOverflow(part, lobes[k].shape, pageWidth, pageHeight, measure, minFont, maxFont));
+      const fits = parts.map((part, k) => fitOrOverflow(part, lobes[k].shape, pageWidth, pageHeight, measure, floorFont, maxFont));
       if (fits.every(f => f)) {
         return {
           kind: 'fit',
@@ -952,17 +972,17 @@ function planBubbleUntrimmed(
     // 찾은 모양의 무게중심이 원문 자리에서 크게 벗어나면 말풍선이 아니라 옆의 흰 컷 바탕까지 번져 잡힌 것
     // (「……」 말풍선이 흰 바탕 컷과 맞닿음 — 번역문이 말풍선 밖 그림 위로 갔음) → 원문 자리의 둥근 상자에 들어가면 그쪽
     if (strayedFrom(detection.shape, result.box_2d)) {
-      const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
-      const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+      const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+      const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
       if (panelFit && !panelFit.layout.overflow) return { kind: 'fit', fit: panelFit, source: 'erase', area: panel, panel: true };
     }
     const local = localizeShape(detection.shape, getDisplayBox(result));
-    const fit = fitOrOverflow(text, local, pageWidth, pageHeight, measure, minFont, maxFont);
+    const fit = fitOrOverflow(text, local, pageWidth, pageHeight, measure, floorFont, maxFont);
     // 넘치는데 표시용 박스가 찾은 모양 안에 거의 다 들면(잡힌 모양이 무늬 있는 옷·그림까지 번져 안쪽이 잘게 끊김 — 이름표 등)
     // 박스를 칠해도 말풍선 밖으로 안 나가므로 글자 영역의 둥근 상자로
     if ((!fit || fit.layout.overflow) && local !== detection.shape) {
-      const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
-      const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+      const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+      const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
       if (panelFit && !panelFit.layout.overflow) return { kind: 'fit', fit: panelFit, source: 'erase', area: panel, panel: true };
     }
     return fit ? { kind: 'fit', fit, source: 'bubble', area: local } : { kind: 'box' };
@@ -970,22 +990,22 @@ function planBubbleUntrimmed(
   // 말풍선이 없는 글자(그림·톤 위, 테두리 없는 해설): 표시용 박스를 둥근 흰 상자로 보고 말풍선과 같은 규칙으로 배치
   // (예전 네모 상자 배치는 높이를 안 쓰고 폭에만 맞춰, 세로로 긴 상자에서 긴 어절이 옆으로 삐져나왔음)
   if (NO_BUBBLE_FAILURES.has(detection.failure)) {
-    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
-    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }
   // 글자 획 일부가 말풍선 밖에 걸쳐 모양을 확정 못 했어도, 찾은 말풍선 안쪽이 있으면 그 안에 놓고 그 안을 칠함
   // (글자 영역 둘레 타원은 글자 영역이 한쪽에 치우치면 말풍선 밖으로 삐져나왔음). 밖에 걸친 원문 획만 남을 수 있음
   const area = ellipseShapeForBox(result.box_2d, pageWidth, pageHeight, minFont);
-  const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, minFont, maxFont);
+  const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, floorFont, maxFont);
   if (detection.interior && boxCoverage(detection.interior, result.box_2d) < BUBBLE_FIT.minBoxCoverage) {
     // 안쪽도 원문 자리를 못 품으면 엉뚱한 흰 영역 → 글자 영역의 둥근 상자로
-    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
-    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, minFont, maxFont);
+    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }
   if (detection.interior) {
-    const inner = fitOrOverflow(text, detection.interior, pageWidth, pageHeight, measure, minFont, maxFont);
+    const inner = fitOrOverflow(text, detection.interior, pageWidth, pageHeight, measure, floorFont, maxFont);
     // 안쪽에서 넘치는데 글자 영역 둘레에는 들어가면 그쪽 (안쪽이 이름표 같은 작은 칸이 아니라 주변 배경으로 잡힌 경우 등)
     if (inner && !(inner.layout.overflow && fit && !fit.layout.overflow)) {
       return { kind: 'fit', fit: inner, source: 'erase', area: detection.interior };

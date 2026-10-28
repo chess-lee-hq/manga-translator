@@ -3,9 +3,9 @@ import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, t
 import { getCacheKey } from '../hooks/useTranslationCache';
 import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
-import { BUBBLE_FIT, bubbleCapacity, planBubble, uniformFontTargets, type BubblePlan } from '../lib/bubbleLayout';
+import { BUBBLE_FIT, bubbleCapacity, fontFloor, planBubble, uniformFontTargets, type BubblePlan } from '../lib/bubbleLayout';
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
-import { createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { createTextMeasurer, estimateFontRatios, getCoverBox, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
 import { BubbleFitText } from './BubbleFitText';
 import { GlyphMaskOverlay } from './GlyphMaskOverlay';
@@ -115,9 +115,9 @@ export function MangaViewer({
       byKey = new Map();
       bubblePlanCache.set(detection, byKey);
     }
-    const key = `${fontVersion}|${maxFont.toFixed(2)}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${result.translated_text}`;
+    const key = `${fontVersion}|${maxFont.toFixed(2)}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${!!result.is_edited_box}|${result.translated_text}`;
     if (!byKey.has(key)) {
-      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, maxFont));
+      byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, maxFont, fontFloor(BUBBLE_FIT.minFontPx * scale, maxFont)));
     }
     return byKey.get(key)!;
   };
@@ -190,10 +190,11 @@ export function MangaViewer({
                 // 글자 크기: 페이지 기준 크기 하나로 통일하고, 원문이 확실히 큰(작은) 대사만 따라감 (원문 크기를 못 재면 예전 최대 22px)
                 const fontTargets = scriptStyle === 'overlay'
                   ? uniformFontTargets(
-                    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: detectionOf(img.src, r)?.glyph })),
+                    results.filter(r => modeOf(r) === 'cover').map(r => ({ id: r.id, glyph: detectionOf(img.src, r)?.glyph, edited: r.is_edited_box })),
                     pageHeight,
                     BUBBLE_FIT.minFontPx * scale,
                     BUBBLE_FIT.maxEmphasisPx * scale,
+                    true,
                   )
                   : new Map<string, number>();
                 const maxFontOf = (r: TranslationResult) => fontTargets.get(r.id) ?? BUBBLE_FIT.maxFontPx * scale;
@@ -422,14 +423,17 @@ export function MangaViewer({
                           }
 
                           // 글자 규칙은 이미지 저장(lib/overlayLayout.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
-                          const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
+                          // 흰 상자 범위: 직접 그린·고친 영역은 좌우를 조금 좁힘 (영역 수정 중에는 영역 그대로)
+                          const [coverTop, coverLeft, coverBottom, coverRight] = isEditingBoxes ? [top0, left0, bottom0, right0] : getCoverBox(result);
+                          const { maxCqi, maxCqh } = estimateFontRatios(result, [coverTop, coverLeft, coverBottom, coverRight]);
 
                           // 홀쭉한 영역(말풍선 없는 세로 한 줄 글자)은 가로로 쓰면 흰 영역을 넘치므로 세로쓰기
-                          const boxPixelWidth = (boxWidth / 1000) * pageWidth;
-                          const boxPixelHeight = (boxHeight / 1000) * pageHeight;
-                          const minFont = OVERLAY_STYLE.minFontPx * scale;
-                          // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (직접 그린·옮긴 영역도 상자를 꽉 채우도록 키우지 않음)
-                          const maxFont = Math.max(minFont, maxFontOf(result));
+                          const boxPixelWidth = ((coverRight - coverLeft) / 1000) * pageWidth;
+                          const boxPixelHeight = ((coverBottom - coverTop) / 1000) * pageHeight;
+                          // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (직접 그린·옮긴 영역도 상자를 꽉 채우도록 키우지 않음),
+                          // 상자에 안 들어가도 기준 크기의 80%까지만 줄이고 그다음은 상자를 넘침
+                          const maxFont = Math.max(OVERLAY_STYLE.minFontPx * scale, maxFontOf(result));
+                          const minFont = fontFloor(OVERLAY_STYLE.minFontPx * scale, maxFont);
                           const textDirection = resolveTextDirection(result, boxPixelWidth, boxPixelHeight, minFont, 1);
                           const verticalLayout = textDirection === 'vertical'
                             ? layoutVerticalText(result.translated_text, boxPixelWidth, boxPixelHeight, minFont, maxFont, 1)
@@ -482,7 +486,14 @@ export function MangaViewer({
                             <div
                               key={result.id}
                               className="absolute flex flex-col items-center justify-center pointer-events-auto"
-                              style={{ top, left, height, width, containerType: 'size', zIndex: 20 }}
+                              style={{
+                                top: `${coverTop / 10}%`,
+                                left: `${coverLeft / 10}%`,
+                                height: `${(coverBottom - coverTop) / 10}%`,
+                                width: `${(coverRight - coverLeft) / 10}%`,
+                                containerType: 'size',
+                                zIndex: 20,
+                              }}
                             >
                               {textContent}
                             </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getExportScale } from './exportCanvas';
-import { estimateFontRatios, getDisplayBox, layoutOverlayText, overlayFontSize, wrapText } from './overlayLayout';
+import { estimateFontRatios, getCoverBox, getDisplayBox, layoutOverlayText, overlayFontSize, wrapText } from './overlayLayout';
 
 // 글자당 10px 고정폭으로 가정
 const measure = (t: string) => Array.from(t).length * 10;
@@ -100,5 +100,18 @@ describe('getDisplayBox', () => {
 
   it('직접 편집한 박스는 그대로 쓴다', () => {
     expect(getDisplayBox({ box_2d: [1, 2, 3, 4], is_edited_box: true })).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('getCoverBox — 흰 상자로 덮을 범위', () => {
+  it('직접 그리거나 고친 영역은 좌우를 12% 좁힘 (위아래는 그대로)', () => {
+    const [ymin, xmin, ymax, xmax] = getCoverBox({ box_2d: [100, 100, 300, 200], is_edited_box: true });
+    expect([ymin, ymax]).toEqual([100, 300]);
+    expect(xmin).toBeCloseTo(106);
+    expect(xmax).toBeCloseTo(194);
+  });
+
+  it('자동으로 찾은 영역은 표시용 박스 그대로', () => {
+    expect(getCoverBox({ box_2d: [100, 100, 200, 200] })).toEqual(getDisplayBox({ box_2d: [100, 100, 200, 200] }));
   });
 });

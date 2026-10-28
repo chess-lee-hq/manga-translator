@@ -41,6 +41,21 @@ export function getDisplayBox(result: Pick<TranslationResult, 'box_2d' | 'is_edi
   return [cy - height / 2, cx - width / 2, cy + height / 2, cx + width / 2];
 }
 
+/** 직접 그리거나 고친 영역의 흰 상자 폭 (영역 대비). 영역을 말풍선보다 조금 넓게 그리기 쉬워 좌우가 말풍선 밖으로 넘었음 */
+export const EDITED_COVER_WIDTH = 0.88;
+
+/**
+ * 흰 상자로 덮을 범위: getDisplayBox와 같되, 직접 그리거나 고친 영역은 좌우를 조금 좁힘.
+ * 영역 편집 손잡이는 getDisplayBox(영역 그대로)를 써야 함 — 좁힌 값을 저장하면 고칠 때마다 계속 좁아짐
+ */
+export function getCoverBox(result: Pick<TranslationResult, 'box_2d' | 'is_edited_box'>): Box {
+  const box = getDisplayBox(result);
+  if (!result.is_edited_box) return box;
+  const [ymin, xmin, ymax, xmax] = box;
+  const inset = ((xmax - xmin) * (1 - EDITED_COVER_WIDTH)) / 2;
+  return [ymin, xmin + inset, ymax, xmax - inset];
+}
+
 /**
  * 박스 비율과 글자 수로 한 줄 글자 수·줄 수를 추정한 글자 크기 상한.
  * maxCqi는 박스 너비의 %, maxCqh는 박스 높이의 % (화면에서는 CSS cqi/cqh 단위로 그대로 사용)
