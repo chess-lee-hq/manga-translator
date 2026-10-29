@@ -22,7 +22,7 @@ interface BoxEditorProps {
   /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
   onReread?: () => void;
   /**
-   * 덮는 흰 상자의 지금 모서리 둥글기(화면 px). onCornerRadiusChange와 함께 주면 위쪽 가장자리에 노란 손잡이(PPT 모서리 조절)를 보여 줌.
+   * 덮는 흰 상자의 지금 모서리 둥글기(화면 px). onCornerRadiusChange와 함께 주면 아래쪽 가장자리에 노란 손잡이(PPT 모서리 조절)를 보여 줌.
    * 끌면 짧은 변 대비 비율(0~0.5)로 알려 줌
    */
   cornerRadiusPx?: number;
@@ -196,7 +196,7 @@ export function BoxEditor({
         </div>
       )}
 
-      {/* PPT처럼 위쪽 가장자리 안쪽의 노란 손잡이를 좌우로 끌어 모서리 둥글기 조절 (왼쪽 끝 = 직각). 툴바와 겹치지 않게 조금 안쪽 */}
+      {/* PPT처럼 노란 손잡이를 좌우로 끌어 모서리 둥글기 조절 (왼쪽 끝 = 직각). 위쪽 툴바와 헷갈려 잘못 누르지 않게 아래쪽 가장자리 안쪽 */}
       {onCornerRadiusChange && shownRadius !== undefined && (
         <>
           {draggingRadius !== null && (
@@ -206,7 +206,7 @@ export function BoxEditor({
             />
           )}
           <div
-            className={`absolute top-2.5 w-3 h-3 rotate-45 bg-amber-400 ring-1 ring-amber-700 cursor-ew-resize shadow z-50 transition-opacity ${draggingRadius !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            className={`absolute bottom-2.5 w-3 h-3 rotate-45 bg-amber-400 ring-1 ring-amber-700 cursor-ew-resize shadow z-50 transition-opacity ${draggingRadius !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
             style={{ left: `calc(${shownRadius}px - 6px)` }}
             onPointerDown={startCornerDrag}
             title={`모서리 둥글기 ${Math.round(shownRadius)}px — 좌우로 끌어 조절 (왼쪽 끝 = 직각)`}
