@@ -1636,6 +1636,16 @@ OpenAI 프롬프트 캐시는 **앞부분이 1,024토큰 이상** 이전 요청�
 
 되돌리기: `git revert 1870d73`
 
+## 추가 수정 70 — 모서리 둥글기를 말풍선마다 (2026-10-29)
+시작 전 태그: `backup/before-corner-handle-2026-10-29` (= 819e4f8). 커밋 a142ae4.
+- 사용자: 전체 설정이 아니라 말풍선 하나하나 조절하고 싶음 → 69의 번역 옵션 슬라이더(`manga-corner-radius`) 제거, `OVERLAY_STYLE.radiusPx`는 다시 16 고정
+- `TranslationResult.corner_radius`: 덮는 흰 상자 짧은 변 대비 0~0.5 (없으면 기본 16px, 짧은 변 절반까지). sanitize에서 범위 정리
+- `cornerRadiusPx(result, w, h, 기본px)`: 네모 상자(화면 span·이미지 저장 — 둘 다 영역 크기 기준), 세로쓰기 상자(`VerticalBubbleText radius`), 둥근 상자 배치(`panelOf` → `roundedBoxShape`)
+- `BoxEditor`: `cornerRadiusPx`·`onCornerRadiusChange`가 있으면 위쪽 가장자리 안쪽에 노란 마름모 손잡이(왼쪽에서 둥글기 px만큼). 좌우로 끌면 점선 미리보기, 놓으면 저장 (App `handleSetCornerRadius`). 원본 말풍선 모양에 맞춘 칸은 둥글기가 없어 손잡이 없음(둥근 상자로 놓인 칸만)
+- 확인: 헤드리스 크롬에서 손잡이를 50px 끌어 16→66px, 영역 수정을 꺼도 유지, 다른 칸은 그대로. 테스트 381개
+
+되돌리기: `git revert a142ae4`
+
 ---
 
 ## 이번 패치 범위 밖 (다음 후보)
