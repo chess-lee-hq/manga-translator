@@ -1,7 +1,7 @@
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape, type GlyphMask } from './bubbleShape';
 import { wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
-import { columnUnits, fillColumns, getCoverBox, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
+import { columnUnits, fillColumns, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
 
 /**
  * 원본 말풍선 모양 안에 번역문을 배치합니다. (화면과 이미지 저장이 같은 계산 사용)
@@ -947,7 +947,7 @@ function planBubbleUntrimmed(
   const text = result.translated_text ?? '';
   // 찾은 모양이 원문 글자 영역을 60%도 못 품으면 엉뚱한 흰 영역(옷·배경)을 잡은 것 → 글자 영역을 둥근 상자로 (이름표 등)
   if (detection.shape && boxCoverage(detection.shape, result.box_2d) < BUBBLE_FIT.minBoxCoverage) {
-    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
     const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }
@@ -972,7 +972,7 @@ function planBubbleUntrimmed(
     // 찾은 모양의 무게중심이 원문 자리에서 크게 벗어나면 말풍선이 아니라 옆의 흰 컷 바탕까지 번져 잡힌 것
     // (「……」 말풍선이 흰 바탕 컷과 맞닿음 — 번역문이 말풍선 밖 그림 위로 갔음) → 원문 자리의 둥근 상자에 들어가면 그쪽
     if (strayedFrom(detection.shape, result.box_2d)) {
-      const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+      const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
       const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
       if (panelFit && !panelFit.layout.overflow) return { kind: 'fit', fit: panelFit, source: 'erase', area: panel, panel: true };
     }
@@ -981,7 +981,7 @@ function planBubbleUntrimmed(
     // 넘치는데 표시용 박스가 찾은 모양 안에 거의 다 들면(잡힌 모양이 무늬 있는 옷·그림까지 번져 안쪽이 잘게 끊김 — 이름표 등)
     // 박스를 칠해도 말풍선 밖으로 안 나가므로 글자 영역의 둥근 상자로
     if ((!fit || fit.layout.overflow) && local !== detection.shape) {
-      const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+      const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
       const panelFit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
       if (panelFit && !panelFit.layout.overflow) return { kind: 'fit', fit: panelFit, source: 'erase', area: panel, panel: true };
     }
@@ -990,7 +990,7 @@ function planBubbleUntrimmed(
   // 말풍선이 없는 글자(그림·톤 위, 테두리 없는 해설): 표시용 박스를 둥근 흰 상자로 보고 말풍선과 같은 규칙으로 배치
   // (예전 네모 상자 배치는 높이를 안 쓰고 폭에만 맞춰, 세로로 긴 상자에서 긴 어절이 옆으로 삐져나왔음)
   if (NO_BUBBLE_FAILURES.has(detection.failure)) {
-    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
     const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }
@@ -1000,7 +1000,7 @@ function planBubbleUntrimmed(
   const fit = fitOrOverflow(text, area, pageWidth, pageHeight, measure, floorFont, maxFont);
   if (detection.interior && boxCoverage(detection.interior, result.box_2d) < BUBBLE_FIT.minBoxCoverage) {
     // 안쪽도 원문 자리를 못 품으면 엉뚱한 흰 영역 → 글자 영역의 둥근 상자로
-    const panel = roundedBoxShape(getCoverBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
+    const panel = roundedBoxShape(getDisplayBox(result), pageWidth, pageHeight, OVERLAY_STYLE.radiusPx * (minFont / BUBBLE_FIT.minFontPx));
     const fit = fitOrOverflow(text, panel, pageWidth, pageHeight, measure, floorFont, maxFont);
     return fit ? { kind: 'fit', fit, source: 'erase', area: panel } : { kind: 'box' };
   }

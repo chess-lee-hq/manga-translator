@@ -5,7 +5,7 @@ import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
 import { BUBBLE_FIT, bubbleCapacity, fontFloor, planBubble, uniformFontTargets, type BubblePlan } from '../lib/bubbleLayout';
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
-import { createTextMeasurer, estimateFontRatios, getCoverBox, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { boxStyleFor, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
 import { BubbleFitText } from './BubbleFitText';
 import { GlyphMaskOverlay } from './GlyphMaskOverlay';
@@ -423,18 +423,19 @@ export function MangaViewer({
                           }
 
                           // 글자 규칙은 이미지 저장(lib/overlayLayout.ts)과 공유 — 한쪽만 바꾸면 저장본이 화면과 달라짐
-                          // 흰 상자 범위: 직접 그린·고친 영역은 좌우를 조금 좁힘 (영역 수정 중에는 영역 그대로)
-                          const [coverTop, coverLeft, coverBottom, coverRight] = isEditingBoxes ? [top0, left0, bottom0, right0] : getCoverBox(result);
-                          const { maxCqi, maxCqh } = estimateFontRatios(result, [coverTop, coverLeft, coverBottom, coverRight]);
+                          // 영역 수정 중이든 아니든 같은 범위·같은 규칙 (수정을 끄면 폭·글자 크기·방향이 바뀌었음)
+                          const { maxCqi, maxCqh } = estimateFontRatios(result, [top0, left0, bottom0, right0]);
+                          const boxStyle = boxStyleFor(result);
 
                           // 홀쭉한 영역(말풍선 없는 세로 한 줄 글자)은 가로로 쓰면 흰 영역을 넘치므로 세로쓰기
-                          const boxPixelWidth = ((coverRight - coverLeft) / 1000) * pageWidth;
-                          const boxPixelHeight = ((coverBottom - coverTop) / 1000) * pageHeight;
+                          const boxPixelWidth = (boxWidth / 1000) * pageWidth;
+                          const boxPixelHeight = (boxHeight / 1000) * pageHeight;
                           // 상자 크기와 상관없이 페이지 기준 글자 크기 이하로 (직접 그린·옮긴 영역도 상자를 꽉 채우도록 키우지 않음),
                           // 상자에 안 들어가도 기준 크기의 80%까지만 줄이고 그다음은 상자를 넘침
                           const maxFont = Math.max(OVERLAY_STYLE.minFontPx * scale, maxFontOf(result));
                           const minFont = fontFloor(OVERLAY_STYLE.minFontPx * scale, maxFont);
-                          const textDirection = resolveTextDirection(result, boxPixelWidth, boxPixelHeight, minFont, 1);
+                          // 방향 판단은 절대 하한(10px)으로 — 줄이는 하한(기준의 80%)으로 보면 조금 좁은 상자도 세로쓰기로 바뀌었음
+                          const textDirection = resolveTextDirection(result, boxPixelWidth, boxPixelHeight, OVERLAY_STYLE.minFontPx * scale, 1);
                           const verticalLayout = textDirection === 'vertical'
                             ? layoutVerticalText(result.translated_text, boxPixelWidth, boxPixelHeight, minFont, maxFont, 1)
                             : null;
@@ -453,9 +454,9 @@ export function MangaViewer({
                                 textAlign: 'center',
                                 letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
                                 minWidth: '100%',
-                                maxWidth: `${OVERLAY_STYLE.maxWidthRatio * 100}%`,
+                                maxWidth: `${boxStyle.maxWidthRatio * 100}%`,
                                 minHeight: '100%',
-                                padding: `${OVERLAY_STYLE.paddingYPx}px ${OVERLAY_STYLE.paddingXPx}px`,
+                                padding: `${OVERLAY_STYLE.paddingYPx}px ${boxStyle.paddingXPx}px`,
                                 borderRadius: `${OVERLAY_STYLE.radiusPx}px`,
                               }}
                             >
@@ -486,14 +487,7 @@ export function MangaViewer({
                             <div
                               key={result.id}
                               className="absolute flex flex-col items-center justify-center pointer-events-auto"
-                              style={{
-                                top: `${coverTop / 10}%`,
-                                left: `${coverLeft / 10}%`,
-                                height: `${(coverBottom - coverTop) / 10}%`,
-                                width: `${(coverRight - coverLeft) / 10}%`,
-                                containerType: 'size',
-                                zIndex: 20,
-                              }}
+                              style={{ top, left, height, width, containerType: 'size', zIndex: 20 }}
                             >
                               {textContent}
                             </div>

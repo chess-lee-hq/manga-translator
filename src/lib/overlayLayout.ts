@@ -1,5 +1,5 @@
 import type { TranslationResult } from './gemini';
-import { overlayFontWeight } from './translationOptions';
+import { overlayCornerRadius, overlayFontWeight } from './translationOptions';
 
 /**
  * 덮어쓰기 말풍선 규칙. 화면(MangaViewer)과 이미지 저장(exportCanvas)이 같은 값을 씁니다.
@@ -18,7 +18,10 @@ export const OVERLAY_STYLE = {
   /** 흰 상자 안쪽 여백·모서리·그림자 (뷰어 배율과 무관) */
   paddingXPx: 8,
   paddingYPx: 4,
-  radiusPx: 16,
+  /** 모서리 둥글기 (번역 옵션에서 0~16 조절, 기본 16) */
+  get radiusPx(): number {
+    return overlayCornerRadius();
+  },
   shadowOffsetYPx: 2,
   shadowBlurPx: 10,
   /** 끊을 수 없는 긴 단어가 있을 때 흰 상자가 박스 너비의 몇 배까지 넓어질 수 있는지 */
@@ -41,19 +44,14 @@ export function getDisplayBox(result: Pick<TranslationResult, 'box_2d' | 'is_edi
   return [cy - height / 2, cx - width / 2, cy + height / 2, cx + width / 2];
 }
 
-/** 직접 그리거나 고친 영역의 흰 상자 폭 (영역 대비). 영역을 말풍선보다 조금 넓게 그리기 쉬워 좌우가 말풍선 밖으로 넘었음 */
-export const EDITED_COVER_WIDTH = 0.88;
-
 /**
- * 흰 상자로 덮을 범위: getDisplayBox와 같되, 직접 그리거나 고친 영역은 좌우를 조금 좁힘.
- * 영역 편집 손잡이는 getDisplayBox(영역 그대로)를 써야 함 — 좁힌 값을 저장하면 고칠 때마다 계속 좁아짐
+ * 직접 그리거나 고친 영역의 흰 상자: 좌우는 그린 영역 그대로(넓히지 않음), 안쪽 여백은 최소로 — 그린 폭이 곧 번역문 폭.
+ * (자동 영역은 번역문이 길면 흰 상자를 최대 maxWidthRatio배까지 넓힘)
  */
-export function getCoverBox(result: Pick<TranslationResult, 'box_2d' | 'is_edited_box'>): Box {
-  const box = getDisplayBox(result);
-  if (!result.is_edited_box) return box;
-  const [ymin, xmin, ymax, xmax] = box;
-  const inset = ((xmax - xmin) * (1 - EDITED_COVER_WIDTH)) / 2;
-  return [ymin, xmin + inset, ymax, xmax - inset];
+export const EDITED_BOX_STYLE = { paddingXPx: 2, maxWidthRatio: 1 } as const;
+
+export function boxStyleFor(result: Pick<TranslationResult, 'is_edited_box'>): { paddingXPx: number; maxWidthRatio: number } {
+  return result.is_edited_box ? EDITED_BOX_STYLE : { paddingXPx: OVERLAY_STYLE.paddingXPx, maxWidthRatio: OVERLAY_STYLE.maxWidthRatio };
 }
 
 /**
@@ -149,8 +147,9 @@ export function layoutOverlayText(
   keepAll: boolean,
   measure: Measure,
   cssPx: number,
+  style: { paddingXPx: number; maxWidthRatio: number } = OVERLAY_STYLE,
 ): OverlayLayout {
-  const padX = OVERLAY_STYLE.paddingXPx * cssPx;
+  const padX = style.paddingXPx * cssPx;
   const padY = OVERLAY_STYLE.paddingYPx * cssPx;
 
   const maxContent = Math.max(0, ...text.split('\n').map(measure)) + padX * 2;
@@ -159,7 +158,7 @@ export function layoutOverlayText(
 
   // CSS: width = fit-content, min-width 100%, max-width 200% (box-sizing: border-box)
   const fitContent = Math.min(maxContent, Math.max(minContent, boxWidth));
-  const width = Math.min(Math.max(fitContent, boxWidth), boxWidth * OVERLAY_STYLE.maxWidthRatio);
+  const width = Math.min(Math.max(fitContent, boxWidth), boxWidth * style.maxWidthRatio);
 
   const lines = wrapText(text, Math.max(0, width - padX * 2), measure, keepAll);
   const height = Math.max(boxHeight, lines.length * fontSize * OVERLAY_STYLE.lineHeight + padY * 2);
@@ -190,13 +189,15 @@ export const VERTICAL_TEXT = {
  * 박스(예: 원문 한 글자 폭)를 번역문이 짧아 가로로도 충분히 들어가는데 세로쓰기로 잘못 판정하기 쉽습니다.
  */
 export function resolveTextDirection(
-  result: Pick<TranslationResult, 'translated_text' | 'text_direction'>,
+  result: Pick<TranslationResult, 'translated_text' | 'text_direction' | 'is_edited_box'>,
   boxWidth: number,
   boxHeight: number,
   minFontSize: number,
   cssPx: number,
 ): 'horizontal' | 'vertical' {
   if (result.text_direction === 'horizontal' || result.text_direction === 'vertical') return result.text_direction;
+  // 직접 그리거나 고친 영역은 세로쓰기 버튼을 누르지 않는 한 가로 (폭을 조금 바꿨다고 갑자기 세로로 바뀌었음)
+  if (result.is_edited_box) return 'horizontal';
   const chars = Array.from((result.translated_text ?? '').trim()).length;
   if (chars < VERTICAL_TEXT.minChars) return 'horizontal';
   if (boxWidth >= boxHeight || minFontSize <= 0) return 'horizontal';

@@ -5,7 +5,7 @@ import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
 import {
-  columnUnits, createTextMeasurer, estimateFontRatios, getCoverBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
+  boxStyleFor, columnUnits, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
   resolveTextDirection, VERTICAL_CORNER_OFFSET, VERTICAL_TEXT, type VerticalCell, type VerticalLayout,
 } from './overlayLayout';
 
@@ -221,7 +221,8 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
       continue;
     }
 
-    const displayBox = getCoverBox(result);
+    const displayBox = getDisplayBox(result);
+    const boxStyle = boxStyleFor(result);
     const [ymin, xmin, ymax, xmax] = displayBox;
     const boxWidth = ((xmax - xmin) / 1000) * width;
     const boxHeight = ((ymax - ymin) / 1000) * height;
@@ -239,7 +240,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     const shadowOffsetY = 0;
 
     // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
-    if (resolveTextDirection(result, boxWidth, boxHeight, boxMinFont, cssPx) === 'vertical') {
+    if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {
       const layout = layoutVerticalText(text, boxWidth, boxHeight, boxMinFont, boxMaxFont, cssPx);
       drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
       drawVerticalColumns(ctx, layout, cx, cy, setFont);
@@ -247,7 +248,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     }
 
     const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, boxMinFont, boxMaxFont);
-    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx);
+    const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx, boxStyle);
     drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);
   }

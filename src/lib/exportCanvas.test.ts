@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getExportScale } from './exportCanvas';
-import { estimateFontRatios, getCoverBox, getDisplayBox, layoutOverlayText, overlayFontSize, wrapText } from './overlayLayout';
+import { boxStyleFor, estimateFontRatios, getDisplayBox, layoutOverlayText, overlayFontSize, resolveTextDirection, wrapText } from './overlayLayout';
 
 // 글자당 10px 고정폭으로 가정
 const measure = (t: string) => Array.from(t).length * 10;
@@ -103,15 +103,21 @@ describe('getDisplayBox', () => {
   });
 });
 
-describe('getCoverBox — 흰 상자로 덮을 범위', () => {
-  it('직접 그리거나 고친 영역은 좌우를 12% 좁힘 (위아래는 그대로)', () => {
-    const [ymin, xmin, ymax, xmax] = getCoverBox({ box_2d: [100, 100, 300, 200], is_edited_box: true });
-    expect([ymin, ymax]).toEqual([100, 300]);
-    expect(xmin).toBeCloseTo(106);
-    expect(xmax).toBeCloseTo(194);
+describe('직접 그린 영역의 흰 상자', () => {
+  it('좌우는 그린 영역 그대로(넓히지 않음), 안쪽 여백 최소 — 긴 어절은 영역 안에서 줄바꿈', () => {
+    const measure = (t: string) => Array.from(t).length * 10;
+    const style = boxStyleFor({ is_edited_box: true });
+    const edited = layoutOverlayText('나 시로가쓰요리가 죽거든', 60, 200, 10, true, measure, 1, style);
+    expect(edited.width).toBe(60);
+    expect(edited.lines.every(line => measure(line) <= 60 - style.paddingXPx * 2)).toBe(true);
+    // 자동 영역은 예전처럼 최대 2배까지 넓힘
+    expect(layoutOverlayText('나 시로가쓰요리가 죽거든', 60, 200, 10, true, measure, 1).width).toBeGreaterThan(60);
   });
 
-  it('자동으로 찾은 영역은 표시용 박스 그대로', () => {
-    expect(getCoverBox({ box_2d: [100, 100, 200, 200] })).toEqual(getDisplayBox({ box_2d: [100, 100, 200, 200] }));
+  it('직접 그린 영역은 세로쓰기 버튼을 누르지 않는 한 가로쓰기', () => {
+    const text = { translated_text: '나 시로 가쓰요리가 죽거든' };
+    expect(resolveTextDirection(text, 20, 400, 10, 1)).toBe('vertical');
+    expect(resolveTextDirection({ ...text, is_edited_box: true }, 20, 400, 10, 1)).toBe('horizontal');
+    expect(resolveTextDirection({ ...text, is_edited_box: true, text_direction: 'vertical' }, 20, 400, 10, 1)).toBe('vertical');
   });
 });

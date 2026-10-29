@@ -52,6 +52,32 @@ export const getOverlayFontVersion = () => fontVersion;
  * 말풍선마다 고른 설정(fit_bubble)이 있으면 그것을 따름. 바꾸면 굵기처럼 바로 다시 그림
  */
 const FIT_BUBBLE_KEY = 'manga-fit-bubble';
+
+/**
+ * 덮는 흰 상자의 모서리 둥글기 (화면 px, 0 = 직각). PPT 모서리처럼 조절 — 너무 둥글면 모서리 쪽 원문 글자가 남았음.
+ * 바꾸면 굵기처럼 바로 다시 그림
+ */
+const CORNER_RADIUS_KEY = 'manga-corner-radius';
+export const CORNER_RADIUS = { min: 0, max: 16, fallback: 16 } as const;
+export function overlayCornerRadius(): number {
+  try {
+    const raw = localStorage.getItem(CORNER_RADIUS_KEY);
+    const saved = Number(raw);
+    if (raw === null || !Number.isFinite(saved)) return CORNER_RADIUS.fallback;
+    return Math.min(CORNER_RADIUS.max, Math.max(CORNER_RADIUS.min, saved));
+  } catch {
+    return CORNER_RADIUS.fallback;
+  }
+}
+export function setOverlayCornerRadius(px: number) {
+  try {
+    localStorage.setItem(CORNER_RADIUS_KEY, String(Math.round(px)));
+  } catch {
+    // 저장 못 하면 이번 세션만 반영되지 않음
+  }
+  fontVersion++;
+  fontListeners.forEach(listener => listener());
+}
 export const isBubbleFitDefault = () => readFlag(FIT_BUBBLE_KEY, true);
 export function setBubbleFitDefault(enabled: boolean) {
   writeFlag(FIT_BUBBLE_KEY, enabled);

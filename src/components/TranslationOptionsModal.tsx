@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Loader2, Settings2, Trash2, X } from 'lucide-react';
 import { deleteOcrModel, getOcrStatus, isOcrModelDownloaded, loadOcrModel, subscribeOcrStatus } from '../lib/mangaOcr';
 import { OCR_MODEL_APPROX_MB } from '../lib/mangaOcrConfig';
-import { isBubbleFitDefault, isOverlayBold, isSceneThumbnailEnabled, setBubbleFitDefault, setOverlayBold, setSceneThumbnailEnabled } from '../lib/translationOptions';
+import { CORNER_RADIUS, isBubbleFitDefault, isOverlayBold, isSceneThumbnailEnabled, overlayCornerRadius, setBubbleFitDefault, setOverlayBold, setOverlayCornerRadius, setSceneThumbnailEnabled } from '../lib/translationOptions';
 
 interface TranslationOptionsModalProps {
   /** 로컬 OCR 교차 검증을 켰는지 (App이 들고 있어야 켜자마자 검증이 시작됨) */
@@ -30,6 +30,7 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
   const [scene, setScene] = useState(isSceneThumbnailEnabled);
   const [bold, setBold] = useState(isOverlayBold);
   const [fitBubble, setFitBubble] = useState(isBubbleFitDefault);
+  const [radius, setRadius] = useState(overlayCornerRadius);
   const ocrStatus = useSyncExternalStore(subscribeOcrStatus, getOcrStatus);
   const [downloaded, setDownloaded] = useState<boolean | null>(null);
 
@@ -86,6 +87,32 @@ export function TranslationOptionsModal({ localOcr, onLocalOcrChange, onClose }:
             켜면(기본) 번역문을 원본 말풍선 모양에 맞춰 넣고, 끄면 모든 말풍선을 글자 영역의 네모 상자로 덮습니다.
             말풍선마다 바꾼 설정(말풍선 위 버튼)은 그대로 따릅니다. 화면과 이미지 저장에 바로 적용됩니다.
           </OptionRow>
+
+          <div className="p-3 rounded-lg border border-gray-200">
+            <div className="flex items-center gap-3">
+              {/* 지금 둥글기를 작은 사각형으로 보여 줌 */}
+              <span className="shrink-0 w-8 h-6 border-2 border-gray-500 bg-white" style={{ borderRadius: radius }} />
+              <span className="text-xs text-gray-600 flex-1">
+                <b className="block text-sm text-gray-800 mb-0.5">덮는 상자 모서리 둥글기</b>
+                네모 상자로 덮을 때 모서리를 얼마나 둥글게 할지 정합니다. 너무 둥글면 모서리 쪽 원문 글자가 남을 수 있어 줄이면 직각에 가까워집니다.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+              <span>직각</span>
+              <input
+                type="range"
+                min={CORNER_RADIUS.min}
+                max={CORNER_RADIUS.max}
+                step={1}
+                value={radius}
+                onChange={e => { const next = Number(e.target.value); setOverlayCornerRadius(next); setRadius(next); }}
+                className="flex-1"
+                aria-label="덮는 상자 모서리 둥글기"
+              />
+              <span>둥글게</span>
+              <span className="w-10 text-right tabular-nums">{radius}px</span>
+            </div>
+          </div>
 
           <OptionRow
             checked={scene}
