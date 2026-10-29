@@ -1,5 +1,5 @@
 import type { TranslationResult } from './gemini';
-import { overlayCornerRadius, overlayFontWeight } from './translationOptions';
+import { overlayFontWeight } from './translationOptions';
 
 /**
  * 덮어쓰기 말풍선 규칙. 화면(MangaViewer)과 이미지 저장(exportCanvas)이 같은 값을 씁니다.
@@ -18,10 +18,7 @@ export const OVERLAY_STYLE = {
   /** 흰 상자 안쪽 여백·모서리·그림자 (뷰어 배율과 무관) */
   paddingXPx: 8,
   paddingYPx: 4,
-  /** 모서리 둥글기 (번역 옵션에서 0~16 조절, 기본 16) */
-  get radiusPx(): number {
-    return overlayCornerRadius();
-  },
+  radiusPx: 16,
   shadowOffsetYPx: 2,
   shadowBlurPx: 10,
   /** 끊을 수 없는 긴 단어가 있을 때 흰 상자가 박스 너비의 몇 배까지 넓어질 수 있는지 */
@@ -42,6 +39,19 @@ export function getDisplayBox(result: Pick<TranslationResult, 'box_2d' | 'is_edi
   const cx = (xmin + xmax) / 2;
   const cy = (ymin + ymax) / 2;
   return [cy - height / 2, cx - width / 2, cy + height / 2, cx + width / 2];
+}
+
+/** 말풍선마다 고른 모서리 둥글기의 상한 (상자 짧은 변 대비 — 0.5면 양끝이 반원) */
+export const MAX_CORNER_RATIO = 0.5;
+
+/**
+ * 덮는 흰 상자의 모서리 둥글기 px. 말풍선마다 고른 값(corner_radius, 짧은 변 대비)이 있으면 그것, 없으면 기본 px
+ * (PPT 모서리처럼 영역 수정 중 노란 손잡이로 조절 — 너무 둥글면 모서리 쪽 원문 글자가 남았음)
+ */
+export function cornerRadiusPx(result: Pick<TranslationResult, 'corner_radius'>, widthPx: number, heightPx: number, defaultPx: number): number {
+  const shorter = Math.max(0, Math.min(widthPx, heightPx));
+  if (typeof result.corner_radius === 'number') return Math.min(MAX_CORNER_RATIO, Math.max(0, result.corner_radius)) * shorter;
+  return Math.min(defaultPx, shorter / 2);
 }
 
 /**

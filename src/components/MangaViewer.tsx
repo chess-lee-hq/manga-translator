@@ -5,7 +5,7 @@ import { useBubbleShapes } from '../hooks/useBubbleShapes';
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit, type DisplayMode } from '../lib/bubbleDisplay';
 import { BUBBLE_FIT, bubbleCapacity, fontFloor, planBubble, uniformFontTargets, type BubblePlan } from '../lib/bubbleLayout';
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape } from '../lib/bubbleShape';
-import { boxStyleFor, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
+import { boxStyleFor, cornerRadiusPx, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutVerticalText, OVERLAY_STYLE, resolveTextDirection, VIEWER_CHROME_PX } from '../lib/overlayLayout';
 import { getOverlayFontVersion, subscribeOverlayFont } from '../lib/translationOptions';
 import { BubbleFitText } from './BubbleFitText';
 import { GlyphMaskOverlay } from './GlyphMaskOverlay';
@@ -37,6 +37,8 @@ interface MangaViewerProps {
   onDelete: (imgIndex: number, id: string) => void;
   /** 원본 말풍선 모양에 맞춰 넣기 켜기/끄기 */
   onSetBubbleFit: (imgIndex: number, id: string, enabled: boolean) => void;
+  /** 덮는 흰 상자 모서리 둥글기 (짧은 변 대비 0~0.5) */
+  onSetCornerRadius: (imgIndex: number, id: string, ratio: number) => void;
   /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역 */
   onShorten: (imgIndex: number, id: string, maxChars: number) => void;
   /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
@@ -78,7 +80,7 @@ function toPageCoords(e: React.PointerEvent<HTMLElement>) {
 export function MangaViewer({
   images, visibleIndices, viewMode, scriptStyle, scale, onScaleChange, isEditingBoxes, translationCache,
   hoveredBubble, onHoverBubble, onBoxChange, onToggleDisplayMode, onSetTextDirection,
-  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onSetBubbleFit, onShorten, onReread, onCreateBox, onDownloadPage, footer,
+  onSetTagPosition, onSetTagScale, onResetTag, onDelete, onSetBubbleFit, onSetCornerRadius, onShorten, onReread, onCreateBox, onDownloadPage, footer,
 }: MangaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 작은 딱지 배치에 페이지의 실제 px 크기가 필요 (페이지 높이 = (화면 높이 - 250px) × 배율)
@@ -115,7 +117,7 @@ export function MangaViewer({
       byKey = new Map();
       bubblePlanCache.set(detection, byKey);
     }
-    const key = `${fontVersion}|${maxFont.toFixed(2)}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${!!result.is_edited_box}|${result.translated_text}`;
+    const key = `${fontVersion}|${maxFont.toFixed(2)}|${pageWidth.toFixed(1)}|${pageHeight.toFixed(1)}|${scale}|${wantsBubbleFit(result)}|${result.box_2d.join(',')}|${!!result.is_edited_box}|${result.corner_radius ?? ''}|${result.translated_text}`;
     if (!byKey.has(key)) {
       byKey.set(key, planBubble(result, detection, pageWidth, pageHeight, measureText, BUBBLE_FIT.minFontPx * scale, maxFont, fontFloor(BUBBLE_FIT.minFontPx * scale, maxFont)));
     }
@@ -415,6 +417,10 @@ export function MangaViewer({
                                   onDelete={() => onDelete(imgIndex, result.id)}
                                   onReread={() => onReread(imgIndex, result.id)}
                                   {...bubbleEditProps}
+                                  {...(plan.kind === 'fit' && plan.panel ? {
+                                    cornerRadiusPx: cornerRadiusPx(result, (boxWidth / 1000) * pageWidth, (boxHeight / 1000) * pageHeight, OVERLAY_STYLE.radiusPx * scale),
+                                    onCornerRadiusChange: (ratio: number) => onSetCornerRadius(imgIndex, result.id, ratio),
+                                  } : {})}
                                 >
                                   {null}
                                 </BoxEditor>
@@ -440,7 +446,11 @@ export function MangaViewer({
                             ? layoutVerticalText(result.translated_text, boxPixelWidth, boxPixelHeight, minFont, maxFont, 1)
                             : null;
 
-                          const textContent = verticalLayout ? <VerticalBubbleText layout={verticalLayout} /> : (
+                          // 모서리 둥글기: 말풍선마다 고른 값(노란 손잡이), 없으면 기본
+                          const radius = cornerRadiusPx(result, boxPixelWidth, boxPixelHeight, OVERLAY_STYLE.radiusPx);
+                          const textContent = verticalLayout ? (
+                            <VerticalBubbleText layout={verticalLayout} radius={cornerRadiusPx(result, verticalLayout.width, verticalLayout.height, OVERLAY_STYLE.radiusPx)} />
+                          ) : (
                             <span
                               className="bg-white text-gray-900 flex flex-col items-center justify-center"
                               style={{
@@ -457,7 +467,7 @@ export function MangaViewer({
                                 maxWidth: `${boxStyle.maxWidthRatio * 100}%`,
                                 minHeight: '100%',
                                 padding: `${OVERLAY_STYLE.paddingYPx}px ${boxStyle.paddingXPx}px`,
-                                borderRadius: `${OVERLAY_STYLE.radiusPx}px`,
+                                borderRadius: `${radius}px`,
                               }}
                             >
                               {result.translated_text}
@@ -474,6 +484,8 @@ export function MangaViewer({
                                 onToggleDisplayMode={() => onToggleDisplayMode(imgIndex, result.id, displayMode)}
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
+                                cornerRadiusPx={radius}
+                                onCornerRadiusChange={ratio => onSetCornerRadius(imgIndex, result.id, ratio)}
                                 onDelete={() => onDelete(imgIndex, result.id)}
                                 onReread={() => onReread(imgIndex, result.id)}
                                 {...bubbleEditProps}

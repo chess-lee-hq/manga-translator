@@ -43,5 +43,6 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
       review: typeof r.review === 'string' && r.review ? r.review : undefined,
       ocr_text: typeof r.ocr_text === 'string' ? r.ocr_text : undefined,
       text_mask: isTextMask(r.text_mask) ? r.text_mask : undefined,
+      corner_radius: typeof r.corner_radius === 'number' && Number.isFinite(r.corner_radius) ? Math.min(0.5, Math.max(0, r.corner_radius)) : undefined,
     }));
 }

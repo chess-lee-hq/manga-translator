@@ -20,13 +20,15 @@ export function VerticalGlyph({ cell, cellHeight }: { cell: VerticalCell; cellHe
 
 interface VerticalBubbleTextProps {
   layout: VerticalLayout;
+  /** 모서리 둥글기 px (없으면 기본) */
+  radius?: number;
 }
 
 /**
  * 세로쓰기 상자 (말풍선 모양을 쓰지 않을 때). 이미지 저장과 같은 배치 계산 결과를 그대로 그려서
  * 화면과 저장본이 같게 보입니다. (첫 열이 오른쪽 — 일본 만화 세로쓰기 방향)
  */
-export function VerticalBubbleText({ layout }: VerticalBubbleTextProps) {
+export function VerticalBubbleText({ layout, radius = OVERLAY_STYLE.radiusPx }: VerticalBubbleTextProps) {
   const cellHeight = layout.fontSize * VERTICAL_TEXT.cellHeight;
   const columnWidth = layout.fontSize * VERTICAL_TEXT.columnWidth;
 
@@ -41,7 +43,7 @@ export function VerticalBubbleText({ layout }: VerticalBubbleTextProps) {
         alignItems: 'center',
         fontSize: layout.fontSize,
         fontWeight: OVERLAY_STYLE.fontWeight,
-        borderRadius: OVERLAY_STYLE.radiusPx,
+        borderRadius: radius,
       }}
     >
       {layout.columns.map((column, columnIndex) => (

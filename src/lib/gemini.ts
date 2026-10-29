@@ -40,6 +40,8 @@ export interface TranslationResult {
   ocr_text?: string;
   /** 글자 픽셀 모델이 찾은 원문 글자 획 — 있으면 원문을 이 획만 지움 (박스를 직접 고치면 지워짐) */
   text_mask?: TextMask;
+  /** 덮는 흰 상자의 모서리 둥글기 — 상자 짧은 변 대비 0~0.5 (0 = 직각, 0.5 = 알약). 없으면 기본(16px) */
+  corner_radius?: number;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

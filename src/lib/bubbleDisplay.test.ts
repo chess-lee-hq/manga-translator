@@ -164,20 +164,3 @@ describe('effectiveDisplayMode — 말풍선 없는 글자도 덮기 (옆에 붙
   });
 });
 
-describe('덮는 상자 모서리 둥글기 (번역 옵션)', () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  it('저장한 값을 0~16 안으로, 없거나 깨졌으면 기본 16', async () => {
-    const { overlayCornerRadius } = await import('./translationOptions');
-    const { OVERLAY_STYLE } = await import('./overlayLayout');
-    const saved = new Map<string, string>();
-    vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
-    expect(overlayCornerRadius()).toBe(16);
-    saved.set('manga-corner-radius', '4');
-    expect(OVERLAY_STYLE.radiusPx).toBe(4);
-    saved.set('manga-corner-radius', '99');
-    expect(overlayCornerRadius()).toBe(16);
-    saved.set('manga-corner-radius', 'abc');
-    expect(overlayCornerRadius()).toBe(16);
-  });
-});

@@ -482,6 +482,11 @@ function App() {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, fit_bubble: enabled } : r)));
   };
 
+  /** 덮는 흰 상자의 모서리 둥글기를 말풍선마다 (영역 수정 중 노란 손잡이) */
+  const handleSetCornerRadius = (imgIndex: number, id: string, ratio: number) => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, corner_radius: ratio } : r)));
+  };
+
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   const handleSetTagPosition = (imgIndex: number, id: string, pos: [number, number] | null) => {
     updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)));
@@ -992,6 +997,7 @@ function App() {
                 onResetTag={handleResetTag}
                 onDelete={handleDeleteBubble}
                 onSetBubbleFit={handleSetBubbleFit}
+                onSetCornerRadius={handleSetCornerRadius}
                 onShorten={handleShorten}
                 onReread={handleReread}
                 onCreateBox={handleCreateBox}

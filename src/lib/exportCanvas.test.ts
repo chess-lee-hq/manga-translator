@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getExportScale } from './exportCanvas';
-import { boxStyleFor, estimateFontRatios, getDisplayBox, layoutOverlayText, overlayFontSize, resolveTextDirection, wrapText } from './overlayLayout';
+import { boxStyleFor, cornerRadiusPx, estimateFontRatios, getDisplayBox, layoutOverlayText, overlayFontSize, resolveTextDirection, wrapText } from './overlayLayout';
 
 // 글자당 10px 고정폭으로 가정
 const measure = (t: string) => Array.from(t).length * 10;
@@ -119,5 +119,15 @@ describe('직접 그린 영역의 흰 상자', () => {
     expect(resolveTextDirection(text, 20, 400, 10, 1)).toBe('vertical');
     expect(resolveTextDirection({ ...text, is_edited_box: true }, 20, 400, 10, 1)).toBe('horizontal');
     expect(resolveTextDirection({ ...text, is_edited_box: true, text_direction: 'vertical' }, 20, 400, 10, 1)).toBe('vertical');
+  });
+});
+
+describe('모서리 둥글기 (말풍선마다)', () => {
+  it('고른 값은 짧은 변 대비 비율, 없으면 기본 px (짧은 변 절반까지)', () => {
+    expect(cornerRadiusPx({}, 100, 40, 16)).toBe(16);
+    expect(cornerRadiusPx({}, 100, 20, 16)).toBe(10);
+    expect(cornerRadiusPx({ corner_radius: 0 }, 100, 40, 16)).toBe(0);
+    expect(cornerRadiusPx({ corner_radius: 0.25 }, 100, 40, 16)).toBe(10);
+    expect(cornerRadiusPx({ corner_radius: 3 }, 100, 40, 16)).toBe(20);
   });
 });

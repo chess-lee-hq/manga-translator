@@ -21,6 +21,12 @@ interface BoxEditorProps {
   onShorten?: () => void;
   /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
   onReread?: () => void;
+  /**
+   * 덮는 흰 상자의 지금 모서리 둥글기(화면 px). onCornerRadiusChange와 함께 주면 위쪽 가장자리에 노란 손잡이(PPT 모서리 조절)를 보여 줌.
+   * 끌면 짧은 변 대비 비율(0~0.5)로 알려 줌
+   */
+  cornerRadiusPx?: number;
+  onCornerRadiusChange?: (ratio: number) => void;
   children: React.ReactNode;
 }
 
@@ -43,8 +49,36 @@ function ToolbarButton({ onClick, title, danger, children }: { onClick: () => vo
 export function BoxEditor({
   initialBox, onChange, displayMode, onToggleDisplayMode,
   textDirection, onToggleTextDirection, onDelete, resizable = true, onResetPosition,
-  bubbleFit, onToggleBubbleFit, warning, onShorten, onReread, children,
+  bubbleFit, onToggleBubbleFit, warning, onShorten, onReread, cornerRadiusPx, onCornerRadiusChange, children,
 }: BoxEditorProps) {
+  /** 모서리 손잡이를 끄는 중의 둥글기 (화면 px) — 놓을 때 저장 */
+  const [draggingRadius, setDraggingRadius] = useState<number | null>(null);
+
+  const startCornerDrag = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const wrapper = wrapperRef.current;
+    if (!wrapper || !onCornerRadiusChange) return;
+    const rect = wrapper.getBoundingClientRect();
+    const shorter = Math.max(1, Math.min(rect.width, rect.height));
+    const startX = e.clientX;
+    const startRadius = Math.min(shorter / 2, cornerRadiusPx ?? 0);
+    let current = startRadius;
+    setDraggingRadius(startRadius);
+    const move = (ev: PointerEvent) => {
+      current = Math.min(shorter / 2, Math.max(0, startRadius + ev.clientX - startX));
+      setDraggingRadius(current);
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      setDraggingRadius(null);
+      onCornerRadiusChange(Math.round((current / shorter) * 1000) / 1000);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  };
+  const shownRadius = draggingRadius ?? cornerRadiusPx;
   const [box, setBox] = useState<[number, number, number, number]>(initialBox);
   const boxRef = useRef(initialBox);
   useEffect(() => { boxRef.current = box; }, [box]);
@@ -160,6 +194,24 @@ export function BoxEditor({
             </>
           )}
         </div>
+      )}
+
+      {/* PPT처럼 위쪽 가장자리 안쪽의 노란 손잡이를 좌우로 끌어 모서리 둥글기 조절 (왼쪽 끝 = 직각). 툴바와 겹치지 않게 조금 안쪽 */}
+      {onCornerRadiusChange && shownRadius !== undefined && (
+        <>
+          {draggingRadius !== null && (
+            <div
+              className="absolute inset-0 pointer-events-none border-2 border-dashed border-amber-400 z-50"
+              style={{ borderRadius: draggingRadius }}
+            />
+          )}
+          <div
+            className={`absolute top-2.5 w-3 h-3 rotate-45 bg-amber-400 ring-1 ring-amber-700 cursor-ew-resize shadow z-50 transition-opacity ${draggingRadius !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            style={{ left: `calc(${shownRadius}px - 6px)` }}
+            onPointerDown={startCornerDrag}
+            title={`모서리 둥글기 ${Math.round(shownRadius)}px — 좌우로 끌어 조절 (왼쪽 끝 = 직각)`}
+          />
+        </>
       )}
 
       {warning && (

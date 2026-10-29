@@ -5,7 +5,7 @@ import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
 import {
-  boxStyleFor, columnUnits, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
+  boxStyleFor, columnUnits, cornerRadiusPx, createTextMeasurer, estimateFontRatios, getDisplayBox, layoutOverlayText, layoutVerticalText, OVERLAY_STYLE, overlayFontSize,
   resolveTextDirection, VERTICAL_CORNER_OFFSET, VERTICAL_TEXT, type VerticalCell, type VerticalLayout,
 } from './overlayLayout';
 
@@ -242,14 +242,15 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
     // 홀쭉한 박스(말풍선 없는 세로 한 줄 글자)는 세로쓰기로
     if (resolveTextDirection(result, boxWidth, boxHeight, minFont, cssPx) === 'vertical') {
       const layout = layoutVerticalText(text, boxWidth, boxHeight, boxMinFont, boxMaxFont, cssPx);
-      drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
+      drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, cornerRadiusPx(result, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx), shadowBlur, shadowOffsetY);
       drawVerticalColumns(ctx, layout, cx, cy, setFont);
       continue;
     }
 
     const fontSize = overlayFontSize(estimateFontRatios({ translated_text: text }, displayBox), boxWidth, boxHeight, boxMinFont, boxMaxFont);
     const layout = layoutOverlayText(text, boxWidth, boxHeight, fontSize, true, t => measure(t, fontSize), cssPx, boxStyle);
-    drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, OVERLAY_STYLE.radiusPx * cssPx, shadowBlur, shadowOffsetY);
+    // 둥글기는 화면처럼 영역 크기 기준 (흰 상자가 영역보다 커져도 같은 모서리)
+    drawBubbleBox(ctx, cx - layout.width / 2, cy - layout.height / 2, layout.width, layout.height, cornerRadiusPx(result, boxWidth, boxHeight, OVERLAY_STYLE.radiusPx * cssPx), shadowBlur, shadowOffsetY);
     drawTextLines(ctx, layout.lines, cx, cy, fontSize, setFont);
   }
 
