@@ -42,6 +42,11 @@ export interface TranslationResult {
   text_mask?: TextMask;
   /** 덮는 흰 상자의 모서리 둥글기 — 상자 짧은 변 대비 0~0.5 (0 = 직각, 0.5 = 알약). 없으면 기본(16px) */
   corner_radius?: number;
+  /**
+   * AI가 표시한 줄바꿈 추천 자리를 담은 번역문 (보이지 않는 표시 BREAK_HINT 포함, koreanLineBreak).
+   * 표시를 지운 글이 translated_text와 같을 때만 씀 — 번역문을 고치면 자동으로 무시됨
+   */
+  line_hints?: string;
 }
 
 /** API가 돌려준 가공 전 결과 (앱에서 id를 붙이기 전) */

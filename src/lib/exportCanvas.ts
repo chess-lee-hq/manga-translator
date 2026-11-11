@@ -1,6 +1,7 @@
 import { effectiveDisplayMode, layoutTags, TAG_STYLE, wantsBubbleFit } from './bubbleDisplay';
 import { BUBBLE_FIT, fillOutline, fontFloor, planBubble, uniformFontTargets, type BubbleFit } from './bubbleLayout';
 import { glyphMaskCanvas } from './glyphMaskImage';
+import { inkCenterShiftEm } from './koreanLineBreak';
 import { detectPageBubbleShapes, type BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { loadImage } from './imageUtils';
@@ -94,7 +95,7 @@ function drawVerticalColumn(ctx: CanvasRenderingContext2D, cells: VerticalCell[]
 }
 
 /** 원본 말풍선 모양(또는 타원)대로 흰색으로 지우고, 정해진 자리에 번역문을 그림 (화면 BubbleFitText와 같은 배치) */
-function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (size: number) => void) {
+function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (size: number) => void, inkShiftEm = 0) {
   const outline = fillOutline(fit.layout.fill);
   // 원문 글자 획 마스크로 지운 칸은 칠할 모양이 비어 있음
   if (outline.length > 0) {
@@ -131,7 +132,8 @@ function drawBubbleFit(ctx: CanvasRenderingContext2D, fit: BubbleFit, setFont: (
   ctx.lineWidth = layout.fontSize * 0.2;
   ctx.lineJoin = 'round';
   for (const line of layout.lines) {
-    const baseline = line.top + (layout.lineHeight - (ascent + descent)) / 2 + ascent;
+    // 한글 글자(잉크)가 줄 가운데에 오도록 (화면 BubbleFitText와 같은 보정)
+    const baseline = line.top + (layout.lineHeight - (ascent + descent)) / 2 + ascent + inkShiftEm * layout.fontSize;
     ctx.strokeText(line.text, line.cx, baseline);
     ctx.fillText(line.text, line.cx, baseline);
   }
@@ -182,6 +184,7 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
   const cssPx = height / Math.max(1, options.displayPageHeight);
   const minFont = OVERLAY_STYLE.minFontPx * options.viewScale * cssPx;
   const { measure, setFont } = createTextMeasurer(options.fontFamily || DEFAULT_FONT_FAMILY, ctx);
+  const inkShift = inkCenterShiftEm(options.fontFamily || DEFAULT_FONT_FAMILY, OVERLAY_STYLE.fontWeight);
 
   // 원본 말풍선 모양 (화면과 같은 규칙으로 찾음). 말풍선이 없는 글자를 옆에 붙이는 판단에도 쓰므로
   // 직접 표시 방식을 고르지 않은 항목이 하나라도 있으면 픽셀을 읽음
@@ -216,8 +219,8 @@ export async function renderTranslatedPage(src: string, results: TranslationResu
       // 원문 글자 획만 종이 색으로 지움 (원본 해상도 좌표 그대로)
       const maskCanvas = plan.mask ? glyphMaskCanvas(plan.mask) : null;
       if (plan.mask && maskCanvas) ctx.drawImage(maskCanvas, plan.mask.x, plan.mask.y);
-      drawBubbleFit(ctx, plan.fit, setFont);
-      for (const extra of plan.more ?? []) drawBubbleFit(ctx, extra.fit, setFont);
+      drawBubbleFit(ctx, plan.fit, setFont, inkShift);
+      for (const extra of plan.more ?? []) drawBubbleFit(ctx, extra.fit, setFont, inkShift);
       continue;
     }
 

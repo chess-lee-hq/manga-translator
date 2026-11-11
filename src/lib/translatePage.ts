@@ -12,12 +12,16 @@ import { buildJoinHint, buildLengthHint, estimateCharLimits } from './charBudget
 import { createTextMeasurer } from './overlayLayout';
 import { assignSpeakers, buildSpeakerHint } from './speakerHints';
 import { normalizeEllipsis } from './ellipsis';
+import { extractBreakHints } from './koreanLineBreak';
 import { stripFurigana } from './prompt';
 import { sanitizeResults } from './results';
 import { applyQualityRetry, assessCell, REVIEW_LABELS, stripTypeTags, type QualityReport } from './translationQuality';
 import { detectSpeechBubbles } from './yolo';
 import { detectTextPixels, textMaskFor, type TextPixels } from './textPixels';
 import { mergeSplitTextLines, type BoundingBox } from './yoloPostprocess';
+
+/** 말풍선 하나만 다시 받은 번역문: 말줄임표 통일 + 줄바꿈 추천 표시(|) 제거 */
+const plainTranslation = (text: string) => extractBreakHints(normalizeEllipsis(text)).text;
 
 const base64Of = (dataUrl: string) => dataUrl.split(',')[1];
 const mimeOf = (dataUrl: string) => dataUrl.slice(5, dataUrl.indexOf(';'));
@@ -510,7 +514,7 @@ export async function translateRegion(img: UploadedImage, box: Box2d, settings: 
   const [cell] = checked.translations;
 
   if (!cell) return { originalText: '...', translatedText: '' };
-  return { originalText: cell.original_text || '...', translatedText: normalizeEllipsis(cell.translated_text) };
+  return { originalText: cell.original_text || '...', translatedText: plainTranslation(cell.translated_text) };
 }
 
 /**
@@ -538,7 +542,7 @@ export async function rereadBubble(
   const issue = assessCell(cleaned);
   return {
     originalText: cleaned.original_text,
-    translatedText: normalizeEllipsis(cleaned.translated_text),
+    translatedText: plainTranslation(cleaned.translated_text),
     ...(issue ? { review: REVIEW_LABELS[issue] } : {}),
   };
 }
@@ -550,7 +554,7 @@ export async function retranslateText(originalText: string, settings: Translatio
   const translated = settings.mainEngine === 'gemini'
     ? await retranslateTextGemini(settings.googleKey, originalText, settings.geminiVersion, promptOptions)
     : await retranslateTextOpenAI(settings.openAiVersion, settings.openaiKey, originalText, promptOptions);
-  return normalizeEllipsis(translated);
+  return plainTranslation(translated);
 }
 
 /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역합니다. (메인 엔진이 처리) */
@@ -561,5 +565,5 @@ export async function shortenTranslation(originalText: string, currentTranslatio
   const shortened = settings.mainEngine === 'gemini'
     ? await shortenTranslationGemini(settings.googleKey, settings.geminiVersion, originalText, currentTranslation, clamped, promptOptions)
     : await shortenTranslationOpenAI(settings.openAiVersion, settings.openaiKey, originalText, currentTranslation, clamped, promptOptions);
-  return normalizeEllipsis(shortened);
+  return plainTranslation(shortened);
 }

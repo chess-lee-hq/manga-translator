@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeResults } from './results';
 
 describe('sanitizeResults', () => {
+  it('AI가 넣은 줄바꿈 추천(|)은 번역문에서 떼어 line_hints로 옮기고, 맞지 않는 예전 추천은 버린다', () => {
+    const [fresh, stale] = sanitizeResults([
+      { box_2d: [0, 0, 10, 10], translated_text: '9동 통로 | 엘리베이터 부근' },
+      { box_2d: [0, 0, 10, 10], translated_text: '고친 번역', line_hints: '예전 \u200B번역' },
+    ])!;
+    expect(fresh.translated_text).toBe('9동 통로 엘리베이터 부근');
+    expect(fresh.line_hints).toBe('9동 통로 \u200B엘리베이터 부근');
+    expect(stale.line_hints).toBeUndefined();
+    // 다시 읽어도(저장 → 불러오기) 그대로
+    expect(sanitizeResults([fresh])![0].line_hints).toBe(fresh.line_hints);
+  });
+
   it('배열이 아니면 null을 반환한다', () => {
     expect(sanitizeResults(null)).toBeNull();
     expect(sanitizeResults({})).toBeNull();

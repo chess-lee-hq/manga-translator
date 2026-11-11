@@ -1,6 +1,7 @@
 import { NO_BUBBLE_FAILURES, type BubbleDetection, type BubbleShape, type GlyphMask } from './bubbleShape';
 import { wantsBubbleFit } from './bubbleDisplay';
 import type { TranslationResult } from './gemini';
+import { balancedWrap, layoutTextOf, opticalShift, stripBreakHints } from './koreanLineBreak';
 import { columnUnits, cornerRadiusPx, fillColumns, getDisplayBox, OVERLAY_STYLE, VERTICAL_TEXT, verticalCells, type VerticalCell } from './overlayLayout';
 
 /**
@@ -217,6 +218,12 @@ function tryFit(
     }
     return spans;
   };
+  // 줄 끝 문장부호(?·!·.)는 가운데 맞춤에서 빼서 글자가 눈으로 볼 때 가운데에 오게 (말풍선 안쪽을 넘지 않는 만큼만)
+  const placeLine = (line: string, span: [number, number], lineTop: number): BubbleLine => {
+    const room = Math.max(0, (span[1] - span[0] - measureAt(line)) / 2);
+    const shift = Math.max(-room, Math.min(room, opticalShift(line, measureAt)));
+    return { text: line, cx: (span[0] + span[1]) / 2 + shift, top: lineTop };
+  };
   const centeredTop = (count: number) => Math.min(Math.max(shape.centerY - (count * lineHeight) / 2, innerTop), innerBottom - count * lineHeight);
 
   for (let count = 1; count <= maxLines; count++) {
@@ -227,7 +234,8 @@ function tryFit(
     const widths = spans.map(s => Math.min(s[1] - s[0] - insetX * 2, maxLineWidth));
     if (widths.reduce((a, b) => a + b, 0) < totalWidth) continue;
 
-    const lines = wrapToWidths(text, widths, measureAt, allowBreakWord);
+    // 줄 길이가 고르게 (한글판 단행본처럼) — 앞줄부터 꽉 채우면 마지막 줄만 짧게 남았음
+    const lines = balancedWrap(text, widths, measureAt, allowBreakWord);
     if (!lines) continue;
 
     if (lines.length < count) {
@@ -235,10 +243,10 @@ function tryFit(
       const retop = centeredTop(lines.length);
       const respans = linesAt(retop, lines.length);
       if (respans && lines.every((line, i) => measureAt(line) <= Math.min(respans[i][1] - respans[i][0] - insetX * 2, maxLineWidth) + 0.01)) {
-        return lines.map((line, i) => ({ text: line, cx: (respans[i][0] + respans[i][1]) / 2, top: retop + i * lineHeight }));
+        return lines.map((line, i) => placeLine(line, respans[i], retop + i * lineHeight));
       }
     }
-    return lines.map((line, i) => ({ text: line, cx: (spans[i][0] + spans[i][1]) / 2, top: top + i * lineHeight }));
+    return lines.map((line, i) => placeLine(line, spans[i], top + i * lineHeight));
   }
   return null;
 }
@@ -368,7 +376,8 @@ export function layoutBubbleOverflow(
   if (!span) return null;
   const width = Math.max(span[1] - span[0] - insetX * 2, fontSize * 2);
   const measureFast = cachedMeasure(measure);
-  const lines = wrapToWidths(trimmed, new Array<number>(Array.from(trimmed).length + 1).fill(width), t => measureFast(t, fontSize), true);
+  const plain = stripBreakHints(trimmed);
+  const lines = wrapToWidths(plain, new Array<number>(Array.from(plain).length + 1).fill(width), t => measureFast(t, fontSize), true);
   if (!lines) return null;
   const top = base.centerY - (lines.length * lineHeight) / 2;
   const cx = (span[0] + span[1]) / 2;
@@ -400,7 +409,7 @@ export function fillOutline(fill: BubbleTextLayout['fill']): [number, number][] 
  * "짧게 다시 번역"에 목표 글자 수로 넘깁니다.
  */
 export function bubbleCapacity(text: string, shape: BubbleShape, pageWidth: number, pageHeight: number, measure: Measure, minFont: number): number {
-  const chars = Array.from(text.trim());
+  const chars = Array.from(stripBreakHints(text).trim());
   const base = toPx(shape, pageWidth, pageHeight);
   const measureFast = cachedMeasure(measure);
   const fits = (n: number) => !!tryFit(chars.slice(0, n).join(''), base, minFont, BUBBLE_FIT.lineHeights[1], measureFast, true);
@@ -816,7 +825,7 @@ const SPLIT_MAX_DRIFT = 0.25;
 export function splitTranslation(text: string, shares: number[]): string[] | null {
   if (shares.length !== 2) return null;
   const trimmed = text.trim();
-  const weight = (t: string) => t.replace(/\s+/g, '').length;
+  const weight = (t: string) => stripBreakHints(t).replace(/\s+/g, '').length;
   const total = weight(trimmed);
   if (total === 0) return null;
   let best: { at: number; drift: number } | null = null;
@@ -846,7 +855,7 @@ function fitOrOverflow(text: string, shape: BubbleShape, pageWidth: number, page
  * 말풍선이 아예 없는 글자(그림·스크린톤 위)는 여기 오기 전에 "옆에 작게 붙이기"로 빠짐 (bubbleDisplay.effectiveDisplayMode)
  */
 export function planBubble(
-  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble' | 'corner_radius'>,
+  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble' | 'corner_radius' | 'line_hints'>,
   detection: BubbleDetection | undefined,
   pageWidth: number,
   pageHeight: number,
@@ -942,7 +951,7 @@ function panelOf(result: Pick<TranslationResult, 'box_2d' | 'is_edited_box' | 'c
 }
 
 function planBubbleUntrimmed(
-  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble' | 'corner_radius'>,
+  result: Pick<TranslationResult, 'box_2d' | 'translated_text' | 'original_text' | 'display_mode' | 'is_edited_box' | 'text_direction' | 'fit_bubble' | 'corner_radius' | 'line_hints'>,
   detection: BubbleDetection | undefined,
   pageWidth: number,
   pageHeight: number,
@@ -952,7 +961,8 @@ function planBubbleUntrimmed(
   floorFont: number,
 ): BubblePlan {
   if (!detection || !wantsBubbleFit(result)) return { kind: 'box' };
-  const text = result.translated_text ?? '';
+  // AI가 추천한 줄바꿈 자리가 있으면 그 글로 배치 (번역문을 고쳤으면 추천은 무시)
+  const text = layoutTextOf(result);
   // 찾은 모양이 원문 글자 영역을 60%도 못 품으면 엉뚱한 흰 영역(옷·배경)을 잡은 것 → 글자 영역을 둥근 상자로 (이름표 등)
   if (detection.shape && boxCoverage(detection.shape, result.box_2d) < BUBBLE_FIT.minBoxCoverage) {
     const panel = panelOf(result, pageWidth, pageHeight, minFont);

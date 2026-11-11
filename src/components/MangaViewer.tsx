@@ -461,6 +461,8 @@ export function MangaViewer({
                                 wordBreak: 'keep-all',
                                 whiteSpace: 'pre-wrap',
                                 overflowWrap: 'break-word',
+                                // 줄 길이를 고르게 (이미지 저장은 koreanLineBreak.balancedWrap)
+                                textWrap: 'balance',
                                 textAlign: 'center',
                                 letterSpacing: `${OVERLAY_STYLE.letterSpacingEm}em`,
                                 minWidth: '100%',

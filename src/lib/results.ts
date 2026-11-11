@@ -1,5 +1,6 @@
 import { TAG_SCALE_MAX, TAG_SCALE_MIN } from './bubbleDisplay';
 import { normalizeEllipsis } from './ellipsis';
+import { extractBreakHints, layoutTextOf } from './koreanLineBreak';
 import { isTextMask } from './textPixels';
 import type { TranslationResult } from './gemini';
 
@@ -27,22 +28,28 @@ export function sanitizeResults(value: unknown): TranslationResult[] | null {
   return value
     .filter((r): r is Partial<TranslationResult> => !!r && typeof r === 'object' && isValidBox((r as TranslationResult).box_2d))
     .filter(r => typeof r.translated_text === 'string' && r.translated_text.trim() !== '')
-    .map(r => ({
-      ...r,
-      id: typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID(),
-      box_2d: r.box_2d as [number, number, number, number],
-      original_text: typeof r.original_text === 'string' ? r.original_text : '',
-      translated_text: normalizeEllipsis(r.translated_text as string),
-      display_mode: DISPLAY_MODES.includes(r.display_mode as never) ? r.display_mode : undefined,
-      text_direction: TEXT_DIRECTIONS.includes(r.text_direction as never) ? r.text_direction : undefined,
-      tag_pos: isValidTagPos(r.tag_pos) ? r.tag_pos : undefined,
-      tag_scale: typeof r.tag_scale === 'number' && Number.isFinite(r.tag_scale)
-        ? Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, r.tag_scale))
-        : undefined,
-      fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
-      review: typeof r.review === 'string' && r.review ? r.review : undefined,
-      ocr_text: typeof r.ocr_text === 'string' ? r.ocr_text : undefined,
-      text_mask: isTextMask(r.text_mask) ? r.text_mask : undefined,
-      corner_radius: typeof r.corner_radius === 'number' && Number.isFinite(r.corner_radius) ? Math.min(0.5, Math.max(0, r.corner_radius)) : undefined,
-    }));
+    .map(r => {
+      // AI 응답의 "|"(줄바꿈 추천)는 번역문에서 떼어 line_hints로 (예전 기록의 line_hints는 번역문과 맞을 때만 유지)
+      const { text, hints } = extractBreakHints(normalizeEllipsis(r.translated_text as string));
+      const kept = hints ?? (typeof r.line_hints === 'string' && layoutTextOf({ translated_text: text, line_hints: r.line_hints }) !== text ? r.line_hints : undefined);
+      return {
+        ...r,
+        id: typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID(),
+        box_2d: r.box_2d as [number, number, number, number],
+        original_text: typeof r.original_text === 'string' ? r.original_text : '',
+        translated_text: text,
+        line_hints: kept,
+        display_mode: DISPLAY_MODES.includes(r.display_mode as never) ? r.display_mode : undefined,
+        text_direction: TEXT_DIRECTIONS.includes(r.text_direction as never) ? r.text_direction : undefined,
+        tag_pos: isValidTagPos(r.tag_pos) ? r.tag_pos : undefined,
+        tag_scale: typeof r.tag_scale === 'number' && Number.isFinite(r.tag_scale)
+          ? Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, r.tag_scale))
+          : undefined,
+        fit_bubble: typeof r.fit_bubble === 'boolean' ? r.fit_bubble : undefined,
+        review: typeof r.review === 'string' && r.review ? r.review : undefined,
+        ocr_text: typeof r.ocr_text === 'string' ? r.ocr_text : undefined,
+        text_mask: isTextMask(r.text_mask) ? r.text_mask : undefined,
+        corner_radius: typeof r.corner_radius === 'number' && Number.isFinite(r.corner_radius) ? Math.min(0.5, Math.max(0, r.corner_radius)) : undefined,
+      };
+    });
 }

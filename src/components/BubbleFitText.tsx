@@ -1,4 +1,5 @@
 import { fillOutline, type BubbleFit } from '../lib/bubbleLayout';
+import { inkCenterShiftEm } from '../lib/koreanLineBreak';
 import { OVERLAY_STYLE } from '../lib/overlayLayout';
 import { VerticalGlyph } from './VerticalBubbleText';
 
@@ -16,6 +17,8 @@ interface BubbleFitTextProps {
  * 이미지 저장(lib/exportCanvas.ts)도 같은 배치 결과를 씁니다.
  */
 export function BubbleFitText({ fit, pageWidth, pageHeight }: BubbleFitTextProps) {
+  // 한글 글자(잉크)가 줄 가운데에 오도록 (이미지 저장 drawBubbleFit과 같은 보정)
+  const inkShift = inkCenterShiftEm(getComputedStyle(document.documentElement).fontFamily, OVERLAY_STYLE.fontWeight) * fit.layout.fontSize;
   const outline = fillOutline(fit.layout.fill);
   const path = outline.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ') + ' Z';
   const textStyle = {
@@ -43,7 +46,7 @@ export function BubbleFitText({ fit, pageWidth, pageHeight }: BubbleFitTextProps
               left: line.cx,
               top: line.top,
               height: fit.layout.lineHeight,
-              transform: 'translateX(-50%)',
+              transform: `translate(-50%, ${inkShift}px)`,
               lineHeight: `${fit.layout.lineHeight}px`,
               whiteSpace: 'pre',
             }}

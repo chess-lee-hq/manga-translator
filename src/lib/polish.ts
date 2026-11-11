@@ -1,5 +1,6 @@
 import type { TranslationResult, TranslationSettings } from '../types';
 import { normalizeEllipsis } from './ellipsis';
+import { extractBreakHints } from './koreanLineBreak';
 import { polishTranslationsGemini } from './gemini';
 import { polishTranslationsOpenAI } from './openai';
 import { stripFurigana } from './prompt';
@@ -79,7 +80,7 @@ export function acceptChanges(chunk: Entry[], changes: PolishChangeWire[]): Poli
     seen.add(change.i);
     const { source, result } = chunk[change.i - 1];
     const before = result.translated_text.trim();
-    const after = normalizeEllipsis((change.ko ?? '').trim());
+    const after = extractBreakHints(normalizeEllipsis((change.ko ?? '').trim())).text;
     if (!after || compact(after) === compact(before)) continue;
     if (assessCell({ id: change.i, original_text: result.original_text, translated_text: after }) !== null) continue;
     // 원래 번역에 없던 한자·가나가 새로 들어간 제안 (감수가 오히려 일본어를 되살린 경우)

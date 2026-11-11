@@ -1,4 +1,5 @@
 import type { TranslationResult } from './gemini';
+import { balancedWrapUniform, stripBreakHints } from './koreanLineBreak';
 import { overlayFontWeight } from './translationOptions';
 
 /**
@@ -161,6 +162,8 @@ export function layoutOverlayText(
 ): OverlayLayout {
   const padX = style.paddingXPx * cssPx;
   const padY = OVERLAY_STYLE.paddingYPx * cssPx;
+  const hinted = text;
+  text = stripBreakHints(text);
 
   const maxContent = Math.max(0, ...text.split('\n').map(measure)) + padX * 2;
   const unbreakable = keepAll ? text.split(/\s+/) : Array.from(text.replace(/\s/g, ''));
@@ -170,7 +173,9 @@ export function layoutOverlayText(
   const fitContent = Math.min(maxContent, Math.max(minContent, boxWidth));
   const width = Math.min(Math.max(fitContent, boxWidth), boxWidth * style.maxWidthRatio);
 
-  const lines = wrapText(text, Math.max(0, width - padX * 2), measure, keepAll);
+  // 줄 길이를 고르게 (화면은 CSS text-wrap: balance) — 안 되면 예전 방식
+  const innerWidth = Math.max(0, width - padX * 2);
+  const lines = (keepAll && balancedWrapUniform(hinted, innerWidth, measure, true)) || wrapText(text, innerWidth, measure, keepAll);
   const height = Math.max(boxHeight, lines.length * fontSize * OVERLAY_STYLE.lineHeight + padY * 2);
   return { lines, width, height };
 }
@@ -244,7 +249,7 @@ const SPACE_CELL_SIZE = 0.5;
  * 줄바꿈("\n")은 새 열 표시로 빈 문자열 칸 대신 null을 넣지 않고, 호출하는 쪽에서 문단별로 나눠 부릅니다.
  */
 export function verticalCells(text: string): VerticalCell[] {
-  const chars = Array.from(text);
+  const chars = Array.from(stripBreakHints(text));
   const cells: VerticalCell[] = [];
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i];
