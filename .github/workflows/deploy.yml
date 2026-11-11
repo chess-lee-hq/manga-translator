@@ -24,12 +24,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           
       - name: Install dependencies
         run: npm ci
         
+      # 테스트가 깨진 버전은 배포하지 않음
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
         
