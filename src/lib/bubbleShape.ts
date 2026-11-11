@@ -1275,6 +1275,8 @@ function createPixelReader(image: HTMLImageElement | HTMLCanvasElement) {
 export function detectPageBubbleShapes(
   image: HTMLImageElement | HTMLCanvasElement,
   results: { id: string; box_2d: [number, number, number, number]; text_mask?: TextMask }[],
+  /** masks: false면 원문을 지울 마스크는 만들지 않음 (모양·글자 크기만 필요한 글자 수 한도 계산용 — 마스크가 가장 무거운 단계) */
+  options: { masks?: boolean } = {},
 ): Record<string, BubbleDetection> {
   const reader = createPixelReader(image);
   const { width, height } = reader;
@@ -1299,7 +1301,7 @@ export function detectPageBubbleShapes(
     }
     const glyph = region ? estimateGlyphSize(region, boxes[i]) : null;
     // 말풍선이 없는 글자(옆에 붙이기)는 덮지 않으므로 마스크도 만들지 않음
-    const covers = region && glyph && !(detection.failure && NO_BUBBLE_FAILURES.has(detection.failure));
+    const covers = options.masks !== false && region && glyph && !(detection.failure && NO_BUBBLE_FAILURES.has(detection.failure));
     // 글자 픽셀 모델이 찾은 획이 있으면 그것만 지움 (예전 규칙은 테두리·그림 조각까지 골랐음)
     const glyphMask = !covers
       ? null

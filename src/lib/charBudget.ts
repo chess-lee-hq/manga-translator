@@ -44,7 +44,7 @@ export function estimateCharLimits(image: HTMLImageElement | HTMLCanvasElement, 
     id: String(i),
     box_2d: [(box.ymin / height) * 1000, (box.xmin / width) * 1000, (box.ymax / height) * 1000, (box.xmax / width) * 1000] as [number, number, number, number],
   }));
-  const detections = detectPageBubbleShapes(image, items);
+  const detections = detectPageBubbleShapes(image, items, { masks: false });
   const pageHeight = referencePageHeight();
   const pageWidth = (pageHeight * width) / height;
   const minFont = BUBBLE_FIT.minFontPx;

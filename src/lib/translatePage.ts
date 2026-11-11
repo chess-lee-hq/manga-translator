@@ -158,21 +158,69 @@ function withTextMasks(boxes: BoundingBox[], textPixels: TextPixels | null, widt
   });
 }
 
-/** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
-async function detectPage(image: HTMLImageElement, pageId: string) {
+/** 한 페이지를 검출한 결과 (화자 키는 아직 페이지 구분 없이) */
+interface PageDetection {
+  boxes: BoundingBox[];
+  speakerKeys: (string | null)[];
+  charLimits: (number | null)[] | undefined;
+  darkRatio: number;
+  /** 글자 픽셀 모델까지 성공했는지 — 실패한 결과는 기억해 두지 않고 다음에 다시 시도 */
+  complete: boolean;
+}
+
+async function detectPageUncached(image: HTMLImageElement): Promise<PageDetection> {
   // 대사 위치(YOLO)와 글자 획·줄(글자 픽셀 모델)을 동시에 — 각자 워커라 같이 돌아감
   const [{ boxes: detections, darkRatio }, textPixels] = await Promise.all([detectSpeechBubbles(image), detectTextPixels(image)]);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
   const boxes = withTextMasks(splitJoinedBubbles(image, sortTextByReadingOrder(mergeSplitTextLines(detections)), textPixels), textPixels, width, height);
-  const speakers = assignSpeakers(boxes, detections, width, height).map(s => (s ? `${pageId}|${s}` : null));
-  const known = speakers.filter(Boolean).length;
+  const speakerKeys = assignSpeakers(boxes, detections, width, height);
+  const known = speakerKeys.filter(Boolean).length;
   if (boxes.length > 0) {
     const faces = detections.filter(d => d.classId === 1).length;
     const bodies = detections.filter(d => d.classId === 0).length;
     console.debug(`[speaker] 말풍선 ${boxes.length}개 중 ${known}개 화자 추정 (얼굴 ${faces} · 몸 ${bodies})`);
   }
-  return { boxes, speakers, charLimits: charLimitsFor(image, boxes), darkRatio };
+  return { boxes, speakerKeys, charLimits: charLimitsFor(image, boxes), darkRatio, complete: !!textPixels };
+}
+
+/**
+ * 검출 결과를 페이지 이미지 주소별로 잠시 기억합니다 (최근 DETECTION_CACHE_PAGES장).
+ * - 다음 페이지를 미리 검출해 두면(prewarmDetection) 넘겼을 때 검출(수 초)을 기다리지 않고 바로 번역 요청이 나감
+ * - 번역 요청이 실패해 다시 시도할 때 검출을 처음부터 다시 하지 않음
+ * 검출은 브라우저 안에서만 돌아 토큰이 들지 않습니다.
+ */
+const DETECTION_CACHE_PAGES = 16;
+const detectionCache = new Map<string, Promise<PageDetection>>();
+
+function detectPageCached(image: HTMLImageElement): Promise<PageDetection> {
+  const key = image.src;
+  const cached = key ? detectionCache.get(key) : undefined;
+  if (cached) return cached;
+  const pending = detectPageUncached(image);
+  if (!key) return pending;
+  detectionCache.set(key, pending);
+  const forget = () => {
+    if (detectionCache.get(key) === pending) detectionCache.delete(key);
+  };
+  pending.then(result => { if (!result.complete) forget(); }, forget);
+  while (detectionCache.size > DETECTION_CACHE_PAGES) detectionCache.delete(detectionCache.keys().next().value!);
+  return pending;
+}
+
+/** 번역 요청 없이 검출만 미리 해 둡니다. 실패해도 조용히 넘어감 (번역할 때 다시 시도) */
+export async function prewarmDetection(img: Pick<UploadedImage, 'src'>): Promise<void> {
+  try {
+    await detectPageCached(await loadImage(img.src));
+  } catch {
+    // 번역할 때 다시 검출하며 오류를 알림
+  }
+}
+
+/** 한 페이지를 검출해 읽는 순서로 정렬한 말풍선과, 말풍선마다 추정한 화자 키를 돌려줍니다. */
+async function detectPage(image: HTMLImageElement, pageId: string) {
+  const { boxes, speakerKeys, charLimits, darkRatio } = await detectPageCached(image);
+  return { boxes, speakers: speakerKeys.map(s => (s ? `${pageId}|${s}` : null)), charLimits, darkRatio };
 }
 
 /** 말풍선마다 번역문 글자 수 한도 (실패해도 번역은 한도 없이 진행) */

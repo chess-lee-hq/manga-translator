@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { translatePage, translatePageBatch } from '../lib/translatePage';
+import { prewarmDetection, translatePage, translatePageBatch } from '../lib/translatePage';
 import { buildContextInstruction, collectRecentPairs, recentPairLimit } from '../lib/translationContext';
 import type { Correction } from '../lib/corrections';
 import type { PageError, TranslationCache, TranslationResult, TranslationSettings, UploadedImage } from '../types';
@@ -21,6 +21,11 @@ const PRELOAD_BATCH_SIZE = 3;
  * (보고 있는 페이지는 기다리지 않고 바로 번역)
  */
 const PRELOAD_DWELL_MS = 2000;
+/**
+ * 보이는 페이지와 그 뒤 이만큼의 페이지는 번역 요청과 상관없이 말풍선 검출을 미리 해 둡니다.
+ * 검출(수 초)은 브라우저 안에서만 돌아 토큰이 들지 않으므로, 넘겼을 때 바로 번역 요청이 나가게 함
+ */
+const PREWARM_AHEAD_PAGES = 3;
 /** API 키 입력이 멈춘 뒤 이 시간이 지나야 번역을 시작 */
 const API_KEY_DEBOUNCE_MS = 800;
 
@@ -204,6 +209,27 @@ export function useTranslationQueue({ images, queue, visibleIndices, settings, t
       endDwell();
     };
   }, [queue.join(','), images, credential, isCredentialSettled, autoTranslate, retryTrigger, ready]);
+
+  // 아직 번역이 없는 가까운 페이지의 검출을 한 장씩 미리 (머무는 시간·자동 번역 설정과 무관 — 요청은 나가지 않음).
+  // 한 장씩 차례로 해서, 그사이 다른 페이지로 넘어가도 그 페이지의 검출이 길게 밀리지 않게 함
+  useEffect(() => {
+    if (!ready || !isCredentialSettled || !currentKey || images.length === 0) return;
+    const targets = queue
+      .filter(i => images[i] && !translationCache[getCacheKey(images[i].file)])
+      .slice(0, visibleIndices.length + PREWARM_AHEAD_PAGES)
+      .map(i => images[i]);
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const img of targets) {
+        if (cancelled) return;
+        await prewarmDetection(img);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [queue.join(','), images, isCredentialSettled, currentKey, ready]);
 
   return {
     translatingKeys,

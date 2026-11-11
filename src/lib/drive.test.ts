@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildCacheKey } from './cacheKey';
-import { createMangaZip, defaultBackupFilename, extractMangaZip } from './drive';
+import { createMangaZip, defaultBackupFilename, extractMangaZip, uploadToGoogleDrive } from './drive';
 
 describe('defaultBackupFilename', () => {
   it('드라이브에서 불러오거나 저장한 이름이 있으면 그 이름을 그대로 쓴다 (덮어쓰기용)', () => {
@@ -31,5 +31,41 @@ describe('백업 ZIP 만들기·풀기', () => {
     const restoredFile = restored.images[0].file;
     expect(new Uint8Array(await restoredFile.arrayBuffer())).toEqual(bytes);
     expect(restored.translations[buildCacheKey(restoredFile.name, restoredFile.size)]?.[0].translated_text).toBe('가');
+  });
+});
+
+describe('uploadToGoogleDrive', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stubFetch = (existing: { id: string }[]) => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.includes('/drive/v3/files?q=')) return new Response(JSON.stringify({ files: existing }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'new-id' }), { status: 200 });
+    });
+    return calls;
+  };
+
+  it('같은 이름이 없으면 새로 만들고, 메타데이터와 ZIP 내용을 그대로 이어 보낸다', async () => {
+    const calls = stubFetch([]);
+    const id = await uploadToGoogleDrive('token', new Blob(['ZIPDATA'], { type: 'application/zip' }), "It's.zip");
+    expect(id).toBe('new-id');
+    expect(decodeURIComponent(calls[0].url)).toContain("name='It\\'s.zip'");
+    expect(calls[1].init?.method).toBe('POST');
+    const body = await (calls[1].init!.body as Blob).text();
+    expect(body).toContain('{"name":"It\'s.zip","mimeType":"application/zip"}');
+    expect(body).toContain('Content-Type: application/zip\r\n\r\nZIPDATA\r\n--');
+    expect((calls[1].init!.body as Blob).type).toContain('multipart/related; boundary=');
+  });
+
+  it('같은 이름이 있으면 그 파일을 덮어쓰고, 권한이 만료됐으면 AUTH_EXPIRED', async () => {
+    const calls = stubFetch([{ id: 'old' }]);
+    await uploadToGoogleDrive('token', new Blob(['x']), 'a.zip');
+    expect(calls[1].url).toContain('/files/old?uploadType=multipart');
+    expect(calls[1].init?.method).toBe('PATCH');
+
+    vi.stubGlobal('fetch', async () => new Response('', { status: 401 }));
+    await expect(uploadToGoogleDrive('token', new Blob(['x']), 'a.zip')).rejects.toThrow('AUTH_EXPIRED');
   });
 });

@@ -44,78 +44,42 @@ export async function uploadToGoogleDrive(
   const delimiter = `\r\n--${boundary}\r\n`;
   const closeDelimiter = `\r\n--${boundary}--`;
 
-  const reader = new FileReader();
-  
-  return new Promise((resolve, reject) => {
-    reader.readAsArrayBuffer(zipBlob);
-    reader.onload = async function() {
-      if (!reader.result) return reject(new Error('Failed to read zip blob'));
-      
-      const fileData = reader.result as ArrayBuffer;
-      const metadataStr = JSON.stringify(metadata);
-      
-      const bodyPrefix = delimiter +
-        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-        metadataStr +
-        delimiter +
-        'Content-Type: application/zip\r\n\r\n';
+  const bodyPrefix = delimiter +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) +
+    delimiter +
+    'Content-Type: application/zip\r\n\r\n';
+  // ZIP을 메모리에 한 번 더 복사하지 않고 Blob 그대로 이어 붙임 (권수가 큰 작품은 수백 MB)
+  const multipartBlob = new Blob([bodyPrefix, zipBlob, closeDelimiter], { type: `multipart/related; boundary=${boundary}` });
 
-      const prefixBlob = new Blob([bodyPrefix], { type: 'text/plain' });
-      const suffixBlob = new Blob([closeDelimiter], { type: 'text/plain' });
-      
-      const multipartBlob = new Blob([prefixBlob, fileData, suffixBlob], {
-        type: `multipart/related; boundary=${boundary}`
-      });
-
-      try {
-        // 1. Check if file with same name already exists
-        const query = `name='${fileName.replace(/'/g, "\\'")}' and trashed=false`;
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-        
-        let existingFileId = null;
-        if (searchRes.status === 401) {
-          throw new Error('AUTH_EXPIRED');
-        }
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          if (searchData.files && searchData.files.length > 0) {
-            existingFileId = searchData.files[0].id;
-          }
-        }
-
-        // 2. If exists, update (PATCH). Otherwise, create (POST).
-        const url = existingFileId 
-          ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
-          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-          
-        const method = existingFileId ? 'PATCH' : 'POST';
-
-        const response = await fetch(url, {
-          method: method,
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: multipartBlob,
-        });
-        
-        if (!response.ok) {
-          if (response.status === 401) {
-            throw new Error('AUTH_EXPIRED');
-          }
-          const err = await response.json();
-          throw new Error(err.error?.message || 'Drive upload failed');
-        }
-        
-        const data = await response.json();
-        resolve(data.id);
-      } catch (e) {
-        reject(e);
-      }
-    };
-    reader.onerror = () => reject(new Error('FileReader error'));
+  // 1. 같은 이름의 파일이 이미 있으면 덮어씀
+  const query = `name='${fileName.replace(/'/g, "\\'")}' and trashed=false`;
+  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
   });
+  if (searchRes.status === 401) throw new Error('AUTH_EXPIRED');
+  let existingFileId: string | null = null;
+  if (searchRes.ok) {
+    const searchData = await searchRes.json();
+    if (searchData.files && searchData.files.length > 0) existingFileId = searchData.files[0].id;
+  }
+
+  // 2. 있으면 갱신(PATCH), 없으면 새로 만듦(POST)
+  const url = existingFileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  const response = await fetch(url, {
+    method: existingFileId ? 'PATCH' : 'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+    body: multipartBlob,
+  });
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('AUTH_EXPIRED');
+    const err = await response.json();
+    throw new Error(err.error?.message || 'Drive upload failed');
+  }
+  const data = await response.json();
+  return data.id;
 }
 
 export async function listMangaSaves(accessToken: string): Promise<any[]> {
