@@ -1,4 +1,4 @@
-import { NO_BUBBLE_FAILURES, type BubbleDetection } from './bubbleShape';
+import type { BubbleDetection } from './bubbleShape';
 import type { TranslationResult } from './gemini';
 import { getDisplayBox, OVERLAY_STYLE, wrapText, type Box } from './overlayLayout';
 import { stripFurigana } from './prompt';
@@ -55,10 +55,6 @@ export function resolveDisplayMode(result: Pick<TranslationResult, 'box_2d' | 'o
   if (result.display_mode === 'cover' || result.display_mode === 'tag') return result.display_mode;
   return isLikelySfx(result) ? 'tag' : 'cover';
 }
-
-/** 말풍선이 아예 없는 글자인지 (그림·스크린톤 위 글자, 흰 바탕에 테두리 없이 떠 있는 글자) */
-export const isNoBubble = (detection: BubbleDetection | null | undefined) =>
-  !!detection && !detection.shape && NO_BUBBLE_FAILURES.has(detection.failure);
 
 /**
  * 화면·저장에서 실제로 쓰는 표시 방식. 직접 고른 방식 → 효과음은 "작게(옆에 붙임)", 그 밖은 덮기.

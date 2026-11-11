@@ -31,8 +31,7 @@ import { resolveDisplayMode, TAG_SCALE_MAX, TAG_SCALE_MIN } from './lib/bubbleDi
 import { downloadBlob } from './lib/download';
 import { createMangaZip, defaultBackupFilename } from './lib/drive';
 import { summarizeWorkNotes } from './lib/gemini';
-import { runPromptCacheDiagnostic, summarizeWorkNotesOpenAI } from './lib/openai';
-import { buildGridPromptParts } from './lib/translationPrompt';
+import { summarizeWorkNotesOpenAI } from './lib/openai';
 import { canvasToBlob, exportFormatFor, renderTranslatedPage } from './lib/exportCanvas';
 import { VIEWER_CHROME_PX } from './lib/overlayLayout';
 import { stripArchiveExtension } from './lib/fileImport';
@@ -151,53 +150,6 @@ function App() {
     setPromptCacheScope(hasOpenWork ? work.key : null);
   }, [hasOpenWork, work.key]);
 
-  // [진단] 브라우저 콘솔에서 __mangaCacheTest() — 지금 작품의 격자 번역 고정 부분으로 OpenAI 캐시가 걸리는지 확인 (요청 2번, 1센트 미만)
-  useEffect(() => {
-    (window as unknown as Record<string, unknown>).__mangaCacheTest = async () => {
-      if (!openaiKey) return console.warn('OpenAI 키가 없습니다.');
-      const stable = buildGridPromptParts({ expectedCells: 1, glossary, context: buildContextInstruction(notes?.text, [], corrections).context }).stable;
-      // 흰 이미지: 작은 것 / 실제 격자 크기 / 장면 이미지 크기
-      const blank = (width: number, height: number) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height); }
-        return canvas.toDataURL('image/jpeg', 0.8);
-      };
-      // 실제 격자처럼 용량이 큰 이미지: 무작위 점으로 채워 JPEG가 거의 압축되지 않게 (수백 KB)
-      const noisy = (width: number, height: number) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          const data = ctx.createImageData(width, height);
-          for (let i = 0; i < data.data.length; i += 4) {
-            const v = Math.random() * 255;
-            data.data[i] = v; data.data[i + 1] = v; data.data[i + 2] = v; data.data[i + 3] = 255;
-          }
-          ctx.putImageData(data, 0, 0);
-        }
-        return canvas.toDataURL('image/jpeg', 0.92);
-      };
-      const heavy = noisy(900, 1800);
-      console.info(`[캐시 진단] ${openAiVersion} · 고정 부분 ${stable.length}자 · 큰 이미지 ${Math.round(heavy.length / 1024)}KB — 요청 6번을 보냅니다 (2~3센트)..`);
-      const results = await runPromptCacheDiagnostic(openAiVersion, openaiKey, stable, { small: blank(64, 64), heavy });
-      const rows = results.map(({ name, usage }) => {
-        const details = usage?.prompt_tokens_details ?? {};
-        return {
-          요청: name,
-          입력: usage?.prompt_tokens,
-          캐시읽음: details.cached_tokens ?? 0,
-          캐시씀: 'cache_write_tokens' in details ? details.cache_write_tokens : '(항목 없음)',
-        };
-      });
-      console.table(rows);
-      console.info('[캐시 진단] 위 표를 캡처해 주세요. 3번이 0이면 이미지 용량, 4~6번이 0이면 동시에 보내는 것이 원인입니다.');
-      return rows;
-    };
-  });
   // 작품별로 나누기 전 모든 작품이 함께 쓰던 단어장 (단어장 창에서 골라 가져올 수 있게 남겨 둠)
   const [legacyGlossary, setLegacyGlossary] = useState(loadLegacyGlossary);
 

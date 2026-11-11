@@ -359,31 +359,3 @@ export async function polishTranslationsOpenAI(
   if (typeof content !== 'string' || !content) throw new Error('No response from OpenAI API');
   return parseJsonResponse<{ changes?: PolishChangeWire[] }>(content).changes ?? [];
 }
-
-/**
- * [진단] 캐시가 실제로 걸리는지 확인: 같은 고정 부분(캐시 지점 포함)으로 짧은 요청을 두 번 보내 사용량을 돌려줍니다.
- * 두 번째 요청의 cached_tokens가 0보다 크면 캐시 지점이 동작하는 것. 첫 요청의 prompt_tokens로 고정 부분의 실제 토큰 수도 알 수 있음
- * (브라우저 콘솔에서 __mangaCacheTest() — App.tsx)
- */
-export async function runPromptCacheDiagnostic(
-  openAiVersion: OpenAiVersion,
-  apiKey: string,
-  stableText: string,
-  images: { small: string; heavy: string },
-) {
-  const volatile = '연결 확인용 요청이야. 이미지는 무시하고 cells와 unsure를 모두 빈 배열로 답해.';
-  const model = modelFor(openAiVersion);
-  const schema = { response_format: { type: 'json_schema', json_schema: OPENAI_GRID_SCHEMA } };
-  const request = (gridImages: string[]) => ({ model, messages: cachedPromptMessages({ stable: stableText, volatile }, gridImages), ...schema });
-  const results: { name: string; usage: any }[] = [];
-  const run = async (name: string, body: Record<string, unknown>) =>
-    results.push({ name, usage: (await createChatCompletion(apiKey, body, `캐시 진단 ${name}`)).usage });
-
-  // 1) 글만으로 캐시를 쓰고 2) 작은 이미지로 읽히는지 다시 확인한 뒤,
-  // 3) 실제 격자처럼 용량이 큰 이미지 4~6) 동시에 세 개 — 실제 번역에서만 캐시를 못 읽는 원인 후보 두 가지
-  await run('1 준비 (글만)', request([]));
-  await run('2 작은 이미지', request([images.small]));
-  await run('3 용량 큰 이미지 (실제 격자처럼)', request([images.heavy]));
-  await Promise.all([4, 5, 6].map(n => run(`${n} 동시에 보냄 (${n - 3}/3)`, request([images.small]))));
-  return results;
-}
