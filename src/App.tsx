@@ -160,7 +160,7 @@ function App() {
   // 작품 노트를 정리할 때 함께 받은 단어장 후보 (단어장에 이미 들어간 건 화면에서 숨김)
   const { candidates: storedCandidates, dismissed: dismissedCandidates, addCandidates, removeCandidate, dismissCandidate } = useGlossaryCandidates(workName);
   const glossaryCandidates = storedCandidates.filter(c => !(c.original in glossary));
-  const { translationCache, isCacheReady, updatePageResults, setPageResults, mergeTranslations, removePages, forgetPages } = useTranslationCache(
+  const { translationCache, isCacheReady, updatePageResults, setPageResults, mergeTranslations, removePages, forgetPages, undo } = useTranslationCache(
     allImages,
     work.key,
     () => setError('저장 공간이 가득 찼습니다. [저장소] 창에서 다 읽은 작품의 번역 기록을 정리한 뒤 다시 시도해주세요.'),
@@ -409,11 +409,11 @@ function App() {
 
   const handleDeleteBubble = (imgIndex: number, id: string) => {
     if (!confirm('이 번역을 삭제하시겠습니까? (오버레이 화면에서도 삭제됩니다)')) return;
-    updatePageResults(keyOf(imgIndex), results => results.filter(r => r.id !== id));
+    updatePageResults(keyOf(imgIndex), results => results.filter(r => r.id !== id), { undoable: true });
   };
 
   const handleBoxChange = (imgIndex: number, id: string, box: Box2d) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true, ocr_text: undefined, text_mask: undefined } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, box_2d: box, is_edited_box: true, ocr_text: undefined, text_mask: undefined } : r)), { undoable: true });
   };
 
   /** 덮기 ↔ 작은 딱지 전환. 자동 판별 결과와 반대로 직접 지정해 저장합니다. */
@@ -421,38 +421,38 @@ function App() {
   const handleToggleDisplayMode = (imgIndex: number, id: string, current?: 'cover' | 'tag') => {
     updatePageResults(keyOf(imgIndex), results =>
       results.map(r => (r.id === id ? { ...r, display_mode: (current ?? resolveDisplayMode(r)) === 'tag' ? 'cover' : 'tag' } : r)),
-    );
+    { undoable: true });
   };
 
   /** 가로쓰기 ↔ 세로쓰기 직접 지정 (자동 판별보다 우선) */
   const handleSetTextDirection = (imgIndex: number, id: string, direction: 'horizontal' | 'vertical') => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, text_direction: direction } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, text_direction: direction } : r)), { undoable: true });
   };
 
   /** 원본 말풍선 모양에 맞춰 넣기 켜기/끄기 (자동 판별보다 우선) */
   const handleSetBubbleFit = (imgIndex: number, id: string, enabled: boolean) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, fit_bubble: enabled } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, fit_bubble: enabled } : r)), { undoable: true });
   };
 
-  /** 덮는 흰 상자의 모서리 둥글기를 말풍선마다 (영역 수정 중 노란 손잡이) */
-  const handleSetCornerRadius = (imgIndex: number, id: string, ratio: number) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, corner_radius: ratio } : r)));
+  /** 덮는 흰 상자의 모서리 둥글기를 말풍선마다 (영역 수정 중 노란 손잡이). wholePage: Shift를 누른 채 놓으면 그 페이지의 모든 말풍선에 */
+  const handleSetCornerRadius = (imgIndex: number, id: string, ratio: number, wholePage = false) => {
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (wholePage || r.id === id ? { ...r, corner_radius: ratio } : r)), { undoable: true });
   };
 
   /** 작은 딱지 위치를 직접 옮김. null이면 자동 배치로 되돌림 */
   const handleSetTagPosition = (imgIndex: number, id: string, pos: [number, number] | null) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: pos ?? undefined } : r)), { undoable: true });
   };
 
   /** 작은 딱지 크기를 직접 조절. null이면 기본 크기로 되돌림 */
   const handleSetTagScale = (imgIndex: number, id: string, scale: number | null) => {
     const clamped = scale === null ? undefined : Math.min(TAG_SCALE_MAX, Math.max(TAG_SCALE_MIN, scale));
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_scale: clamped } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_scale: clamped } : r)), { undoable: true });
   };
 
   /** 딱지 위치·크기를 모두 자동으로 되돌림 */
   const handleResetTag = (imgIndex: number, id: string) => {
-    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: undefined, tag_scale: undefined } : r)));
+    updatePageResults(keyOf(imgIndex), results => results.map(r => (r.id === id ? { ...r, tag_pos: undefined, tag_scale: undefined } : r)), { undoable: true });
   };
 
   const handleReorder = (imgIndex: number, fromIndex: number, toIndex: number) => {
@@ -461,7 +461,7 @@ function App() {
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
       return next;
-    });
+    }, { undoable: true });
   };
 
   const handleSaveEdit = (key: string, id: string, rawText: string) => {
@@ -651,11 +651,21 @@ function App() {
   const zoomIn = () => setScale(s => Math.min(s + 0.1, 3.0));
   const zoomOut = () => setScale(s => Math.max(s - 0.1, 0.5));
 
-  // 키보드 단축키 (← 다음 / → 이전 / +·- 확대·축소). 창이 떠 있거나 글자를 입력 중이면 무시
+  // 키보드 단축키 (← 다음 / → 이전 / +·- 확대·축소 / E 영역 수정 / Ctrl·⌘+Z 편집 되돌리기). 창이 떠 있거나 글자를 입력 중이면 무시
   const isAnyModalOpen = !!glossaryDraft || isWorkNotesOpen || !!pendingImport || !!drive.driveFiles || isUsageOpen || isReviewOpen || isStorageOpen || isOptionsOpen;
-  const shortcutRef = useRef({ enabled: false, handlePrev, handleNext, zoomIn, zoomOut });
+  /** 영역 수정에서 한 편집(삭제·이동·크기·표시 방식·방향·모서리 등)을 하나 되돌리고, 그 페이지가 안 보이면 그 페이지로 이동 */
+  const handleUndo = () => {
+    const key = undo();
+    if (!key) return;
+    const imgIndex = allImages.findIndex(img => getCacheKey(img.file) === key);
+    if (imgIndex >= 0 && !visibleIndices.includes(imgIndex)) goToPage(getSpreadStartIndex(allImages, imgIndex, viewMode));
+  };
+  const toggleEditing = () => {
+    if (scriptStyle === 'overlay') setIsEditingBoxes(prev => !prev);
+  };
+  const shortcutRef = useRef({ enabled: false, handlePrev, handleNext, zoomIn, zoomOut, handleUndo, toggleEditing });
   useEffect(() => {
-    shortcutRef.current = { enabled: allImages.length > 0 && !isAnyModalOpen && !isRestoring, handlePrev, handleNext, zoomIn, zoomOut };
+    shortcutRef.current = { enabled: allImages.length > 0 && !isAnyModalOpen && !isRestoring, handlePrev, handleNext, zoomIn, zoomOut, handleUndo, toggleEditing };
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -667,7 +677,9 @@ function App() {
       if (action === 'next') current.handleNext();
       else if (action === 'prev') current.handlePrev();
       else if (action === 'zoomIn') current.zoomIn();
-      else current.zoomOut();
+      else if (action === 'zoomOut') current.zoomOut();
+      else if (action === 'undo') current.handleUndo();
+      else current.toggleEditing();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);

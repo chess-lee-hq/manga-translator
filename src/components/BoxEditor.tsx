@@ -23,10 +23,10 @@ interface BoxEditorProps {
   onReread?: () => void;
   /**
    * 덮는 흰 상자의 지금 모서리 둥글기(화면 px). onCornerRadiusChange와 함께 주면 아래쪽 가장자리에 노란 손잡이(PPT 모서리 조절)를 보여 줌.
-   * 끌면 짧은 변 대비 비율(0~0.5)로 알려 줌
+   * 끌면 짧은 변 대비 비율(0~0.5)로 알려 줌. Shift를 누른 채 놓으면 wholePage = true (그 페이지 전체에 적용)
    */
   cornerRadiusPx?: number;
-  onCornerRadiusChange?: (ratio: number) => void;
+  onCornerRadiusChange?: (ratio: number, wholePage: boolean) => void;
   children: React.ReactNode;
 }
 
@@ -69,11 +69,11 @@ export function BoxEditor({
       current = Math.min(shorter / 2, Math.max(0, startRadius + ev.clientX - startX));
       setDraggingRadius(current);
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
       setDraggingRadius(null);
-      onCornerRadiusChange(Math.round((current / shorter) * 1000) / 1000);
+      onCornerRadiusChange(Math.round((current / shorter) * 1000) / 1000, ev.shiftKey);
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
@@ -119,6 +119,8 @@ export function BoxEditor({
       newBox[2] = Math.max(newBox[0] + 10, newBox[2] + dy);
       newBox[3] = Math.max(newBox[1] + 10, newBox[3] + dx);
     }
+    // 놓는 순간(pointerup)에 화면이 다시 그려지기 전이어도 마지막 위치가 저장되도록 바로 기억 (빠르게 끌어 놓으면 옮긴 위치가 저장되지 않았음)
+    boxRef.current = newBox;
     setBox(newBox);
   };
 
@@ -209,7 +211,7 @@ export function BoxEditor({
             className={`absolute bottom-2.5 w-3 h-3 rotate-45 bg-amber-400 ring-1 ring-amber-700 cursor-ew-resize shadow z-50 transition-opacity ${draggingRadius !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
             style={{ left: `calc(${shownRadius}px - 6px)` }}
             onPointerDown={startCornerDrag}
-            title={`모서리 둥글기 ${Math.round(shownRadius)}px — 좌우로 끌어 조절 (왼쪽 끝 = 직각)`}
+            title={`모서리 둥글기 ${Math.round(shownRadius)}px — 좌우로 끌어 조절 (왼쪽 끝 = 직각). Shift를 누른 채 놓으면 이 페이지의 모든 말풍선에 적용`}
           />
         </>
       )}

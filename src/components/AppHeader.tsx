@@ -195,7 +195,7 @@ export function AppHeader(props: AppHeaderProps) {
             {scriptStyle === 'overlay' && (
               <button
                 onClick={onToggleEditingBoxes}
-                title="영역 수정"
+                title="영역 수정 (단축키 E) — 편집을 잘못했으면 Ctrl·⌘+Z로 되돌리기"
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors text-xs font-medium border whitespace-nowrap shrink-0 ${
                   isEditingBoxes ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
                 }`}

@@ -38,7 +38,7 @@ interface MangaViewerProps {
   /** 원본 말풍선 모양에 맞춰 넣기 켜기/끄기 */
   onSetBubbleFit: (imgIndex: number, id: string, enabled: boolean) => void;
   /** 덮는 흰 상자 모서리 둥글기 (짧은 변 대비 0~0.5) */
-  onSetCornerRadius: (imgIndex: number, id: string, ratio: number) => void;
+  onSetCornerRadius: (imgIndex: number, id: string, ratio: number, wholePage?: boolean) => void;
   /** 말풍선에 들어가도록 번역문을 maxChars자 안쪽으로 짧게 다시 번역 */
   onShorten: (imgIndex: number, id: string, maxChars: number) => void;
   /** 원문을 잘못 읽었을 때 이미지에서 고해상도로 다시 읽기 */
@@ -419,7 +419,7 @@ export function MangaViewer({
                                   {...bubbleEditProps}
                                   {...(plan.kind === 'fit' && plan.panel ? {
                                     cornerRadiusPx: cornerRadiusPx(result, (boxWidth / 1000) * pageWidth, (boxHeight / 1000) * pageHeight, OVERLAY_STYLE.radiusPx * scale),
-                                    onCornerRadiusChange: (ratio: number) => onSetCornerRadius(imgIndex, result.id, ratio),
+                                    onCornerRadiusChange: (ratio: number, wholePage: boolean) => onSetCornerRadius(imgIndex, result.id, ratio, wholePage),
                                   } : {})}
                                 >
                                   {null}
@@ -485,7 +485,7 @@ export function MangaViewer({
                                 textDirection={textDirection}
                                 onToggleTextDirection={() => onSetTextDirection(imgIndex, result.id, textDirection === 'vertical' ? 'horizontal' : 'vertical')}
                                 cornerRadiusPx={radius}
-                                onCornerRadiusChange={ratio => onSetCornerRadius(imgIndex, result.id, ratio)}
+                                onCornerRadiusChange={(ratio, wholePage) => onSetCornerRadius(imgIndex, result.id, ratio, wholePage)}
                                 onDelete={() => onDelete(imgIndex, result.id)}
                                 onReread={() => onReread(imgIndex, result.id)}
                                 {...bubbleEditProps}

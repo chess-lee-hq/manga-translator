@@ -20,4 +20,15 @@ describe('shortcutFor', () => {
     expect(shortcutFor({ key: 'ArrowLeft', isComposing: true })).toBeNull();
     expect(shortcutFor({ key: 'a' })).toBeNull();
   });
+
+  it('E는 영역 수정, Ctrl·⌘+Z는 되돌리기 (한글 자판·입력칸 고려)', () => {
+    expect(shortcutFor({ key: 'e' })).toBe('toggleEdit');
+    expect(shortcutFor({ key: 'ㄷ', code: 'KeyE' })).toBe('toggleEdit');
+    expect(shortcutFor({ key: 'z', metaKey: true })).toBe('undo');
+    expect(shortcutFor({ key: 'ㅋ', code: 'KeyZ', ctrlKey: true })).toBe('undo');
+    expect(shortcutFor({ key: 'z', metaKey: true, shiftKey: true })).toBeNull();
+    expect(shortcutFor({ key: 'z' })).toBeNull();
+    expect(shortcutFor({ key: 'z', metaKey: true, target: { tagName: 'INPUT' } as unknown as EventTarget })).toBeNull();
+    expect(shortcutFor({ key: 'e', metaKey: true })).toBeNull();
+  });
 });

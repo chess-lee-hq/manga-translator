@@ -10,7 +10,12 @@ interface UpdateOptions {
   persist?: boolean;
   /** 캐시가 없는 페이지면 빈 배열에서 시작 */
   createIfMissing?: boolean;
+  /** true면 바꾸기 전 상태를 기억해 undo()로 되돌릴 수 있게 함 (영역 수정에서 손으로 한 편집) */
+  undoable?: boolean;
 }
+
+/** 되돌릴 수 있는 편집 횟수 */
+const UNDO_LIMIT = 50;
 
 const isQuotaError = (error: unknown) => (error as DOMException)?.name === 'QuotaExceededError';
 
@@ -25,7 +30,11 @@ export function useTranslationCache(images: UploadedImage[], workKey: string, on
   const loadedKeysRef = useRef(loadedKeys);
   const workKeyRef = useRef(workKey);
   const onStorageFullRef = useRef(onStorageFull);
+  const cacheRef = useRef(translationCache);
+  /** 편집 전 페이지 상태 (최근 것이 뒤) */
+  const undoStackRef = useRef<{ key: string; results: TranslationResult[] }[]>([]);
   useEffect(() => {
+    cacheRef.current = translationCache;
     loadedKeysRef.current = loadedKeys;
     workKeyRef.current = workKey;
     onStorageFullRef.current = onStorageFull;
@@ -66,7 +75,12 @@ export function useTranslationCache(images: UploadedImage[], workKey: string, on
 
   /** 한 페이지의 번역 배열을 갱신합니다. updater가 null을 돌려주면 그 페이지 캐시를 지웁니다(다시 자동 번역 대상이 됨). */
   const updatePageResults = (key: string, updater: (results: TranslationResult[]) => TranslationResult[] | null, options: UpdateOptions = {}) => {
-    const { persist: shouldPersist = true, createIfMissing = false } = options;
+    const { persist: shouldPersist = true, createIfMissing = false, undoable = false } = options;
+    const before = cacheRef.current[key];
+    if (undoable && before) {
+      undoStackRef.current.push({ key, results: before });
+      if (undoStackRef.current.length > UNDO_LIMIT) undoStackRef.current.shift();
+    }
     setTranslationCache(prev => {
       const current = prev[key] ?? (createIfMissing ? [] : undefined);
       if (!current) return prev;
@@ -110,5 +124,21 @@ export function useTranslationCache(images: UploadedImage[], workKey: string, on
     });
   };
 
-  return { translationCache, isCacheReady, updatePageResults, setPageResults, mergeTranslations, removePages, forgetPages };
+  /**
+   * 가장 최근의 되돌릴 수 있는 편집을 취소하고 그 페이지의 키를 돌려줍니다 (되돌릴 게 없으면 null).
+   * 페이지 단위로 편집 전 상태로 돌리므로, 그 뒤 같은 페이지에 들어온 자동 변경(다시 번역 결과 등)도 함께 돌아갑니다.
+   */
+  const undo = (): string | null => {
+    while (undoStackRef.current.length > 0) {
+      const { key, results } = undoStackRef.current.pop()!;
+      // 그사이 닫았거나 번역 기록을 지운 페이지는 건너뜀
+      if (!cacheRef.current[key]) continue;
+      persist(key, results);
+      setTranslationCache(prev => (prev[key] ? { ...prev, [key]: results } : prev));
+      return key;
+    }
+    return null;
+  };
+
+  return { translationCache, isCacheReady, updatePageResults, setPageResults, mergeTranslations, removePages, forgetPages, undo };
 }
