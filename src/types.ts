@@ -14,7 +14,7 @@ export interface UploadedImage {
 }
 
 export type GeminiVersion = '3.6' | '3.8';
-/** terra = gpt-6.1-terra(기본) / sol = gpt-6.1-sol(가장 강함) */
+/** terra = gpt-6.1-terra(기본) / sol = gpt-6.2-sol(가장 강함) */
 export type OpenAiVersion = 'terra' | 'sol';
 /** 1차 번역을 맡는 엔진. 나머지 한 쪽은 품질 검사 재요청(다시 읽기)만 담당 */
 export type MainEngine = 'openai' | 'gemini';

@@ -3,6 +3,7 @@ import { MemoryStorage } from './testing/memoryStorage';
 
 vi.stubGlobal('localStorage', new MemoryStorage());
 import {
+  loadModelPrices,
   clearWorkUsage, estimateCost, getUsageByModel, getUsageTotals, recordUsage, resetUsageTotals, setUsageWork, sumUsage,
 } from './usageLog';
 
@@ -38,9 +39,9 @@ describe('recordUsage', () => {
 
   it('모델별로 나눠 쌓고, 합계를 낼 수 있다', () => {
     record('gpt-5.6-terra', 100, 10);
-    record('gpt-6.1-sol', 200, 20, { reasoning: 5 });
+    record('gpt-6.2-sol', 200, 20, { reasoning: 5 });
     const byModel = getUsageByModel('session');
-    expect(Object.keys(byModel).sort()).toEqual(['gpt-5.6-terra', 'gpt-6.1-sol']);
+    expect(Object.keys(byModel).sort()).toEqual(['gpt-5.6-terra', 'gpt-6.2-sol']);
     expect(sumUsage(byModel)).toEqual({ calls: 2, inputTokens: 300, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 30, reasoningTokens: 5 });
   });
 
@@ -83,5 +84,15 @@ describe('estimateCost — 캐시 쓰기', () => {
     const totals = { calls: 1, inputTokens: 1_000_000, cachedInputTokens: 500_000, cacheWriteTokens: 200_000, outputTokens: 0, reasoningTokens: 0 };
     // 새 입력 30만 × $2 + 캐시 읽기 50만 × $0.2 + 캐시 쓰기 20만 × $2.5
     expect(estimateCost(totals, { input: 2, cachedInput: 0.2, cacheWrite: 2.5, output: 12 })).toBeCloseTo(0.6 + 0.1 + 0.5);
+  });
+});
+
+describe('loadModelPrices', () => {
+  it('6.1 Sol에 넣어 둔 단가를 6.2 Sol에도 쓴다 (이미 있으면 그대로)', () => {
+    localStorage.setItem('manga-model-prices', JSON.stringify({ 'gpt-6.1-sol': { input: 2, output: 10 } }));
+    expect(loadModelPrices()['gpt-6.2-sol']).toEqual({ input: 2, output: 10 });
+    localStorage.setItem('manga-model-prices', JSON.stringify({ 'gpt-6.1-sol': { input: 2, output: 10 }, 'gpt-6.2-sol': { input: 3, output: 12 } }));
+    expect(loadModelPrices()['gpt-6.2-sol']).toEqual({ input: 3, output: 12 });
+    localStorage.removeItem('manga-model-prices');
   });
 });

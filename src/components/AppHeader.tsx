@@ -303,8 +303,8 @@ export function AppHeader(props: AppHeaderProps) {
           accent="green"
           version={openAiVersion}
           onVersionChange={onOpenAiVersionChange}
-          versionOptions={[['terra', '6.1 Terra'], ['sol', '6.1 Sol']]}
-          versionTitle="6.1 Terra: 기본값(빠르고 저렴 — Sol의 절반 가격) / 6.1 Sol: 가장 강한 인식·번역"
+          versionOptions={[['terra', '6.1 Terra'], ['sol', '6.2 Sol']]}
+          versionTitle="6.1 Terra: 기본값(빠르고 저렴 — Sol의 절반 가격) / 6.2 Sol: 가장 강한 인식·번역"
           apiKey={openaiKey}
           onApiKeyChange={onOpenaiKeyChange}
           keyPlaceholder="OpenAI Key"

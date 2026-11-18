@@ -169,11 +169,16 @@ export interface ModelPrice {
 }
 
 const PRICES_KEY = 'manga-model-prices';
+/** 같은 가격으로 이름만 바뀐 모델 (예전 이름에 넣어 둔 단가를 이어 씀) */
+const MODEL_RENAMES: [string, string][] = [['gpt-6.1-sol', 'gpt-6.2-sol']];
 
 export function loadModelPrices(): Record<string, ModelPrice> {
   try {
     const parsed = JSON.parse(localStorage.getItem(PRICES_KEY) || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    // 6.1 Sol → 6.2 Sol (2026-11-17, 가격 같음): 입력해 둔 단가를 새 모델 이름에도 그대로
+    for (const [from, to] of MODEL_RENAMES) if (parsed[from] && !parsed[to]) parsed[to] = parsed[from];
+    return parsed;
   } catch {
     return {};
   }

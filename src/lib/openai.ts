@@ -29,7 +29,7 @@ type HttpError = Error & { status?: number; retryAfterMs?: number };
  */
 const OPENAI_MODELS: Record<OpenAiVersion, string> = {
   terra: 'gpt-6.1-terra',
-  sol: 'gpt-6.1-sol',
+  sol: 'gpt-6.2-sol', // 2026-11-17 출시 (가격은 6.1 Sol과 같음)
 };
 
 const modelFor = (openAiVersion: OpenAiVersion) => OPENAI_MODELS[openAiVersion] ?? OPENAI_MODELS.terra;

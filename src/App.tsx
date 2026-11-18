@@ -65,7 +65,7 @@ const OPENAI_KEY_STORAGE = 'manga-translator-openai-key';
 /** 고른 번역 엔진·모델을 다음 실행에도 유지 */
 const GEMINI_VERSION_STORAGE_KEY = 'manga-translator-gemini-version';
 /**
- * 고른 OpenAI 모델 (6.1 Terra / 6.1 Sol). 예전에 6 Luna를 골라 뒀으면 기본값(6.1 Terra)으로. Sol을 골라 뒀던 사람은 그대로 Sol.
+ * 고른 OpenAI 모델 (6.1 Terra / 6.2 Sol). 예전에 6 Luna를 골라 뒀으면 기본값(6.1 Terra)으로. Sol을 골라 뒀던 사람은 그대로 Sol.
  */
 const OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-model';
 const LEGACY_OPENAI_VERSION_STORAGE_KEY = 'manga-translator-openai-version';

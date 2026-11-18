@@ -73,12 +73,12 @@ describe('translateGridImageOpenAI (주력 엔진)', () => {
     // 응답 형태는 json_schema(strict)가 강제하므로 프롬프트에는 각 필드의 뜻만 짧게 남는다
     expect(prompt).toContain('jp = 일본어 원문');
     expect(sentBody(fetchMock).response_format.json_schema.schema.properties.cells.items.required).toEqual(['id', 'jp', 'ko']);
-    expect(sentBody(fetchMock).model).toBe('gpt-6.1-sol');
+    expect(sentBody(fetchMock).model).toBe('gpt-6.2-sol');
   });
 
   it.each([
     ['terra', 'gpt-6.1-terra'],
-    ['sol', 'gpt-6.1-sol'],
+    ['sol', 'gpt-6.2-sol'],
   ] as const)('헤더에서 고른 %s는 %s 모델로 보낸다 ', async (version, model) => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"cells":[]}'));
     vi.stubGlobal('fetch', fetchMock);

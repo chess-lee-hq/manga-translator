@@ -333,8 +333,8 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
     };
   }
 
-  // 메인이 OpenAI일 때, 보조 키가 없으면 OpenAI 6.1 Sol(가장 강한 모델)로 재시도
-  const viaSol = viaOpenAiGrid(openaiKey, 'sol', { ...parts, label: '격자 재요청 (고해상도 · 6.1 Sol)' });
+  // 메인이 OpenAI일 때, 보조 키가 없으면 OpenAI 6.2 Sol(가장 강한 모델)로 재시도
+  const viaSol = viaOpenAiGrid(openaiKey, 'sol', { ...parts, label: '격자 재요청 (고해상도 · 6.2 Sol)' });
   if (!googleKey) return viaSol;
 
   const viaGemini = viaGeminiGrid(googleKey, geminiVersion, { ...parts, label: '격자 재요청 (고해상도 · Gemini)' });
@@ -342,7 +342,7 @@ export function retryRequesterFor(settings: TranslationSettings): GridRequest {
     try {
       return await viaGemini(grid, pageCellCounts);
     } catch (error) {
-      console.warn('Gemini 재요청 실패 — OpenAI 6.1 Sol로 다시 시도합니다:', (error as Error)?.message ?? error);
+      console.warn('Gemini 재요청 실패 — OpenAI 6.2 Sol로 다시 시도합니다:', (error as Error)?.message ?? error);
       return viaSol(grid, pageCellCounts);
     }
   };
